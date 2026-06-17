@@ -29,20 +29,7 @@ stream:
   res: [320, 180]
 
 imu:
-  enabled: true
-  i2c_bus: 1
-  address: 0x69
-  sample_hz: 100
-  roll_pitch_alpha: 0.02
-  gyro_runaway_scale: 1.5
-  gyro_slip_scale: 0.25
-  max_move_deg: 12.0
-  # PCB on head: +X up, +Y left, +Z back → forward=-Z, left=+Y, yaw-about-up=+X
-  # Values are 1-based sensor axes (1=X, 2=Y, 3=Z); negative flips sign.
-  axis_remap: [-3, 2, 1]
-  mount_offset_deg: 0.0
-  # BMI160 alone has no magnetometer. Combo boards (BMM150 at 0x10) need extra support;
-  # turn/runaway guard uses gyro integration on the up axis above, not mag heading.
+  enabled: false   # use feature/imu branch + face_tracking_head_imu.py for BMI160 work
 
 base:
   enabled: true        # turn on after flashing v5 firmware and calibrating counts_per_degree
@@ -84,8 +71,8 @@ servo:
   pan_max: 120.0
   tilt_min: 100.0
   tilt_max: 120.0
-  pan_center: 80.0
-  tilt_center: 110.0
+  pan_center: 78.0   # mechanical center vs robot body (was 80)
+  tilt_center: 112.0  # mechanical center vs robot body (was 110)
   pan_track_range: 26.0
   tilt_track_range: 12.0
   pan_sign: 1.0

@@ -22,6 +22,8 @@ From this directory:
 python face_tracking_head.py --port /dev/ttyUSB0
 ```
 
+IMU / BMI160 experiments live on the `feature/imu` branch (`face_tracking_head_imu.py`).
+
 Useful smoke tests:
 
 ```bash

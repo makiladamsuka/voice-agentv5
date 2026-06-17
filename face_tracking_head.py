@@ -23,7 +23,6 @@ except ImportError:
     yaml = None
 
 from arduino_servo import ArduinoServoLink
-from base_safety import BaseMotionGate, BaseMoveWatchdog, BaseSafetyConfig, clamp_base_step
 from elastic_head_motion import (
     HeadMotionParams,
     OrganicWanderSearch,
@@ -32,11 +31,6 @@ from elastic_head_motion import (
     tick_toward,
 )
 from person_detector import PersonDetector
-
-try:
-    from imu_sensor import ImuReader
-except ImportError:
-    ImuReader = None  # type: ignore
 
 # Hardware / Display Imports
 import board
@@ -97,7 +91,6 @@ ARGS = parse_args()
 CONFIG = _load_yaml_config(Path(ARGS.config))
 SERVO_CFG = _cfg(CONFIG, "servo", default={}) or {}
 BASE_CFG = _cfg(CONFIG, "base", default={}) or {}
-IMU_CFG = _cfg(CONFIG, "imu", default={}) or {}
 CAMERA_CFG = _cfg(CONFIG, "camera", default={}) or {}
 STREAM_CFG = _cfg(CONFIG, "stream", default={}) or {}
 
@@ -324,17 +317,6 @@ BASE_ALLOW_MULTI_FACE = bool(BASE_CFG.get("allow_multi_face", False))
 BASE_WAIT_FOR_ACK = bool(BASE_CFG.get("wait_for_ack", False))
 BASE_ERROR_BACKOFF_SEC = float(BASE_CFG.get("error_backoff_sec", 45.0))
 BASE_REQUIRE_CALIBRATED_CPD = bool(BASE_CFG.get("require_calibrated_cpd", True))
-
-IMU_ENABLED = bool(IMU_CFG.get("enabled", False)) and ImuReader is not None
-IMU_I2C_BUS = int(IMU_CFG.get("i2c_bus", 1))
-IMU_ADDRESS = int(IMU_CFG.get("address", 0x69))
-IMU_SAMPLE_HZ = float(IMU_CFG.get("sample_hz", 100.0))
-IMU_ROLL_PITCH_ALPHA = float(IMU_CFG.get("roll_pitch_alpha", 0.02))
-IMU_GYRO_RUNAWAY_SCALE = float(IMU_CFG.get("gyro_runaway_scale", 1.5))
-IMU_GYRO_SLIP_SCALE = float(IMU_CFG.get("gyro_slip_scale", 0.25))
-IMU_MAX_MOVE_DEG = float(IMU_CFG.get("max_move_deg", 12.0))
-IMU_AXIS_REMAP = tuple(int(v) for v in (IMU_CFG.get("axis_remap") or [-3, 2, 1]))
-IMU_MOUNT_OFFSET_DEG = float(IMU_CFG.get("mount_offset_deg", 0.0))
 
 PAN_MOTION = HeadMotionParams(
     max_vel_pos=float(SERVO_CFG.get("pan_max_vel", 22.0)),
@@ -1598,37 +1580,6 @@ def servo_worker():
             "  Run: python tests/test_base_motor.py --calibrate-manual --degrees 90 --write-config"
         )
 
-    imu_reader = None
-    base_gate = None
-    base_watchdog = None
-    if IMU_ENABLED:
-        try:
-            imu_reader = ImuReader(
-                bus=IMU_I2C_BUS,
-                address=IMU_ADDRESS,
-                sample_hz=IMU_SAMPLE_HZ,
-                roll_pitch_alpha=IMU_ROLL_PITCH_ALPHA,
-                axis_remap=IMU_AXIS_REMAP,
-            )
-            imu_reader.start()
-            print(f"BMI160 IMU reader started (bus {IMU_I2C_BUS}, 0x{IMU_ADDRESS:02X})")
-            base_gate = BaseMotionGate(BASE_ERROR_BACKOFF_SEC)
-            base_watchdog = BaseMoveWatchdog(
-                link,
-                imu_reader,
-                base_gate,
-                BaseSafetyConfig(
-                    error_backoff_sec=BASE_ERROR_BACKOFF_SEC,
-                    gyro_runaway_scale=IMU_GYRO_RUNAWAY_SCALE,
-                    gyro_slip_scale=IMU_GYRO_SLIP_SCALE,
-                ),
-            )
-        except Exception as exc:
-            print(f"IMU disabled: {exc}")
-            imu_reader = None
-            base_gate = None
-            base_watchdog = None
-
     loop_delay = 1.0 / max(1.0, SERVO_LOOP_HZ)
     pan = PAN_CENTER
     tilt = TILT_CENTER
@@ -1688,11 +1639,7 @@ def servo_worker():
         nonlocal last_base_step, last_base_source, last_base_comp, base_yaw_target
         if not base_auto_enabled:
             return None
-        if base_gate is not None and not base_gate.allowed(time.time()):
-            return None
         step = clamp(raw_step * BASE_SIGN, -BASE_MAX_STEP_DEG, BASE_MAX_STEP_DEG)
-        if IMU_MAX_MOVE_DEG > 0:
-            step = clamp_base_step(step, IMU_MAX_MOVE_DEG)
         if abs(step) < BASE_MIN_STEP_DEG:
             return None
         projected_total = base_auto_total_deg + step
@@ -1707,6 +1654,7 @@ def servo_worker():
         target_glide.x *= max(0.0, 1.0 - BASE_PAN_RECENTER_BIAS)
         pan_pid.soften(0.15)
 
+        base_yaw_target += step
         last_base_step = step
         last_base_source = source
         last_base_comp = comp
@@ -2046,26 +1994,45 @@ def servo_worker():
                 last_motion_emotion = motion_emotion
                 last_motion_emotion_ts = now
 
-            if base_step is not None:
-                st_before = link.query_status()
-                encoder_before = st_before.degrees if st_before is not None else 0.0
+            base_send_slice = None
+            if base_auto_enabled:
+                yaw_remaining = base_yaw_target - base_yaw_hw
+                if abs(yaw_remaining) <= base_elastic_motion.goal_deadband_deg:
+                    base_yaw_glide = base_yaw_hw = base_yaw_target
+                    base_yaw_vel = 0.0
+                elif now - last_base_busy_check >= 0.05:
+                    status = link.query_status()
+                    base_motion_busy = status.busy if status else False
+                    last_base_busy_check = now
+                if not base_motion_busy and abs(yaw_remaining) > base_elastic_motion.goal_deadband_deg:
+                    glide_lo = min(base_yaw_hw, base_yaw_target)
+                    glide_hi = max(base_yaw_hw, base_yaw_target)
+                    base_yaw_glide, base_yaw_vel = tick_toward(
+                        base_yaw_glide,
+                        base_yaw_vel,
+                        base_yaw_target,
+                        loop_delay,
+                        lo=glide_lo,
+                        hi=glide_hi,
+                        params=base_elastic_motion,
+                    )
+                    slice_deg = base_yaw_glide - base_yaw_hw
+                    if abs(slice_deg) >= 0.35:
+                        base_send_slice = slice_deg
+                        base_yaw_hw += slice_deg
+                        base_motion_busy = True
+
+            if base_send_slice is not None:
                 if not link.write_combined(
                     pan,
                     tilt,
-                    base_step,
+                    base_send_slice,
                     wait_servo=False,
-                    wait_base=BASE_WAIT_FOR_ACK,
+                    wait_base=False,
                 ):
                     link.write_angles(pan, tilt)
-                elif base_watchdog is not None:
-                    base_watchdog.start_move(base_step, encoder_before)
             else:
                 link.write_angles(pan, tilt)
-
-            if base_gate is not None:
-                base_gate.clear_backoff(now)
-            if base_watchdog is not None:
-                base_watchdog.tick(now)
 
             if SERVO_DEBUG_HZ > 0 and now - last_debug >= 1.0 / SERVO_DEBUG_HZ:
                 label = track_kind if mode == "track" else mode
@@ -2073,21 +2040,9 @@ def servo_worker():
                 if base_auto_enabled and now - last_base_nudge_ts < 2.0:
                     source = last_base_source or "base"
                     base_text = f" base[{source}] {last_base_step:+.1f} comp {last_base_comp:+.1f}"
-                imu_text = ""
-                if imu_reader is not None:
-                    sample = imu_reader.latest()
-                    st_now = link.query_status()
-                    enc_deg = st_now.degrees if st_now is not None else 0.0
-                    base_yaw_est = enc_deg + (pan - PAN_CENTER) + IMU_MOUNT_OFFSET_DEG
-                    guard = base_watchdog.status if base_watchdog is not None else "OFF"
-                    if sample is not None:
-                        imu_text = (
-                            f" imu r{sample.roll_deg:+.1f} p{sample.pitch_deg:+.1f} "
-                            f"yaw_est {base_yaw_est:+.1f} guard {guard}"
-                        )
                 sys.stdout.write(
                     f"\r[servo] {label} pan {pan:5.1f}->{servo_target_pan:5.1f} "
-                    f"tilt {tilt:5.1f}->{servo_target_tilt:5.1f}{base_text}{imu_text}   "
+                    f"tilt {tilt:5.1f}->{servo_target_tilt:5.1f}{base_text}   "
                 )
                 sys.stdout.flush()
                 last_debug = now
@@ -2096,8 +2051,6 @@ def servo_worker():
     except Exception as e:
         print(f"\nServo tracking error: {e}")
     finally:
-        if imu_reader is not None:
-            imu_reader.stop()
         try:
             link.close(home_pan=PAN_CENTER, home_tilt=TILT_CENTER)
             print("\nServo link closed.")

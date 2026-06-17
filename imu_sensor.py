@@ -192,12 +192,14 @@ class ImuAttitudeFilter:
         roll_pitch_alpha: float = 0.02,
         axis_remap: Sequence[int] = (0, 1, 2),
         spin_gyro_threshold_dps: float = 80.0,
+        roll_offset_deg: float = 0.0,
+        pitch_offset_deg: float = 0.0,
     ):
         self.roll_pitch_alpha = roll_pitch_alpha
         self.axis_remap = tuple(int(v) for v in axis_remap)
         self.spin_gyro_threshold_dps = spin_gyro_threshold_dps
-        self.roll_offset_deg = 0.0
-        self.pitch_offset_deg = 0.0
+        self.roll_offset_deg = roll_offset_deg
+        self.pitch_offset_deg = pitch_offset_deg
         self._roll_deg = 0.0
         self._pitch_deg = 0.0
         self._yaw_integral_deg = 0.0
@@ -262,12 +264,16 @@ class ImuReader:
         sample_hz: float = 100.0,
         roll_pitch_alpha: float = 0.02,
         axis_remap: Sequence[int] = (0, 1, 2),
+        roll_offset_deg: float = 0.0,
+        pitch_offset_deg: float = 0.0,
     ):
         self._device = Bmi160(bus=bus, address=address)
         self._sample_hz = max(1.0, sample_hz)
         self._filter = ImuAttitudeFilter(
             roll_pitch_alpha=roll_pitch_alpha,
             axis_remap=axis_remap,
+            roll_offset_deg=roll_offset_deg,
+            pitch_offset_deg=pitch_offset_deg,
         )
         self._lock = threading.Lock()
         self._latest: Optional[ImuSample] = None

@@ -39,8 +39,13 @@ imu:
   max_move_deg: 12.0
   # PCB on head: +X up, +Y left, +Z back → forward=-Z, left=+Y, yaw-about-up=+X
   # Values are 1-based sensor axes (1=X, 2=Y, 3=Z); negative flips sign.
-  axis_remap: [-3, 2, 1]
+  axis_remap: [-3, 2, -1]
+  # Validated: face-down (front on table) → pitch ~+85°, acc forward ≈ -1g (gravity along -forward).
+  # Level-calibrate and normal tracking: use upright head pose (roll/pitch should be ~0°).
   mount_offset_deg: 0.0
+  # Level offsets at mechanical center (servo P78 T112); IMU roll/pitch read ~0° there.
+  roll_offset_deg: -171.4
+  pitch_offset_deg: -1.1
   # BMI160 alone has no magnetometer. Combo boards (BMM150 at 0x10) need extra support;
   # turn/runaway guard uses gyro integration on the up axis above, not mag heading.
 
@@ -84,8 +89,8 @@ servo:
   pan_max: 120.0
   tilt_min: 100.0
   tilt_max: 120.0
-  pan_center: 80.0
-  tilt_center: 110.0
+  pan_center: 78.0   # mechanical center vs robot body (was 80)
+  tilt_center: 112.0  # mechanical center vs robot body (was 110)
   pan_track_range: 26.0
   tilt_track_range: 12.0
   pan_sign: 1.0

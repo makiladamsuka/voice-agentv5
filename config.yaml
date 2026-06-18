@@ -132,21 +132,9 @@ servo:
   multi_face_track_servo_alpha: 0.34
   multi_face_track_gain: 0.62
   social_multi_grace_sec: 2.4
-  target_glide_freq: 1.40
-  target_glide_damp: 1.10
-  pan_max_vel: 20.0
-  pan_accel: 40.0
-  pan_decel: 50.0
-  pan_track_gain: 1.55
-  tilt_max_vel_up: 11.0
-  tilt_max_vel_down: 7.0
-  tilt_accel: 30.0
-  tilt_decel: 44.0
-  tilt_decel_down_mult: 1.75
-  head_vel_blend: 0.42
-  tilt_head_vel_blend: 0.28
-  tilt_track_gain: 1.65
-  goal_deadband_deg: 0.06
-  servo_send_min_deg: 0.06
-  servo_send_hz: 25.0
-  servo_angle_quantum_deg: 0.2
+  target_smooth_hz: 4.5   # face aim smoothing (replaces spring glide)
+  pan_smooth_hz: 7.0    # neck pan follow — higher = snappier
+  tilt_smooth_hz: 5.5   # neck tilt follow
+  servo_send_min_deg: 0.04
+  servo_send_hz: 30.0
+  servo_angle_quantum_deg: 0.1

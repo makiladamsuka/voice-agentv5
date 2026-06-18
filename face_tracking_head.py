@@ -25,11 +25,9 @@ except ImportError:
 from arduino_servo import ArduinoServoLink
 from base_motor_utils import configure_base_link
 from elastic_head_motion import (
-    HeadMotionParams,
     OrganicWanderSearch,
     clamp,
-    scale_head_motion,
-    tick_toward,
+    smooth_toward,
 )
 from person_detector import PersonDetector
 
@@ -285,9 +283,9 @@ MULTI_FACE_ALTERNATE_CHANCE = float(SERVO_CFG.get("multi_face_alternate_chance",
 MULTI_FACE_TRACK_SERVO_ALPHA = float(SERVO_CFG.get("multi_face_track_servo_alpha", 0.34))
 MULTI_FACE_TRACK_GAIN = float(SERVO_CFG.get("multi_face_track_gain", 0.62))
 SOCIAL_MULTI_GRACE_SEC = float(SERVO_CFG.get("social_multi_grace_sec", 2.4))
-TARGET_GLIDE_FREQ = float(SERVO_CFG.get("target_glide_freq", 2.8))
-TARGET_GLIDE_DAMP = float(SERVO_CFG.get("target_glide_damp", 0.82))
-SERVO_GOAL_DEADBAND = float(SERVO_CFG.get("goal_deadband_deg", 0.06))
+TARGET_SMOOTH_HZ = float(SERVO_CFG.get("target_smooth_hz", 4.5))
+PAN_SMOOTH_HZ = float(SERVO_CFG.get("pan_smooth_hz", 7.0))
+TILT_SMOOTH_HZ = float(SERVO_CFG.get("tilt_smooth_hz", 5.5))
 SERVO_SEND_MIN_DEG = float(SERVO_CFG.get("servo_send_min_deg", 0.06))
 SERVO_SEND_HZ = float(SERVO_CFG.get("servo_send_hz", 25.0))
 SERVO_ANGLE_QUANTUM_DEG = float(SERVO_CFG.get("servo_angle_quantum_deg", 0.2))
@@ -326,26 +324,6 @@ BASE_WAIT_FOR_ACK = bool(BASE_CFG.get("wait_for_ack", False))
 BASE_ERROR_BACKOFF_SEC = float(BASE_CFG.get("error_backoff_sec", 45.0))
 BASE_REQUIRE_CALIBRATED_CPD = bool(BASE_CFG.get("require_calibrated_cpd", True))
 
-PAN_MOTION = HeadMotionParams(
-    max_vel_pos=float(SERVO_CFG.get("pan_max_vel", 22.0)),
-    max_vel_neg=float(SERVO_CFG.get("pan_max_vel", 22.0)),
-    accel=float(SERVO_CFG.get("pan_accel", 55.0)),
-    decel=float(SERVO_CFG.get("pan_decel", 85.0)),
-    vel_blend=float(SERVO_CFG.get("head_vel_blend", 0.28)),
-    track_gain=float(SERVO_CFG.get("pan_track_gain", 1.6)),
-    goal_deadband_deg=float(SERVO_CFG.get("goal_deadband_deg", 0.04)),
-)
-TILT_MOTION = HeadMotionParams(
-    max_vel_pos=float(SERVO_CFG.get("tilt_max_vel_up", 18.0)),
-    max_vel_neg=float(SERVO_CFG.get("tilt_max_vel_down", 10.0)),
-    accel=float(SERVO_CFG.get("tilt_accel", 45.0)),
-    decel=float(SERVO_CFG.get("tilt_decel", 70.0)),
-    vel_blend=float(SERVO_CFG.get("tilt_head_vel_blend", 0.14)),
-    decel_boost_dir=-1.0,
-    decel_boost_mult=float(SERVO_CFG.get("tilt_decel_down_mult", 1.85)),
-    track_gain=float(SERVO_CFG.get("tilt_track_gain", 2.4)),
-    goal_deadband_deg=float(SERVO_CFG.get("goal_deadband_deg", 0.04)),
-)
 
 
 
@@ -1524,29 +1502,20 @@ class PidAxis:
 
 
 class TargetGlide:
-    def __init__(self, freq_hz=2.8, damping=0.82):
-        self.freq_hz = max(0.1, freq_hz)
-        self.damping = max(0.1, damping)
+    def __init__(self, smooth_hz=4.5):
+        self.smooth_hz = max(0.1, smooth_hz)
         self.x = 0.0
         self.y = 0.0
-        self.vx = 0.0
-        self.vy = 0.0
 
     def soften(self):
-        self.vx *= 0.35
-        self.vy *= 0.35
+        return
 
     def tick(self, target_x, target_y, dt, alpha_scale=1.0):
         dt = max(0.001, min(0.05, dt))
-        omega = 2.0 * math.pi * self.freq_hz * clamp(alpha_scale, 0.15, 1.25)
-        damp = 2.0 * self.damping * omega
-
-        ax = ((target_x - self.x) * omega * omega) - (damp * self.vx)
-        ay = ((target_y - self.y) * omega * omega) - (damp * self.vy)
-        self.vx += ax * dt
-        self.vy += ay * dt
-        self.x = clamp(self.x + self.vx * dt, -1.0, 1.0)
-        self.y = clamp(self.y + self.vy * dt, -1.0, 1.0)
+        hz = self.smooth_hz * clamp(alpha_scale, 0.15, 1.25)
+        alpha = 1.0 - math.exp(-hz * dt)
+        self.x = clamp(self.x + (target_x - self.x) * alpha, -1.0, 1.0)
+        self.y = clamp(self.y + (target_y - self.y) * alpha, -1.0, 1.0)
         return self.x, self.y
 
 
@@ -1641,8 +1610,6 @@ def servo_worker():
     loop_delay = 1.0 / max(1.0, SERVO_LOOP_HZ)
     pan = PAN_CENTER
     tilt = TILT_CENTER
-    pan_vel = 0.0
-    tilt_vel = 0.0
     last_seen_face = 0.0
     last_debug = 0.0
     last_mode = None
@@ -1672,7 +1639,7 @@ def servo_worker():
     filtered_norm_y = 0.0
     pan_pid = PidAxis(PAN_PID_KP, PAN_PID_KI, PAN_PID_KD, PID_INTEGRAL_LIMIT)
     tilt_pid = PidAxis(TILT_PID_KP, TILT_PID_KI, TILT_PID_KD, PID_INTEGRAL_LIMIT)
-    target_glide = TargetGlide(TARGET_GLIDE_FREQ, TARGET_GLIDE_DAMP)
+    target_glide = TargetGlide(TARGET_SMOOTH_HZ)
     wander = OrganicWanderSearch()
     wander.reset(PAN_CENTER, TILT_CENTER, time.time())
     link.write_angles(pan, tilt, force=True)
@@ -1918,29 +1885,27 @@ def servo_worker():
                     else _motion_emotion_from_hint(wander.hold_emotion_hint)
                 )
 
-            pan_motion = PAN_MOTION
-            tilt_motion = TILT_MOTION
+            pan_hz = PAN_SMOOTH_HZ
+            tilt_hz = TILT_SMOOTH_HZ
             if mode == "wander":
-                pan_motion = scale_head_motion(PAN_MOTION, wander.move_speed_scale)
-                tilt_motion = scale_head_motion(TILT_MOTION, 0.65 + (wander.move_speed_scale * 0.35))
+                pan_hz *= wander.move_speed_scale
+                tilt_hz *= 0.65 + (wander.move_speed_scale * 0.35)
 
-            pan, pan_vel = tick_toward(
+            pan = smooth_toward(
                 pan,
-                pan_vel,
                 servo_target_pan,
                 loop_delay,
+                smooth_hz=pan_hz,
                 lo=PAN_MIN,
                 hi=PAN_MAX,
-                params=pan_motion,
             )
-            tilt, tilt_vel = tick_toward(
+            tilt = smooth_toward(
                 tilt,
-                tilt_vel,
                 servo_target_tilt,
                 loop_delay,
+                smooth_hz=tilt_hz,
                 lo=TILT_MIN,
                 hi=TILT_MAX,
-                params=tilt_motion,
             )
 
             refresh_base_busy(now)

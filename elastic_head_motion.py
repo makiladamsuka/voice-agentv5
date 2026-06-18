@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 
@@ -91,6 +92,21 @@ def tick_toward(pos: float, vel: float, target: float, dt: float, *, lo: float, 
                 vel = 0.0
         return pos, vel
     return tick_axis(pos, vel, 1.0 if error > 0 else -1.0, dt, lo=lo, hi=hi, params=params)
+
+
+def smooth_toward(
+    pos: float,
+    target: float,
+    dt: float,
+    *,
+    smooth_hz: float,
+    lo: float,
+    hi: float,
+) -> float:
+    """Exponential smoothing toward target — no velocity state or goal deadband."""
+    dt = max(0.001, dt)
+    alpha = 1.0 - math.exp(-max(0.1, smooth_hz) * dt)
+    return clamp(pos + (target - pos) * alpha, lo, hi)
 
 
 def tick_spring(pos: float, vel: float, center: float, dt: float, *, k: float = 9.0, damp: float = 6.5) -> tuple[float, float]:

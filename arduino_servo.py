@@ -18,10 +18,14 @@ BOOT_CPD = 1.0
 READY_TIMEOUT_SEC = 5.0
 ACK_TIMEOUT_SEC = 1.0
 BASE_MOVE_TIMEOUT_SEC = 15.0
-MIN_SEND_INTERVAL_SEC = 0.01
+MIN_SEND_INTERVAL_SEC = 0.02
+SERVO_SEND_MIN_DEG = 0.06
+SERVO_SEND_HZ = 25.0
+SERVO_ANGLE_QUANTUM_DEG = 0.2
 _SERVO_ACK_RE = re.compile(r"^OK\s+P(-?\d+)\s+T(-?\d+)\s*$")
 _BASE_ACK_RE = re.compile(r"^OK\s+B(-?\d+(?:\.\d+)?)\s*$")
 _OK_C_RE = re.compile(r"^OK\s+C(-?\d+(?:\.\d+)?)\s*$")
+_OK_E_RE = re.compile(r"^OK\s+E(-?\d+)\s*$")
 _BASE_STATUS_RE = re.compile(
     r"^POS\s+(-?\d+)\s+DEG\s+(-?\d+(?:\.\d+)?)\s+CPD\s+(-?\d+(?:\.\d+)?)\s+BUSY\s+([01])\s*$"
 )
@@ -33,6 +37,11 @@ class BaseStatus:
     degrees: float
     counts_per_degree: float
     busy: bool
+
+
+def _quantize_servo_angle(deg: float, quantum: float = SERVO_ANGLE_QUANTUM_DEG) -> float:
+    q = quantum
+    return round(deg / q) * q
 
 
 def resolve_port(port: str) -> list[str]:
@@ -59,6 +68,10 @@ class ArduinoServoLink:
         self._last_tilt: Optional[float] = None
         self._last_base_ack: Optional[float] = None
         self._last_send_ts = 0.0
+        self.servo_send_min_deg = SERVO_SEND_MIN_DEG
+        self.servo_send_hz = SERVO_SEND_HZ
+        self.servo_angle_quantum_deg = SERVO_ANGLE_QUANTUM_DEG
+        self.base_command_scale = 1.0
         self.base_move_timeout_sec = BASE_MOVE_TIMEOUT_SEC
         self._error_logged = False
 
@@ -190,15 +203,33 @@ class ArduinoServoLink:
             self._connected = False
             return False
 
+    def configure_servo_stream(
+        self,
+        *,
+        min_deg: float | None = None,
+        send_hz: float | None = None,
+        quantum_deg: float | None = None,
+    ) -> None:
+        if min_deg is not None:
+            self.servo_send_min_deg = max(0.02, min_deg)
+        if send_hz is not None:
+            self.servo_send_hz = max(5.0, send_hz)
+        if quantum_deg is not None:
+            self.servo_angle_quantum_deg = max(0.05, quantum_deg)
+
     def write_angles(self, pan: float, tilt: float, *, force: bool = False, wait_ack: bool = False) -> bool:
+        pan = _quantize_servo_angle(pan, self.servo_angle_quantum_deg)
+        tilt = _quantize_servo_angle(tilt, self.servo_angle_quantum_deg)
         now = time.time()
-        changed = (
+        send_interval = 1.0 / max(1.0, self.servo_send_hz)
+        moved = (
             self._last_pan is None
             or self._last_tilt is None
-            or abs(pan - self._last_pan) > 0.02
-            or abs(tilt - self._last_tilt) > 0.02
+            or abs(pan - self._last_pan) >= self.servo_send_min_deg
+            or abs(tilt - self._last_tilt) >= self.servo_send_min_deg
         )
-        if not force and not changed and (now - self._last_send_ts) < MIN_SEND_INTERVAL_SEC:
+        due = (now - self._last_send_ts) >= send_interval
+        if not force and not (moved and due):
             return True
         ok = self.send_line(f"P{pan:.1f} T{tilt:.1f}", wait_servo=wait_ack)
         if ok:
@@ -206,6 +237,9 @@ class ArduinoServoLink:
             self._last_tilt = tilt
             self._last_send_ts = now
         return ok
+
+    def _scale_base_command(self, deg: float) -> float:
+        return deg * self.base_command_scale
 
     def write_combined(
         self,
@@ -216,8 +250,11 @@ class ArduinoServoLink:
         wait_servo: bool = False,
         wait_base: bool = False,
     ) -> bool:
+        pan = _quantize_servo_angle(pan, self.servo_angle_quantum_deg)
+        tilt = _quantize_servo_angle(tilt, self.servo_angle_quantum_deg)
         parts = [f"P{pan:.1f}", f"T{tilt:.1f}"]
         if base_rel is not None and abs(base_rel) > 0.001:
+            base_rel = self._scale_base_command(base_rel)
             sign = "+" if base_rel >= 0 else ""
             parts.append(f"B{sign}{base_rel:.1f}")
         ok = self.send_line(
@@ -232,6 +269,7 @@ class ArduinoServoLink:
         return ok
 
     def write_base_relative(self, deg: float, *, wait: bool = False) -> bool:
+        deg = self._scale_base_command(deg)
         sign = "+" if deg >= 0 else ""
         return self.send_line(f"B{sign}{deg:.1f}", wait_base=wait, drain_after=not wait)
 
@@ -246,6 +284,14 @@ class ArduinoServoLink:
         if not ok:
             return False
         line = self._read_line_matching(ACK_TIMEOUT_SEC, _OK_C_RE)
+        return line is not None
+
+    def set_encoder_sign(self, sign: float) -> bool:
+        sign_val = -1.0 if sign < 0.0 else 1.0
+        ok = self.send_line(f"E{sign_val:.0f}", drain_after=False)
+        if not ok:
+            return False
+        line = self._read_line_matching(ACK_TIMEOUT_SEC, _OK_E_RE)
         return line is not None
 
     def is_calibrated(self) -> bool:

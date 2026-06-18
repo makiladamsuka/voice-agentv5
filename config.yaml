@@ -32,34 +32,41 @@ imu:
   enabled: false   # use feature/imu branch + face_tracking_head_imu.py for BMI160 work
 
 base:
-  enabled: true        # turn on after flashing v5 firmware and calibrating counts_per_degree
-  counts_per_degree: 25.0
+  enabled: true
+  # --- BASE CALIBRATION (change only via test_base_motor.py, not face-tracking tuning) ---
+  counts_per_degree: 42.633333  # set by --calibrate-manual
+  encoder_sign: -1  # set by --calibrate-manual (+deg → encoder counts decrease)
+  command_scale: 0.15  # plate vs encoder; set by --correct-move 30 <measured>
+  # --- behavior (safe to tune) ---
   error_backoff_sec: 45.0
   require_calibrated_cpd: true
   zero_on_start: false
   sign: 1.0
-  trigger_norm_x: 0.52
-  trigger_hold_sec: 1.2
-  cooldown_sec: 2.4
+  trigger_norm_x: 0.58
+  trigger_hold_sec: 1.8
+  cooldown_sec: 4.0
   min_step_deg: 3.0
-  max_step_deg: 10.0
-  norm_to_deg_gain: 8.0
-  pan_soft_limit_deg: 18.0
+  max_step_deg: 9.0
+  single_shot_max_deg: 9.0
+  norm_to_deg_gain: 5.5
+  pan_soft_limit_deg: 20.0
   pan_recenter_bias: 0.35
-  track_compensation_gain: 0.45
-  fast_face_enabled: true
-  fast_face_velocity_norm_sec: 3.0
-  fast_face_cooldown_sec: 0.9
-  fast_face_min_step_deg: 4.0
-  fast_face_max_step_deg: 10.0
-  fast_face_velocity_to_deg_gain: 2.2
-  fast_face_compensation_gain: 0.55
+  track_compensation_gain: 0.40
+  fast_face_enabled: false
+  fast_face_velocity_norm_sec: 4.5
+  fast_face_cooldown_sec: 2.0
+  fast_face_min_step_deg: 3.0
+  fast_face_max_step_deg: 6.0
+  fast_face_velocity_to_deg_gain: 1.6
+  fast_face_compensation_gain: 0.45
   wander_enabled: true
-  wander_step_deg: 5.0
-  wander_cooldown_sec: 5.5
-  wander_min_pan_offset_deg: 10.0
-  wander_compensation_gain: 0.25
-  max_total_auto_deg: 60.0
+  wander_step_deg: 4.0
+  wander_cooldown_sec: 16.0
+  wander_chance: 0.28
+  wander_min_pan_offset_deg: 14.0
+  wander_min_head_step_deg: 10.0
+  wander_compensation_gain: 0.20
+  max_total_auto_deg: 36.0
   allow_multi_face: false
   wait_for_ack: false
 
@@ -77,28 +84,28 @@ servo:
   tilt_track_range: 12.0
   pan_sign: 1.0
   tilt_sign: -1.0
-  deadzone_x: 0.04
-  deadzone_y: 0.06
-  loop_hz: 100.0
+  deadzone_x: 0.06
+  deadzone_y: 0.08
+  loop_hz: 80.0
   no_face_home_sec: 0.8
   debug_hz: 2.0
-  face_alpha_x: 0.22
-  face_alpha_y: 0.12
-  pan_pid_kp: 0.95
-  pan_pid_ki: 0.02
-  pan_pid_kd: 0.14
-  tilt_pid_kp: 0.75
+  face_alpha_x: 0.20
+  face_alpha_y: 0.14
+  pan_pid_kp: 0.72
+  pan_pid_ki: 0.01
+  pan_pid_kd: 0.08
+  tilt_pid_kp: 0.55
   tilt_pid_ki: 0.0
-  tilt_pid_kd: 0.12
-  pid_integral_limit: 0.6
+  tilt_pid_kd: 0.06
+  pid_integral_limit: 0.40
   predict_hold_sec: 1.2
   predict_edge_norm: 0.55
   predict_gain: 0.72
   lost_search_hold_sec: 3.2
   lost_search_velocity_gain: 0.45
   lost_search_min_norm_x: 0.22
-  lost_search_base_step_deg: 5.0
-  lost_search_base_cooldown_sec: 1.2
+  lost_search_base_step_deg: 4.0
+  lost_search_base_cooldown_sec: 2.4
   wander_pan_amp_deg: 26.0
   wander_step_min_deg: 6.0
   wander_step_max_deg: 28.0
@@ -123,18 +130,21 @@ servo:
   multi_face_track_servo_alpha: 0.34
   multi_face_track_gain: 0.62
   social_multi_grace_sec: 2.4
-  target_glide_freq: 1.45
-  target_glide_damp: 1.05
-  pan_max_vel: 16.0
-  pan_accel: 34.0
-  pan_decel: 52.0
-  pan_track_gain: 1.6
-  tilt_max_vel_up: 10.0
-  tilt_max_vel_down: 6.0
-  tilt_accel: 28.0
-  tilt_decel: 42.0
-  tilt_decel_down_mult: 1.85
-  head_vel_blend: 0.28
-  tilt_head_vel_blend: 0.14
-  tilt_track_gain: 2.0
-  goal_deadband_deg: 0.04
+  target_glide_freq: 1.40
+  target_glide_damp: 1.10
+  pan_max_vel: 20.0
+  pan_accel: 40.0
+  pan_decel: 50.0
+  pan_track_gain: 1.55
+  tilt_max_vel_up: 11.0
+  tilt_max_vel_down: 7.0
+  tilt_accel: 30.0
+  tilt_decel: 44.0
+  tilt_decel_down_mult: 1.75
+  head_vel_blend: 0.42
+  tilt_head_vel_blend: 0.28
+  tilt_track_gain: 1.65
+  goal_deadband_deg: 0.06
+  servo_send_min_deg: 0.06
+  servo_send_hz: 25.0
+  servo_angle_quantum_deg: 0.2

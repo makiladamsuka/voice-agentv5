@@ -23,6 +23,7 @@ except ImportError:
     yaml = None
 
 from arduino_servo import ArduinoServoLink
+from base_motor_utils import configure_base_link
 from elastic_head_motion import (
     HeadMotionParams,
     OrganicWanderSearch,
@@ -286,9 +287,14 @@ MULTI_FACE_TRACK_GAIN = float(SERVO_CFG.get("multi_face_track_gain", 0.62))
 SOCIAL_MULTI_GRACE_SEC = float(SERVO_CFG.get("social_multi_grace_sec", 2.4))
 TARGET_GLIDE_FREQ = float(SERVO_CFG.get("target_glide_freq", 2.8))
 TARGET_GLIDE_DAMP = float(SERVO_CFG.get("target_glide_damp", 0.82))
+SERVO_GOAL_DEADBAND = float(SERVO_CFG.get("goal_deadband_deg", 0.06))
+SERVO_SEND_MIN_DEG = float(SERVO_CFG.get("servo_send_min_deg", 0.06))
+SERVO_SEND_HZ = float(SERVO_CFG.get("servo_send_hz", 25.0))
+SERVO_ANGLE_QUANTUM_DEG = float(SERVO_CFG.get("servo_angle_quantum_deg", 0.2))
+BASE_WANDER_CHANCE = float(BASE_CFG.get("wander_chance", 0.28))
+BASE_WANDER_MIN_HEAD_STEP_DEG = float(BASE_CFG.get("wander_min_head_step_deg", 10.0))
 
 BASE_ENABLED = bool(BASE_CFG.get("enabled", False))
-BASE_COUNTS_PER_DEGREE = float(BASE_CFG.get("counts_per_degree", 1.0))
 BASE_ZERO_ON_START = bool(BASE_CFG.get("zero_on_start", False))
 BASE_SIGN = float(BASE_CFG.get("sign", 1.0))
 BASE_TRIGGER_NORM_X = float(BASE_CFG.get("trigger_norm_x", 0.52))
@@ -1485,28 +1491,34 @@ class PidAxis:
         self.integral_limit = max(0.0, integral_limit)
         self.integral = 0.0
         self.prev_error = 0.0
+        self.deriv_filtered = 0.0
         self.initialized = False
 
     def reset(self):
         self.integral = 0.0
         self.prev_error = 0.0
+        self.deriv_filtered = 0.0
         self.initialized = False
 
     def soften(self, keep=0.35):
         self.integral *= clamp(keep, 0.0, 1.0)
+        self.deriv_filtered = 0.0
         self.initialized = False
 
     def tick(self, error, dt):
         dt = max(0.001, dt)
+        if abs(error) < 0.02:
+            error = 0.0
         self.integral = clamp(
             self.integral + error * dt,
             -self.integral_limit,
             self.integral_limit,
         )
-        derivative = 0.0 if not self.initialized else (error - self.prev_error) / dt
+        raw_derivative = 0.0 if not self.initialized else (error - self.prev_error) / dt
+        self.deriv_filtered = self.deriv_filtered * 0.82 + raw_derivative * 0.18
         self.prev_error = error
         self.initialized = True
-        return self.kp * error + self.ki * self.integral + self.kd * derivative
+        return self.kp * error + self.ki * self.integral + self.kd * self.deriv_filtered
 
 
 class TargetGlide:
@@ -1560,20 +1572,28 @@ def servo_worker():
         return
 
     link = ArduinoServoLink(port=SERVO_PORT, baud=SERVO_BAUD)
+    link.configure_servo_stream(
+        min_deg=SERVO_SEND_MIN_DEG,
+        send_hz=SERVO_SEND_HZ,
+        quantum_deg=SERVO_ANGLE_QUANTUM_DEG,
+    )
     if not link.connect():
         print("Servo tracking unavailable; camera and TFT eyes will continue without head motion.")
         return
+    base_cal = None
     if BASE_ENABLED:
-        if link.set_counts_per_degree(BASE_COUNTS_PER_DEGREE):
-            print(f"Base CPD set to {BASE_COUNTS_PER_DEGREE:.3f}")
-        else:
-            print("Base CPD not acknowledged; base assist may be uncalibrated.")
+        base_cal = configure_base_link(link)
+        if base_cal.is_calibrated:
+            print(
+                f"Base calibrated: CPD {base_cal.counts_per_degree:.3f}, "
+                f"sign {base_cal.encoder_sign:+.0f}, scale {base_cal.command_scale:.3f}"
+            )
         if BASE_ZERO_ON_START:
             link.zero_base()
             print("Base zero reference sent.")
 
     base_auto_enabled = BASE_ENABLED
-    if BASE_ENABLED and BASE_REQUIRE_CALIBRATED_CPD and not link.is_calibrated():
+    if BASE_ENABLED and BASE_REQUIRE_CALIBRATED_CPD and (base_cal is None or not base_cal.is_calibrated):
         base_auto_enabled = False
         print(
             "Base auto motion disabled until CPD is calibrated — head servos still active.\n"
@@ -1618,26 +1638,22 @@ def servo_worker():
     wander = OrganicWanderSearch()
     wander.reset(PAN_CENTER, TILT_CENTER, time.time())
     link.write_angles(pan, tilt, force=True)
-    base_yaw_target = 0.0
-    base_yaw_hw = 0.0
-    base_yaw_glide = 0.0
-    base_yaw_vel = 0.0
     last_base_busy_check = 0.0
     base_motion_busy = False
-    base_elastic_motion = HeadMotionParams(
-        max_vel_pos=20.0,
-        max_vel_neg=20.0,
-        accel=34.0,
-        decel=46.0,
-        vel_blend=0.34,
-        track_gain=2.6,
-        goal_deadband_deg=0.18,
-    )
+
+    def refresh_base_busy(now_ts: float) -> None:
+        nonlocal base_motion_busy, last_base_busy_check
+        if not base_auto_enabled or now_ts - last_base_busy_check < 0.04:
+            return
+        status = link.query_status()
+        if status is not None:
+            base_motion_busy = status.busy
+        last_base_busy_check = now_ts
 
     def request_base_nudge(raw_step, source, compensation_gain):
         nonlocal base_auto_total_deg, filtered_norm_x, servo_target_pan
-        nonlocal last_base_step, last_base_source, last_base_comp, base_yaw_target
-        if not base_auto_enabled:
+        nonlocal last_base_step, last_base_source, last_base_comp
+        if not base_auto_enabled or base_motion_busy:
             return None
         step = clamp(raw_step * BASE_SIGN, -BASE_MAX_STEP_DEG, BASE_MAX_STEP_DEG)
         if abs(step) < BASE_MIN_STEP_DEG:
@@ -1654,7 +1670,6 @@ def servo_worker():
         target_glide.x *= max(0.0, 1.0 - BASE_PAN_RECENTER_BIAS)
         pan_pid.soften(0.15)
 
-        base_yaw_target += step
         last_base_step = step
         last_base_source = source
         last_base_comp = comp
@@ -1834,6 +1849,8 @@ def servo_worker():
                     and not wander.moving
                     and now - last_wander_base_nudge_ts >= BASE_WANDER_COOLDOWN_SEC
                     and abs(wpan - PAN_CENTER) >= BASE_WANDER_MIN_PAN_OFFSET_DEG
+                    and wander._last_step_deg >= BASE_WANDER_MIN_HEAD_STEP_DEG
+                    and random.random() < BASE_WANDER_CHANCE
                 ):
                     wander_dir = 1.0 if wpan > PAN_CENTER else -1.0
                     wander_base_request = wander_dir * clamp(
@@ -1887,6 +1904,8 @@ def servo_worker():
                 hi=TILT_MAX,
                 params=tilt_motion,
             )
+
+            refresh_base_busy(now)
 
             base_step = None
             if base_auto_enabled:
@@ -1994,42 +2013,16 @@ def servo_worker():
                 last_motion_emotion = motion_emotion
                 last_motion_emotion_ts = now
 
-            base_send_slice = None
-            if base_auto_enabled:
-                yaw_remaining = base_yaw_target - base_yaw_hw
-                if abs(yaw_remaining) <= base_elastic_motion.goal_deadband_deg:
-                    base_yaw_glide = base_yaw_hw = base_yaw_target
-                    base_yaw_vel = 0.0
-                elif now - last_base_busy_check >= 0.05:
-                    status = link.query_status()
-                    base_motion_busy = status.busy if status else False
-                    last_base_busy_check = now
-                if not base_motion_busy and abs(yaw_remaining) > base_elastic_motion.goal_deadband_deg:
-                    glide_lo = min(base_yaw_hw, base_yaw_target)
-                    glide_hi = max(base_yaw_hw, base_yaw_target)
-                    base_yaw_glide, base_yaw_vel = tick_toward(
-                        base_yaw_glide,
-                        base_yaw_vel,
-                        base_yaw_target,
-                        loop_delay,
-                        lo=glide_lo,
-                        hi=glide_hi,
-                        params=base_elastic_motion,
-                    )
-                    slice_deg = base_yaw_glide - base_yaw_hw
-                    if abs(slice_deg) >= 0.35:
-                        base_send_slice = slice_deg
-                        base_yaw_hw += slice_deg
-                        base_motion_busy = True
-
-            if base_send_slice is not None:
-                if not link.write_combined(
+            if base_step is not None and not base_motion_busy:
+                if link.write_combined(
                     pan,
                     tilt,
-                    base_send_slice,
+                    base_step,
                     wait_servo=False,
                     wait_base=False,
                 ):
+                    base_motion_busy = True
+                else:
                     link.write_angles(pan, tilt)
             else:
                 link.write_angles(pan, tilt)

@@ -10,6 +10,7 @@
  *   B+2.0 / B-2.0 -> relative base degrees
  *   B0.0          -> absolute base degrees from zero
  *   C1.222        -> set counts per base degree
+ *   E-1 / E1      -> encoder sign (+deg command maps to sign*cpd counts)
  *   Z              -> zero base encoder reference
  *   X              -> stop base motor
  *   ?              -> POS <count> DEG <deg> CPD <cpd> BUSY 0|1
@@ -42,16 +43,17 @@ const int MOTOR_AIN1_PIN = 26;
 const int MOTOR_AIN2_PIN = 27;
 
 const int LINE_BUF_SIZE = 96;
-const int ENCODER_TOLERANCE = 8;
-const int COARSE_ERR_COUNTS = 64;
-const int COARSE_PWM = 155;
-const int FINE_MIN_PWM = 85;
-const int PWM_MAX = 180;
+const int ENCODER_TOLERANCE = 10;
+const int COARSE_ERR_COUNTS = 48;
+const int COARSE_PWM = 120;
+const int FINE_MIN_PWM = 48;
+const int PWM_MAX = 150;
 const unsigned long STALL_MS = 4000;
 const int MOTOR_DIR_SIGN = 1;
 const int STALL_MIN_PROGRESS = 1;
-const unsigned long MOVE_TIMEOUT_MS = 15000;
-const float FINE_KP = 2.2f;
+const unsigned long MOVE_TIMEOUT_MS = 12000;
+const float FINE_KP = 1.35f;
+const float FINE_PWM_PER_COUNT = 2.8f;
 
 const int LEDC_FREQ_HZ = 20000;
 const int LEDC_RES_BITS = 8;
@@ -77,9 +79,11 @@ unsigned long moveStartMs = 0;
 unsigned long lastProgressMs = 0;
 long lastProgressCount = 0;
 long lastErrorAbs = 0;
+long moveMaxTravelCounts = 0;
 float ackBaseDeg = 0.0f;
 bool pendingBaseAck = false;
 float countsPerBaseDeg = 1.0f;
+float encoderSign = 1.0f;
 
 const int8_t ENC_QUAD_TABLE[16] = {
   0, 1, -1, 0,
@@ -140,16 +144,28 @@ long readEncoderCount() {
 }
 
 float countsToDeg(long counts) {
-  return (float)(counts - zeroOffset) / countsPerBaseDeg;
+  if (countsPerBaseDeg < 0.05f || encoderSign == 0.0f) return 0.0f;
+  return (float)(counts - zeroOffset) / (countsPerBaseDeg * encoderSign);
 }
 
 long degToCounts(float deg) {
-  return zeroOffset + (long)(deg * countsPerBaseDeg);
+  return zeroOffset + (long)(deg * countsPerBaseDeg * encoderSign);
 }
 
 bool setCountsPerBaseDeg(float cpd) {
   if (cpd < 0.05f || cpd > 200.0f) return false;
   countsPerBaseDeg = cpd;
+  return true;
+}
+
+bool setEncoderSign(float sign) {
+  if (sign < 0.0f) {
+    encoderSign = -1.0f;
+  } else if (sign > 0.0f) {
+    encoderSign = 1.0f;
+  } else {
+    return false;
+  }
   return true;
 }
 
@@ -228,6 +244,7 @@ bool startBaseMoveToCount(long targetCount, float ackDeg) {
   moveStartCount = readEncoderCount();
   lastProgressCount = moveStartCount;
   lastErrorAbs = labs(targetCount - moveStartCount);
+  moveMaxTravelCounts = lastErrorAbs + ENCODER_TOLERANCE * 3;
   moveActive = true;
   baseBusy = true;
   moveStartMs = millis();
@@ -237,7 +254,7 @@ bool startBaseMoveToCount(long targetCount, float ackDeg) {
 
 bool startBaseRelativeDeg(float deltaDeg) {
   long pos = readEncoderCount();
-  long deltaCounts = (long)(deltaDeg * countsPerBaseDeg);
+  long deltaCounts = (long)(deltaDeg * countsPerBaseDeg * encoderSign);
   return startBaseMoveToCount(pos + deltaCounts, deltaDeg);
 }
 
@@ -328,6 +345,8 @@ void handleLine() {
   bool hasBase = false;
   bool baseRelative = false;
   bool hasCpd = false;
+  bool hasEncSign = false;
+  float encSignValue = 1.0f;
 
   char buf[LINE_BUF_SIZE];
   strncpy(buf, lineBuffer, LINE_BUF_SIZE - 1);
@@ -348,6 +367,9 @@ void handleLine() {
     } else if (c == 'C' || c == 'c') {
       hasCpd = true;
       cpdValue = atof(token + 1);
+    } else if (c == 'E' || c == 'e') {
+      hasEncSign = true;
+      encSignValue = atof(token + 1);
     }
     token = strtok(NULL, " ");
   }
@@ -360,6 +382,14 @@ void handleLine() {
       Serial.println(F("ERR C range"));
     }
   }
+  if (hasEncSign) {
+    if (setEncoderSign(encSignValue)) {
+      Serial.print(F("OK E"));
+      Serial.println(encoderSign, 0);
+    } else {
+      Serial.println(F("ERR E range"));
+    }
+  }
   if (hasPan || hasTilt) {
     writeAngles(pan, tilt, true);
   }
@@ -370,7 +400,7 @@ void handleLine() {
       startBaseAbsoluteDeg(baseDeg);
     }
   }
-  if (!hasPan && !hasTilt && !hasBase && !hasCpd) {
+  if (!hasPan && !hasTilt && !hasBase && !hasCpd && !hasEncSign) {
     Serial.println(F("ERR unknown"));
   }
   lineLen = 0;
@@ -389,6 +419,14 @@ void updateBaseMotor() {
   long pos = readEncoderCount();
   long error = moveTargetCount - pos;
   long errAbs = labs(error);
+  long traveled = labs(pos - moveStartCount);
+
+  if (traveled > moveMaxTravelCounts + COARSE_ERR_COUNTS) {
+    stopBaseMotion();
+    Serial.println(F("ERR B overshoot"));
+    return;
+  }
+
   if (errAbs <= ENCODER_TOLERANCE) {
     stopBaseMotion();
     pendingBaseAck = true;
@@ -405,16 +443,21 @@ void updateBaseMotor() {
     return;
   }
 
+  int pwmCap = (int)constrain((float)errAbs * FINE_PWM_PER_COUNT, (float)FINE_MIN_PWM, (float)COARSE_PWM);
+
   if (errAbs > COARSE_ERR_COUNTS) {
-    motorDrive((error > 0 ? -COARSE_PWM : COARSE_PWM));
+    motorDrive((error > 0 ? pwmCap : -pwmCap));
     return;
   }
 
-  int out = (int)(FINE_KP * 0.55f * (float)(-error));
+  int out = (int)(FINE_KP * (float)error);
   if (out == 0) {
-    out = (error > 0 ? -FINE_MIN_PWM : FINE_MIN_PWM);
+    out = (error > 0 ? FINE_MIN_PWM : -FINE_MIN_PWM);
   } else if (labs(out) < FINE_MIN_PWM) {
     out = (out > 0 ? FINE_MIN_PWM : -FINE_MIN_PWM);
+  }
+  if (labs(out) > pwmCap) {
+    out = (out > 0 ? pwmCap : -pwmCap);
   }
   motorDrive(out);
 }

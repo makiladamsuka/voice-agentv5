@@ -10,19 +10,22 @@ Standalone base motor test for ESP32 v5 firmware (encoder + TB6612).
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 import threading
 import time
 
 import _bootstrap  # noqa: F401
 
-from arduino_servo import ArduinoServoLink, BASE_MOVE_TIMEOUT_SEC, BOOT_CPD
+from arduino_servo import ArduinoServoLink, BASE_MOVE_TIMEOUT_SEC
 from base_motor_utils import (
     CONFIG_PATH,
-    apply_config_cpd_to_nano,
-    load_counts_per_degree,
+    apply_base_calibration_to_nano,
+    configure_base_link,
+    load_command_scale,
     load_move_timeout,
+    write_command_scale_to_config,
+    write_cpd_to_config,
+    write_encoder_sign_to_config,
 )
 
 DEFAULT_HOLD_SEC = 3.0
@@ -49,20 +52,6 @@ def needs_config_cpd_on_connect(args: argparse.Namespace) -> bool:
         or args.demo
         or args.calibrate
     )
-
-
-def write_cpd_to_config(cpd: float) -> None:
-    text = CONFIG_PATH.read_text(encoding="utf-8")
-    updated = re.sub(
-        r"^(\s*counts_per_degree:\s*)([^\n#]+)(.*)$",
-        rf"\g<1>{cpd:.6f}  # set by --calibrate-manual\3",
-        text,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    if updated == text:
-        raise RuntimeError("Could not find base.counts_per_degree in config.yaml")
-    CONFIG_PATH.write_text(updated, encoding="utf-8")
 
 
 def warn_if_uncalibrated(link: ArduinoServoLink) -> None:
@@ -141,13 +130,16 @@ def run_calibrate_manual(
 
     st1 = link.query_status()
     pos_end = st1.encoder_count if st1 else pos_start
-    delta = abs(pos_end - pos_start)
+    signed_delta = pos_end - pos_start
+    delta = abs(signed_delta)
     cpd = delta / degrees
+    encoder_sign = 1.0 if signed_delta > 0 else -1.0
 
     print(f"\n  Start POS: {pos_start}")
     print(f"  End POS:   {pos_end}")
-    print(f"  Delta:     {delta} counts for {degrees:.0f}°")
+    print(f"  Delta:     {signed_delta:+d} counts for {degrees:.0f}°")
     print(f"  counts_per_degree: {cpd:.6f}")
+    print(f"  encoder_sign: {encoder_sign:+.0f}  (+deg command → sign×cpd counts)")
     print(f"  counts_per_revolution: {cpd * 360:.1f}")
 
     if delta < MIN_ENCODER_DELTA:
@@ -160,12 +152,17 @@ def run_calibrate_manual(
     if not link.set_counts_per_degree(cpd):
         print("ERROR: failed to apply C command to ESP32.")
         sys.exit(1)
+    if not link.set_encoder_sign(encoder_sign):
+        print("ERROR: failed to apply E command to ESP32.")
+        sys.exit(1)
 
-    print(f"\nApplied C{cpd:.4f} to ESP32.")
+    print(f"\nApplied C{cpd:.4f} and E{encoder_sign:+.0f} to ESP32.")
     print(f"  config.yaml:  counts_per_degree: {cpd:.6f}")
+    print(f"  config.yaml:  encoder_sign: {encoder_sign:+.0f}")
 
     if write_config:
         write_cpd_to_config(cpd)
+        write_encoder_sign_to_config(encoder_sign)
         print(f"  Wrote {CONFIG_PATH}")
 
     print("\nVerify with:")
@@ -241,10 +238,18 @@ def main() -> int:
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--watch", action="store_true", help="Live encoder via ? status")
     parser.add_argument("--demo", action="store_true")
+    parser.add_argument(
+        "--correct-move",
+        nargs=2,
+        type=float,
+        metavar=("COMMANDED", "ACTUAL"),
+        help="Set command_scale from measured move (e.g. 30 200 if B+30 moved 200°)",
+    )
     args = parser.parse_args()
 
     link = ArduinoServoLink(port=args.port, baud=args.baud)
     link.base_move_timeout_sec = load_move_timeout()
+    configure_base_link(link)
 
     if not link.connect():
         print("Failed to connect. Check USB, dialout, and firmware READY.")
@@ -252,7 +257,25 @@ def main() -> int:
 
     try:
         if needs_config_cpd_on_connect(args):
-            apply_config_cpd_to_nano(link)
+            apply_base_calibration_to_nano(link)
+            if link.base_command_scale != 1.0:
+                print(f"Base command_scale {link.base_command_scale:.4f} (plate vs encoder)")
+
+        if args.correct_move:
+            commanded, actual = args.correct_move
+            if commanded <= 0 or actual <= 0:
+                print("ERROR: --correct-move values must be positive degrees.")
+                return 1
+            scale = max(0.01, min(1.0, commanded / actual))
+            configure_base_link(link)
+            link.base_command_scale = scale
+            write_command_scale_to_config(scale)
+            print(
+                f"command_scale set to {scale:.4f} "
+                f"(B+{commanded:.0f} measured {actual:.0f}° on base plate)"
+            )
+            print(f"Wrote {CONFIG_PATH}")
+            return 0
 
         if args.zero:
             link.zero_base()
@@ -286,6 +309,12 @@ def main() -> int:
             link.write_base_relative(args.relative, wait=args.verify)
             if args.verify and link._last_base_ack is not None:
                 print(f"  → ACK B{link._last_base_ack:.1f}")
+                st = link.query_status()
+                if st is not None:
+                    print(
+                        f"  → encoder POS {st.encoder_count} "
+                        f"(reported {st.degrees:.1f}°; plate angle is ~command_scale × that)"
+                    )
             elif args.verify:
                 print("  → no base ACK (timeout or lost)")
             time.sleep(args.hold)

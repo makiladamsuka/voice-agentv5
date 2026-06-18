@@ -135,7 +135,7 @@ class OrganicWanderSearch:
     def reset(self, pan_center: float, tilt_center: float, now: float) -> None:
         self.pan_goal = pan_center
         self.tilt_goal = tilt_center
-        self.hold_until = now + random.uniform(1.0, 2.8)
+        self.hold_until = now + random.uniform(0.45, 1.1)
         self.moving = False
         self.drift_vel = 0.0
         self.move_speed_scale = 1.0
@@ -152,6 +152,7 @@ class OrganicWanderSearch:
         pan_center: float,
         tilt_center: float,
         pan_current: float,
+        tilt_current: float,
         pan_min: float,
         pan_max: float,
         tilt_min: float,
@@ -165,6 +166,7 @@ class OrganicWanderSearch:
         arrival_deg: float,
         tilt_max_up_deg: float,
         tilt_max_down_deg: float,
+        tilt_step_max_deg: float,
         thinking_hold_chance: float = 0.35,
         thinking_hold_min_sec: float = 3.5,
         thinking_hold_max_sec: float = 8.0,
@@ -178,6 +180,7 @@ class OrganicWanderSearch:
                     pan_center=pan_center,
                     tilt_center=tilt_center,
                     pan_current=pan_current,
+                    tilt_current=tilt_current,
                     pan_min=pan_min,
                     pan_max=pan_max,
                     tilt_min=tilt_min,
@@ -189,6 +192,7 @@ class OrganicWanderSearch:
                     arrival_deg=arrival_deg,
                     tilt_max_up_deg=tilt_max_up_deg,
                     tilt_max_down_deg=tilt_max_down_deg,
+                    tilt_step_max_deg=tilt_step_max_deg,
                 )
                 self.moving = True
             self.drift_vel = 0.0
@@ -219,6 +223,7 @@ class OrganicWanderSearch:
         pan_center: float,
         tilt_center: float,
         pan_current: float,
+        tilt_current: float,
         pan_min: float,
         pan_max: float,
         tilt_min: float,
@@ -230,34 +235,45 @@ class OrganicWanderSearch:
         arrival_deg: float,
         tilt_max_up_deg: float,
         tilt_max_down_deg: float,
+        tilt_step_max_deg: float,
     ) -> None:
         step, speed_scale = self._dynamic_step_and_speed(
             step_min_deg, step_max_deg, amp_deg, jump_chance
         )
         self.move_speed_scale = speed_scale
-        self.arrival_deg = arrival_deg * random.uniform(0.75, 1.35)
+        self.arrival_deg = arrival_deg * random.uniform(0.85, 1.15)
 
-        if random.random() < jump_chance:
-            offset = random.uniform(-amp_deg, amp_deg)
-            self.pan_goal = clamp(pan_center + offset, pan_min, pan_max)
+        margin = 3.0
+        direction = random.choice([-1.0, 1.0])
+        self.pan_goal = clamp(pan_current + direction * step, pan_min, pan_max)
+        self._last_step_deg = min(step, abs(self.pan_goal - pan_current))
+        if self.pan_goal >= pan_max - margin:
+            self.pan_goal = clamp(
+                pan_current - random.uniform(step * 0.45, step), pan_min, pan_max
+            )
             self._last_step_deg = abs(self.pan_goal - pan_current)
-        else:
-            margin = 4.0
-            direction = random.choice([-1.0, 1.0])
-            self.pan_goal = clamp(pan_current + direction * step, pan_min, pan_max)
-            self._last_step_deg = step
-            if self.pan_goal >= pan_max - margin:
-                self.pan_goal = clamp(
-                    pan_current - random.uniform(step * 0.5, step), pan_min, pan_max
-                )
-            elif self.pan_goal <= pan_min + margin:
-                self.pan_goal = clamp(
-                    pan_current + random.uniform(step * 0.5, step), pan_min, pan_max
-                )
+        elif self.pan_goal <= pan_min + margin:
+            self.pan_goal = clamp(
+                pan_current + random.uniform(step * 0.45, step), pan_min, pan_max
+            )
+            self._last_step_deg = abs(self.pan_goal - pan_current)
+
+        # Keep pan inside the soft wander envelope around center.
+        soft_lo = clamp(pan_center - amp_deg, pan_min, pan_max)
+        soft_hi = clamp(pan_center + amp_deg, pan_min, pan_max)
+        if self.pan_goal < soft_lo:
+            self.pan_goal = clamp(pan_current + random.uniform(step * 0.4, step), soft_lo, pan_max)
+            self._last_step_deg = abs(self.pan_goal - pan_current)
+        elif self.pan_goal > soft_hi:
+            self.pan_goal = clamp(pan_current - random.uniform(step * 0.4, step), pan_min, soft_hi)
+            self._last_step_deg = abs(self.pan_goal - pan_current)
 
         tilt_lo = clamp(tilt_center - max(0.0, tilt_max_down_deg), tilt_min, tilt_max)
         tilt_hi = clamp(tilt_center + max(0.0, tilt_max_up_deg), tilt_min, tilt_max)
-        self.tilt_goal = random.uniform(tilt_lo, tilt_hi) if tilt_lo <= tilt_hi else tilt_center
+        tilt_step = random.uniform(0.4, max(0.5, tilt_step_max_deg))
+        if random.random() < 0.5:
+            tilt_step = -tilt_step
+        self.tilt_goal = clamp(tilt_current + tilt_step, tilt_lo, tilt_hi)
 
     def _assign_pause_kind(
         self,
@@ -275,9 +291,9 @@ class OrganicWanderSearch:
         step_norm = clamp((self._last_step_deg - step_min_deg) / span, 0.0, 1.2)
         base_hold = random.uniform(hold_min_sec, hold_max_sec)
         if step_norm < 0.35:
-            base_hold *= random.uniform(0.65, 1.05)
+            base_hold *= random.uniform(0.55, 0.95)
         elif step_norm > 0.85:
-            base_hold *= random.uniform(1.15, 1.85)
+            base_hold *= random.uniform(1.05, 1.35)
 
         roll = random.random()
         if roll < thinking_hold_chance:
@@ -291,19 +307,19 @@ class OrganicWanderSearch:
             self.hold_emotion_hint = random.choice(
                 ["attentive", "curious_intense", "thinking"]
             )
-            self._next_hold_sec = random.uniform(hold_max_sec * 0.95, hold_max_sec * 1.75)
+            self._next_hold_sec = random.uniform(hold_max_sec * 0.85, hold_max_sec * 1.25)
         elif step_norm < 0.38:
             self.pause_kind = "glance"
             self.hold_emotion_hint = random.choice(
                 ["curious", "uncertain", "curious_intense"]
             )
-            self._next_hold_sec = max(1.0, base_hold * random.uniform(0.55, 0.92))
+            self._next_hold_sec = max(0.45, base_hold * random.uniform(0.50, 0.85))
         else:
             self.pause_kind = "look"
             self.hold_emotion_hint = random.choice(
                 ["attentive", "uncertain", "thinking", "curious_intense", "curious"]
             )
-            self._next_hold_sec = max(1.2, base_hold)
+            self._next_hold_sec = max(0.5, base_hold)
 
     @staticmethod
     def _dynamic_step_and_speed(
@@ -314,38 +330,23 @@ class OrganicWanderSearch:
     ) -> tuple[float, float]:
         lo = min(step_min_deg, step_max_deg)
         hi = max(step_min_deg, step_max_deg)
-        mid = (lo + hi) * 0.5
         roll = random.random()
 
-        if roll < 0.14:
-            step = random.uniform(lo * 0.12, lo * 0.55)
-            speed = random.uniform(0.42, 0.72)
-        elif roll < 0.32:
-            step = random.uniform(lo * 0.35, lo * 0.95)
-            speed = random.uniform(0.55, 0.88)
-        elif roll < 0.58:
-            step = random.triangular(lo * 0.5, mid, hi * 0.62)
-            speed = random.uniform(0.75, 1.12)
-        elif roll < 0.78:
-            step = random.uniform(mid * 0.7, hi * 1.05)
-            speed = random.uniform(0.92, 1.42)
-        elif roll < 0.92:
-            step = random.uniform(hi * 0.85, min(hi * 1.22, amp_deg))
-            speed = random.uniform(1.18, 1.68)
+        if roll < 0.45:
+            step = random.uniform(lo, lo + (hi - lo) * 0.40)
+            speed = random.uniform(0.52, 0.72)
+        elif roll < 0.80:
+            step = random.uniform(lo + (hi - lo) * 0.30, hi * 0.90)
+            speed = random.uniform(0.58, 0.82)
         else:
-            step = random.uniform(hi * 1.05, amp_deg * 1.08)
-            speed = random.uniform(1.35, 1.85)
+            step = random.uniform(hi * 0.70, hi)
+            speed = random.uniform(0.65, 0.88)
 
-        if random.random() < jump_chance * 0.4:
-            step = random.uniform(hi * 0.75, amp_deg * random.uniform(0.95, 1.15))
-            speed = random.uniform(1.0, 1.62)
+        if jump_chance > 0.0 and random.random() < jump_chance * 0.15:
+            step = random.uniform(hi * 0.75, min(hi * 1.1, amp_deg * 0.35))
+            speed = random.uniform(0.55, 0.75)
 
-        if random.random() < 0.08:
-            speed *= random.uniform(0.38, 0.62)
-        elif random.random() < 0.10:
-            speed *= random.uniform(1.45, 1.9)
-
-        return max(2.0, step), clamp(speed, 0.35, 1.9)
+        return max(2.0, min(step, hi)), clamp(speed, 0.45, 0.88)
 
 
 def scale_head_motion(params: HeadMotionParams, scale: float) -> HeadMotionParams:

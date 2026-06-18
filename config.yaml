@@ -108,21 +108,22 @@ servo:
   lost_search_min_norm_x: 0.22
   lost_search_base_step_deg: 7.0
   lost_search_base_cooldown_sec: 1.6
-  wander_pan_amp_deg: 26.0
-  wander_step_min_deg: 6.0
-  wander_step_max_deg: 28.0
-  wander_hold_min_sec: 1.3
-  wander_hold_max_sec: 5.8
-  wander_jump_chance: 0.34
-  wander_arrival_deg: 2.0
-  wander_tilt_max_up_deg: 3.0
-  wander_tilt_max_down_deg: 3.5
-  wander_thinking_hold_chance: 0.34
-  wander_thinking_hold_min_sec: 3.0
-  wander_thinking_hold_max_sec: 7.5
-  wander_long_stare_chance: 0.12
-  wander_pan_target_alpha: 0.10
-  wander_tilt_target_alpha: 0.075
+  wander_pan_amp_deg: 20.0   # soft limit from center when picking direction
+  wander_step_min_deg: 3.0
+  wander_step_max_deg: 8.0   # small search steps, a bit larger than before
+  wander_jump_chance: 0.0    # no teleport jumps to far pan angles
+  wander_arrival_deg: 1.4
+  wander_tilt_step_max_deg: 2.5
+  wander_tilt_max_up_deg: 2.5
+  wander_tilt_max_down_deg: 2.5
+  wander_hold_min_sec: 0.6
+  wander_hold_max_sec: 2.2
+  wander_thinking_hold_chance: 0.22
+  wander_thinking_hold_min_sec: 1.2
+  wander_thinking_hold_max_sec: 3.0
+  wander_long_stare_chance: 0.06
+  wander_pan_smooth_hz: 4.8   # wander neck follow — between slow search and track
+  wander_tilt_smooth_hz: 4.2
   motion_emotion_min_sec: 2.6
   attention_hold_min_sec: 3.2
   attention_hold_max_sec: 6.5

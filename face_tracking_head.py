@@ -266,14 +266,15 @@ WANDER_HOLD_MIN_SEC = float(SERVO_CFG.get("wander_hold_min_sec", 1.3))
 WANDER_HOLD_MAX_SEC = float(SERVO_CFG.get("wander_hold_max_sec", 5.8))
 WANDER_JUMP_CHANCE = float(SERVO_CFG.get("wander_jump_chance", 0.34))
 WANDER_ARRIVAL_DEG = float(SERVO_CFG.get("wander_arrival_deg", 2.0))
+WANDER_TILT_STEP_MAX_DEG = float(SERVO_CFG.get("wander_tilt_step_max_deg", 1.8))
 WANDER_TILT_MAX_UP_DEG = float(SERVO_CFG.get("wander_tilt_max_up_deg", 1.1))
 WANDER_TILT_MAX_DOWN_DEG = float(SERVO_CFG.get("wander_tilt_max_down_deg", 1.6))
 WANDER_THINKING_HOLD_CHANCE = float(SERVO_CFG.get("wander_thinking_hold_chance", 0.34))
 WANDER_THINKING_HOLD_MIN_SEC = float(SERVO_CFG.get("wander_thinking_hold_min_sec", 3.0))
 WANDER_THINKING_HOLD_MAX_SEC = float(SERVO_CFG.get("wander_thinking_hold_max_sec", 7.5))
 WANDER_LONG_STARE_CHANCE = float(SERVO_CFG.get("wander_long_stare_chance", 0.12))
-WANDER_PAN_TARGET_ALPHA = float(SERVO_CFG.get("wander_pan_target_alpha", 0.10))
-WANDER_TILT_TARGET_ALPHA = float(SERVO_CFG.get("wander_tilt_target_alpha", 0.035))
+WANDER_PAN_SMOOTH_HZ = float(SERVO_CFG.get("wander_pan_smooth_hz", 4.8))
+WANDER_TILT_SMOOTH_HZ = float(SERVO_CFG.get("wander_tilt_smooth_hz", 4.2))
 MOTION_EMOTION_MIN_SEC = float(SERVO_CFG.get("motion_emotion_min_sec", 1.0))
 ATTENTION_HOLD_MIN_SEC = float(SERVO_CFG.get("attention_hold_min_sec", 1.0))
 ATTENTION_HOLD_MAX_SEC = float(SERVO_CFG.get("attention_hold_max_sec", 2.2))
@@ -1829,6 +1830,7 @@ def servo_worker():
                     pan_center=PAN_CENTER,
                     tilt_center=TILT_CENTER,
                     pan_current=pan,
+                    tilt_current=tilt,
                     pan_min=PAN_MIN,
                     pan_max=PAN_MAX,
                     tilt_min=TILT_MIN,
@@ -1842,6 +1844,7 @@ def servo_worker():
                     arrival_deg=WANDER_ARRIVAL_DEG,
                     tilt_max_up_deg=WANDER_TILT_MAX_UP_DEG,
                     tilt_max_down_deg=WANDER_TILT_MAX_DOWN_DEG,
+                    tilt_step_max_deg=WANDER_TILT_STEP_MAX_DEG,
                     thinking_hold_chance=WANDER_THINKING_HOLD_CHANCE,
                     thinking_hold_min_sec=WANDER_THINKING_HOLD_MIN_SEC,
                     thinking_hold_max_sec=WANDER_THINKING_HOLD_MAX_SEC,
@@ -1863,22 +1866,8 @@ def servo_worker():
                         wander_interest,
                         pan,
                     )
-                speed = wander.move_speed_scale
-                hold_scale = 0.45
-                if not wander.moving:
-                    if wander.pause_kind == "thinking":
-                        hold_scale = 0.28
-                    elif wander.pause_kind == "long_stare":
-                        hold_scale = 0.32
-                    elif wander.pause_kind == "glance":
-                        hold_scale = 0.52
-                pan_alpha = WANDER_PAN_TARGET_ALPHA * speed * (
-                    1.35 if wander.moving else hold_scale
-                )
-                servo_target_pan += (wpan - servo_target_pan) * pan_alpha
-                servo_target_tilt += (wtilt - servo_target_tilt) * WANDER_TILT_TARGET_ALPHA
-                servo_target_pan = clamp(servo_target_pan, PAN_MIN, PAN_MAX)
-                servo_target_tilt = clamp(servo_target_tilt, TILT_MIN, TILT_MAX)
+                servo_target_pan = wpan
+                servo_target_tilt = wtilt
                 motion_emotion = (
                     _looking_emotion_for_pan_goal(servo_target_pan)
                     if wander.moving
@@ -1888,8 +1877,8 @@ def servo_worker():
             pan_hz = PAN_SMOOTH_HZ
             tilt_hz = TILT_SMOOTH_HZ
             if mode == "wander":
-                pan_hz *= wander.move_speed_scale
-                tilt_hz *= 0.65 + (wander.move_speed_scale * 0.35)
+                pan_hz = WANDER_PAN_SMOOTH_HZ
+                tilt_hz = WANDER_TILT_SMOOTH_HZ
 
             pan = smooth_toward(
                 pan,

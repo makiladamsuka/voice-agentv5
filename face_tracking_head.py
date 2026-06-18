@@ -297,6 +297,8 @@ BASE_WANDER_MIN_HEAD_STEP_DEG = float(BASE_CFG.get("wander_min_head_step_deg", 1
 BASE_ENABLED = bool(BASE_CFG.get("enabled", False))
 BASE_ZERO_ON_START = bool(BASE_CFG.get("zero_on_start", False))
 BASE_SIGN = float(BASE_CFG.get("sign", 1.0))
+BASE_HEAD_LEAD_MIN_DEG = float(BASE_CFG.get("head_lead_min_deg", 8.0))
+BASE_FOLLOW_HEAD_DIRECTION = bool(BASE_CFG.get("follow_head_direction", True))
 BASE_TRIGGER_NORM_X = float(BASE_CFG.get("trigger_norm_x", 0.52))
 BASE_TRIGGER_HOLD_SEC = float(BASE_CFG.get("trigger_hold_sec", 1.2))
 BASE_COOLDOWN_SEC = float(BASE_CFG.get("cooldown_sec", 2.4))
@@ -1564,6 +1566,42 @@ def _motion_emotion_from_hint(hint):
     return "thinking"
 
 
+def head_pan_offset_deg(pan_angle: float) -> float:
+    """Positive = head/camera looking right relative to body."""
+    return (pan_angle - PAN_CENTER) * PAN_SIGN
+
+
+def base_head_lead_sign(pan_offset: float) -> float:
+    if pan_offset > 0.5:
+        return 1.0
+    if pan_offset < -0.5:
+        return -1.0
+    return 0.0
+
+
+def plan_base_follow_step(
+    magnitude_deg: float,
+    interest_sign: float,
+    pan_angle: float,
+) -> float | None:
+    """
+    Head-lead rule: neck turns toward interest first; base only follows the
+    direction the head is already pointing (same sign as pan offset).
+    """
+    if interest_sign == 0.0:
+        return None
+    interest_sign = 1.0 if interest_sign > 0.0 else -1.0
+    pan_offset = head_pan_offset_deg(pan_angle)
+    head_sign = base_head_lead_sign(pan_offset)
+    if abs(pan_offset) < BASE_HEAD_LEAD_MIN_DEG or head_sign == 0.0:
+        return None
+    if interest_sign * head_sign < 0.0:
+        return None
+    direction = head_sign if BASE_FOLLOW_HEAD_DIRECTION else interest_sign
+    mag = clamp(abs(magnitude_deg), BASE_MIN_STEP_DEG, BASE_MAX_STEP_DEG)
+    return direction * mag
+
+
 def servo_worker():
     global running
 
@@ -1848,15 +1886,15 @@ def servo_worker():
                     and was_wander_moving
                     and not wander.moving
                     and now - last_wander_base_nudge_ts >= BASE_WANDER_COOLDOWN_SEC
-                    and abs(wpan - PAN_CENTER) >= BASE_WANDER_MIN_PAN_OFFSET_DEG
+                    and abs(head_pan_offset_deg(pan)) >= BASE_WANDER_MIN_PAN_OFFSET_DEG
                     and wander._last_step_deg >= BASE_WANDER_MIN_HEAD_STEP_DEG
                     and random.random() < BASE_WANDER_CHANCE
                 ):
-                    wander_dir = 1.0 if wpan > PAN_CENTER else -1.0
-                    wander_base_request = wander_dir * clamp(
+                    wander_interest = 1.0 if wpan > PAN_CENTER else -1.0
+                    wander_base_request = plan_base_follow_step(
                         BASE_WANDER_STEP_DEG,
-                        BASE_MIN_STEP_DEG,
-                        BASE_MAX_STEP_DEG,
+                        wander_interest,
+                        pan,
                     )
                 speed = wander.move_speed_scale
                 hold_scale = 0.45
@@ -1931,17 +1969,19 @@ def servo_worker():
                     and abs(fast_face_vel_x) >= BASE_FAST_FACE_VELOCITY_NORM_SEC
                 )
                 if fast_allowed_for_scene:
-                    direction = 1.0 if fast_face_vel_x >= 0.0 else -1.0
+                    interest_sign = 1.0 if fast_face_vel_x >= 0.0 else -1.0
                     magnitude = clamp(
                         abs(fast_face_vel_x) * BASE_FAST_FACE_VELOCITY_TO_DEG_GAIN,
                         BASE_FAST_FACE_MIN_STEP_DEG,
                         BASE_FAST_FACE_MAX_STEP_DEG,
                     )
-                    base_step = request_base_nudge(
-                        direction * magnitude,
-                        "fast",
-                        BASE_FAST_FACE_COMPENSATION_GAIN,
-                    )
+                    planned = plan_base_follow_step(magnitude, interest_sign, pan)
+                    if planned is not None:
+                        base_step = request_base_nudge(
+                            planned,
+                            "fast",
+                            BASE_FAST_FACE_COMPENSATION_GAIN,
+                        )
                     if base_step is not None:
                         last_base_nudge_ts = now
                         last_fast_base_nudge_ts = now
@@ -1956,12 +1996,18 @@ def servo_worker():
                 )
                 if lost_allowed_for_scene:
                     lost_dir_source = last_face_norm_x + (last_face_vel_x * LOST_SEARCH_VELOCITY_GAIN)
-                    direction = 1.0 if lost_dir_source >= 0.0 else -1.0
-                    base_step = request_base_nudge(
-                        direction * LOST_SEARCH_BASE_STEP_DEG,
-                        "lost",
-                        BASE_TRACK_COMPENSATION_GAIN,
+                    interest_sign = 1.0 if lost_dir_source >= 0.0 else -1.0
+                    planned = plan_base_follow_step(
+                        LOST_SEARCH_BASE_STEP_DEG,
+                        interest_sign,
+                        pan,
                     )
+                    if planned is not None:
+                        base_step = request_base_nudge(
+                            planned,
+                            "lost",
+                            BASE_TRACK_COMPENSATION_GAIN,
+                        )
                     if base_step is not None:
                         last_base_nudge_ts = now
                         last_lost_base_nudge_ts = now
@@ -1973,7 +2019,7 @@ def servo_worker():
                     and track_kind != "body"
                     and (BASE_ALLOW_MULTI_FACE or face_count <= 1)
                 )
-                pan_offset = pan - PAN_CENTER
+                pan_offset = head_pan_offset_deg(pan)
                 base_error = filtered_norm_x
                 side_error = abs(base_error) >= BASE_TRIGGER_NORM_X
                 pan_near_limit = abs(pan_offset) >= BASE_PAN_SOFT_LIMIT_DEG
@@ -1985,19 +2031,21 @@ def servo_worker():
                         and now - last_base_nudge_ts >= BASE_COOLDOWN_SEC
                     )
                     if ready_for_nudge:
-                        direction = 1.0 if base_error >= 0.0 else -1.0
+                        interest_sign = 1.0 if base_error >= 0.0 else -1.0
                         if pan_near_limit and not side_error:
-                            direction = 1.0 if pan_offset >= 0.0 else -1.0
+                            interest_sign = base_head_lead_sign(pan_offset) or interest_sign
                         magnitude = clamp(
                             abs(base_error) * BASE_NORM_TO_DEG_GAIN,
                             BASE_MIN_STEP_DEG,
                             BASE_MAX_STEP_DEG,
                         )
-                        base_step = request_base_nudge(
-                            direction * magnitude,
-                            "track",
-                            BASE_TRACK_COMPENSATION_GAIN,
-                        )
+                        planned = plan_base_follow_step(magnitude, interest_sign, pan)
+                        if planned is not None:
+                            base_step = request_base_nudge(
+                                planned,
+                                "track",
+                                BASE_TRACK_COMPENSATION_GAIN,
+                            )
                         if base_step is not None:
                             last_base_nudge_ts = now
                             base_trigger_since = 0.0

@@ -89,7 +89,7 @@ def load_command_scale() -> float:
             re.MULTILINE,
         )
         if match:
-            return max(0.01, min(1.0, float(match.group(1))))
+            return max(0.01, min(2.0, float(match.group(1))))
     return 1.0
 
 
@@ -97,8 +97,15 @@ def scale_base_command_deg(deg: float) -> float:
     return deg * load_command_scale()
 
 
+def correct_command_scale(commanded_plate_deg: float, actual_plate_deg: float) -> float:
+    """Multiply current scale by commanded/actual from a measured move."""
+    if commanded_plate_deg <= 0 or actual_plate_deg <= 0:
+        raise ValueError("commanded and actual plate degrees must be positive")
+    return load_command_scale() * (commanded_plate_deg / actual_plate_deg)
+
+
 def write_command_scale_to_config(scale: float) -> None:
-    scale = max(0.01, min(1.0, scale))
+    scale = max(0.01, min(2.0, scale))
     text = CONFIG_PATH.read_text(encoding="utf-8")
     if re.search(r"^\s*command_scale:\s*", text, re.MULTILINE):
         updated = re.sub(

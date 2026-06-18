@@ -21,6 +21,7 @@ from base_motor_utils import (
     CONFIG_PATH,
     apply_base_calibration_to_nano,
     configure_base_link,
+    correct_command_scale,
     load_command_scale,
     load_move_timeout,
     write_command_scale_to_config,
@@ -266,13 +267,13 @@ def main() -> int:
             if commanded <= 0 or actual <= 0:
                 print("ERROR: --correct-move values must be positive degrees.")
                 return 1
-            scale = max(0.01, min(1.0, commanded / actual))
+            scale = max(0.01, min(2.0, correct_command_scale(commanded, actual)))
             configure_base_link(link)
             link.base_command_scale = scale
             write_command_scale_to_config(scale)
             print(
                 f"command_scale set to {scale:.4f} "
-                f"(B+{commanded:.0f} measured {actual:.0f}° on base plate)"
+                f"(commanded {commanded:.0f}° → measured {actual:.0f}° on base plate)"
             )
             print(f"Wrote {CONFIG_PATH}")
             return 0

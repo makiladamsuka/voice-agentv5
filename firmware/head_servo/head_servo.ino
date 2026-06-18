@@ -255,6 +255,10 @@ bool startBaseMoveToCount(long targetCount, float ackDeg) {
 bool startBaseRelativeDeg(float deltaDeg) {
   long pos = readEncoderCount();
   long deltaCounts = (long)(deltaDeg * countsPerBaseDeg * encoderSign);
+  const long MIN_MOVE_COUNTS = 30;
+  if (deltaCounts != 0 && labs(deltaCounts) < MIN_MOVE_COUNTS) {
+    deltaCounts = (deltaCounts > 0 ? MIN_MOVE_COUNTS : -MIN_MOVE_COUNTS);
+  }
   return startBaseMoveToCount(pos + deltaCounts, deltaDeg);
 }
 

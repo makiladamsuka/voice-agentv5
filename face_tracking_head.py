@@ -2021,7 +2021,9 @@ def servo_worker():
                     wait_servo=False,
                     wait_base=False,
                 ):
-                    base_motion_busy = True
+                    st = link.query_status()
+                    base_motion_busy = st.busy if st is not None else True
+                    last_base_busy_check = now
                 else:
                     link.write_angles(pan, tilt)
             else:

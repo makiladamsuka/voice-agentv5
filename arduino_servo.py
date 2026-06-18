@@ -259,7 +259,7 @@ class ArduinoServoLink:
             parts.append(f"B{sign}{base_rel:.1f}")
         ok = self.send_line(
             " ".join(parts),
-            wait_servo=wait_servo or base_rel is not None,
+            wait_servo=wait_servo,
             wait_base=wait_base and base_rel is not None,
         )
         if ok:

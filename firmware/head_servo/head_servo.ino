@@ -9,6 +9,7 @@
  *   P80.0 T110.0  -> set head pan/tilt
  *   B+2.0 / B-2.0 -> relative base degrees
  *   B0.0          -> absolute base degrees from zero
+ *   J+80 M300     -> open-loop base jog PWM for milliseconds
  *   C1.222        -> set counts per base degree
  *   E-1 / E1      -> encoder sign (+deg command maps to sign*cpd counts)
  *   Z              -> zero base encoder reference
@@ -27,12 +28,12 @@ const int LED_PIN = 2;
 
 const uint8_t PAN_CH = 4;
 const uint8_t TILT_CH = 5;
-const float PAN_MIN = 40.0f;
-const float PAN_MAX = 120.0f;
-const float TILT_MIN = 100.0f;
-const float TILT_MAX = 120.0f;
-const float PAN_CENTER = 80.0f;
-const float TILT_CENTER = 110.0f;
+const float PAN_MIN = 55.0f;
+const float PAN_MAX = 90.0f;
+const float TILT_MIN = 112.0f;
+const float TILT_MAX = 116.0f;
+const float PAN_CENTER = 73.0f;
+const float TILT_CENTER = 114.0f;
 const int PULSE_MIN_US = 450;
 const int PULSE_MAX_US = 2600;
 
@@ -43,17 +44,25 @@ const int MOTOR_AIN1_PIN = 26;
 const int MOTOR_AIN2_PIN = 27;
 
 const int LINE_BUF_SIZE = 96;
-const int ENCODER_TOLERANCE = 10;
+const int ENCODER_TOLERANCE = 35;
 const int COARSE_ERR_COUNTS = 48;
-const int COARSE_PWM = 120;
-const int FINE_MIN_PWM = 48;
+const int COARSE_PWM = 150;
+const int FINE_MIN_PWM = 82;
 const int PWM_MAX = 150;
 const unsigned long STALL_MS = 4000;
 const int MOTOR_DIR_SIGN = 1;
 const int STALL_MIN_PROGRESS = 1;
 const unsigned long MOVE_TIMEOUT_MS = 12000;
-const float FINE_KP = 1.35f;
-const float FINE_PWM_PER_COUNT = 2.8f;
+const float FINE_KP = 1.8f;
+const float FINE_PWM_PER_COUNT = 4.0f;
+const float MAX_ABS_BASE_DEG = 140.0f;   // Hard safety envelope from startup zero.
+const float ABS_LIMIT_MARGIN_DEG = 4.0f; // Allow tiny transient/noise before fault.
+const float OVERSHOOT_ALLOW_RATIO = 0.35f;
+const long OVERSHOOT_ALLOW_MIN_COUNTS = 140;
+const int OVERSHOOT_CONFIRM_CYCLES = 3;
+const unsigned long MOVE_KICK_MS = 260;
+const int MOVE_KICK_PWM = 150;
+const unsigned long JOG_MAX_MS = 3000;
 
 const int LEDC_FREQ_HZ = 20000;
 const int LEDC_RES_BITS = 8;
@@ -75,11 +84,14 @@ long moveTargetCount = 0;
 long moveStartCount = 0;
 bool baseBusy = false;
 bool moveActive = false;
+bool jogActive = false;
+unsigned long jogEndMs = 0;
 unsigned long moveStartMs = 0;
 unsigned long lastProgressMs = 0;
 long lastProgressCount = 0;
 long lastErrorAbs = 0;
 long moveMaxTravelCounts = 0;
+int overshootCycles = 0;
 float ackBaseDeg = 0.0f;
 bool pendingBaseAck = false;
 float countsPerBaseDeg = 1.0f;
@@ -200,6 +212,7 @@ void motorDrive(int pwm) {
 
 void stopBaseMotion() {
   moveActive = false;
+  jogActive = false;
   baseBusy = false;
   motorStop();
 }
@@ -239,6 +252,11 @@ bool startBaseMoveToCount(long targetCount, float ackDeg) {
     printBaseBusy();
     return false;
   }
+  float targetDeg = countsToDeg(targetCount);
+  if (fabs(targetDeg) > MAX_ABS_BASE_DEG) {
+    Serial.println(F("ERR B limit"));
+    return false;
+  }
   moveTargetCount = targetCount;
   ackBaseDeg = ackDeg;
   moveStartCount = readEncoderCount();
@@ -249,6 +267,7 @@ bool startBaseMoveToCount(long targetCount, float ackDeg) {
   baseBusy = true;
   moveStartMs = millis();
   lastProgressMs = moveStartMs;
+  overshootCycles = 0;
   return true;
 }
 
@@ -260,6 +279,25 @@ bool startBaseRelativeDeg(float deltaDeg) {
     deltaCounts = (deltaCounts > 0 ? MIN_MOVE_COUNTS : -MIN_MOVE_COUNTS);
   }
   return startBaseMoveToCount(pos + deltaCounts, deltaDeg);
+}
+
+bool startBaseJog(int pwm, unsigned long durationMs) {
+  if (baseBusy) {
+    printBaseBusy();
+    return false;
+  }
+  pwm = constrain(pwm, -PWM_MAX, PWM_MAX);
+  durationMs = constrain(durationMs, 1UL, JOG_MAX_MS);
+  if (pwm == 0) {
+    Serial.println(F("ERR J zero"));
+    return false;
+  }
+  jogActive = true;
+  baseBusy = true;
+  jogEndMs = millis() + durationMs;
+  motorDrive(pwm);
+  Serial.println(F("OK J"));
+  return true;
 }
 
 bool startBaseAbsoluteDeg(float deg) {
@@ -350,6 +388,9 @@ void handleLine() {
   bool baseRelative = false;
   bool hasCpd = false;
   bool hasEncSign = false;
+  bool hasJog = false;
+  int jogPwm = 0;
+  unsigned long jogMs = 250;
   float encSignValue = 1.0f;
 
   char buf[LINE_BUF_SIZE];
@@ -374,6 +415,11 @@ void handleLine() {
     } else if (c == 'E' || c == 'e') {
       hasEncSign = true;
       encSignValue = atof(token + 1);
+    } else if (c == 'J' || c == 'j') {
+      hasJog = true;
+      jogPwm = atoi(token + 1);
+    } else if (c == 'M' || c == 'm') {
+      jogMs = (unsigned long)atol(token + 1);
     }
     token = strtok(NULL, " ");
   }
@@ -404,10 +450,20 @@ void handleLine() {
       startBaseAbsoluteDeg(baseDeg);
     }
   }
-  if (!hasPan && !hasTilt && !hasBase && !hasCpd && !hasEncSign) {
+  if (hasJog) {
+    startBaseJog(jogPwm, jogMs);
+  }
+  if (!hasPan && !hasTilt && !hasBase && !hasCpd && !hasEncSign && !hasJog) {
     Serial.println(F("ERR unknown"));
   }
   lineLen = 0;
+}
+
+void updateBaseJog() {
+  if (!jogActive) return;
+  if ((long)(millis() - jogEndMs) >= 0) {
+    stopBaseMotion();
+  }
 }
 
 void updateBaseMotor() {
@@ -424,8 +480,31 @@ void updateBaseMotor() {
   long error = moveTargetCount - pos;
   long errAbs = labs(error);
   long traveled = labs(pos - moveStartCount);
+  float posDeg = countsToDeg(pos);
 
-  if (traveled > moveMaxTravelCounts + COARSE_ERR_COUNTS) {
+  if (fabs(posDeg) > (MAX_ABS_BASE_DEG + ABS_LIMIT_MARGIN_DEG)) {
+    stopBaseMotion();
+    Serial.println(F("ERR B limit"));
+    return;
+  }
+
+  long overshootAllowance = max(
+    OVERSHOOT_ALLOW_MIN_COUNTS,
+    (long)((float)moveMaxTravelCounts * OVERSHOOT_ALLOW_RATIO)
+  );
+  long plannedDelta = moveTargetCount - moveStartCount;
+  bool passedTarget = false;
+  if (plannedDelta > 0) {
+    passedTarget = pos > (moveTargetCount + ENCODER_TOLERANCE);
+  } else if (plannedDelta < 0) {
+    passedTarget = pos < (moveTargetCount - ENCODER_TOLERANCE);
+  }
+  if (traveled > moveMaxTravelCounts + overshootAllowance && passedTarget) {
+    overshootCycles++;
+  } else {
+    overshootCycles = 0;
+  }
+  if (overshootCycles >= OVERSHOOT_CONFIRM_CYCLES) {
     stopBaseMotion();
     Serial.println(F("ERR B overshoot"));
     return;
@@ -434,6 +513,13 @@ void updateBaseMotor() {
   if (errAbs <= ENCODER_TOLERANCE) {
     stopBaseMotion();
     pendingBaseAck = true;
+    return;
+  }
+
+  // Short breakaway pulse to overcome static friction at move start.
+  if (now - moveStartMs < MOVE_KICK_MS) {
+    int kick = max(FINE_MIN_PWM, MOVE_KICK_PWM);
+    motorDrive(error > 0 ? kick : -kick);
     return;
   }
 
@@ -516,6 +602,7 @@ void loop() {
   }
 
   updateBaseMotor();
+  updateBaseJog();
 
   if (pendingBaseAck) {
     pendingBaseAck = false;

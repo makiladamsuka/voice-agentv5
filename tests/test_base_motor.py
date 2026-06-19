@@ -63,6 +63,18 @@ def warn_if_uncalibrated(link: ArduinoServoLink) -> None:
         )
 
 
+def print_stall_diagnosis(delta_counts: int) -> None:
+    if abs(delta_counts) >= MIN_ENCODER_DELTA:
+        print(
+            "  → encoder changed, so the motor/encoder loop is alive; tune CPD/sign/scale next."
+        )
+        return
+    print(
+        "  → encoder did not change. This is not a PID tuning problem: check motor power/TB6612 "
+        "STBY/AIN/PWM wiring, then run --jog and --watch to isolate motor output vs encoder input."
+    )
+
+
 def poll_status_loop(link: ArduinoServoLink, stop: threading.Event) -> None:
     max_abs = 0
     while not stop.is_set():
@@ -238,6 +250,8 @@ def main() -> int:
     parser.add_argument("--zero", action="store_true")
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--watch", action="store_true", help="Live encoder via ? status")
+    parser.add_argument("--jog", type=int, default=None, help="Open-loop base jog PWM (-130..130)")
+    parser.add_argument("--jog-ms", type=int, default=250, help="Open-loop jog duration, capped in firmware")
     parser.add_argument("--demo", action="store_true")
     parser.add_argument(
         "--correct-move",
@@ -292,6 +306,19 @@ def main() -> int:
                 print("No status response.")
         if args.watch:
             run_watch(link)
+        elif args.jog is not None:
+            st0 = link.query_status()
+            print(f"Open-loop jog J{args.jog:+d} M{args.jog_ms}")
+            ok = link.write_base_jog(args.jog, args.jog_ms)
+            time.sleep((max(1, args.jog_ms) / 1000.0) + 0.2)
+            st1 = link.query_status()
+            if not ok:
+                print("  → jog command was not acknowledged")
+            if st0 is not None and st1 is not None:
+                print(
+                    f"  → encoder delta {st1.encoder_count - st0.encoder_count} "
+                    f"({st1.degrees - st0.degrees:+.2f}°)"
+                )
         elif args.calibrate_manual:
             run_calibrate_manual(link, args.degrees, write_config=args.write_config)
         elif args.calibrate:
@@ -306,25 +333,30 @@ def main() -> int:
             time.sleep(args.hold)
         elif args.relative is not None:
             warn_if_uncalibrated(link)
+            st0 = link.query_status()
             print(f"Relative B{args.relative:+.1f}")
             link.write_base_relative(args.relative, wait=args.verify)
+            st1 = link.query_status()
             if args.verify and link._last_base_ack is not None:
                 print(f"  → ACK B{link._last_base_ack:.1f}")
-                st = link.query_status()
-                if st is not None:
+                if st1 is not None:
                     print(
-                        f"  → encoder POS {st.encoder_count} "
-                        f"(reported {st.degrees:.1f}°; plate angle is ~command_scale × that)"
+                        f"  → encoder POS {st1.encoder_count} "
+                        f"(reported {st1.degrees:.1f}°; plate angle is ~command_scale × that)"
                     )
             elif args.verify:
                 print("  → no base ACK (timeout or lost)")
+            if st0 is not None and st1 is not None:
+                delta_counts = st1.encoder_count - st0.encoder_count
+                print(f"  → encoder delta {delta_counts:+d} counts")
+                print_stall_diagnosis(delta_counts)
             time.sleep(args.hold)
         elif args.demo:
             run_demo(link, verify=args.verify, hold_sec=args.hold)
         elif not any([args.zero, args.status]):
             print(
                 "Nothing to do. Try --watch, --calibrate-manual, --relative, "
-                "--demo, or --calibrate."
+                "--jog, --demo, or --calibrate."
             )
             return 1
         print("Done.")

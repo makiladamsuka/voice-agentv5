@@ -23,6 +23,8 @@ except ImportError:
     yaml = None
 
 from arduino_servo import ArduinoServoLink
+from base_safety import BaseMotionGate, BaseMoveWatchdog, BaseSafetyConfig
+from base_yaw_controller import BaseYawState, HeadingPid
 from base_motor_utils import configure_base_link
 from elastic_head_motion import (
     OrganicWanderSearch,
@@ -30,6 +32,19 @@ from elastic_head_motion import (
     smooth_toward,
 )
 from person_detector import PersonDetector
+
+try:
+    from head_debug_viz import HeadDebugServer, HeadDebugState, servo_pan_to_mechanical, servo_tilt_to_mechanical
+except ImportError:
+    HeadDebugServer = None  # type: ignore
+    HeadDebugState = None  # type: ignore
+
+try:
+    from imu_sensor import HorizonTiltBias, ImuReader, startup_level_calibrate
+except ImportError:
+    HorizonTiltBias = None  # type: ignore
+    ImuReader = None  # type: ignore
+    startup_level_calibrate = None  # type: ignore
 
 # Hardware / Display Imports
 import board
@@ -63,9 +78,50 @@ FLOOR_Y = SCREEN_HEIGHT - 5
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
 
+def _parse_scalar(value):
+    value = value.split("#", 1)[0].strip()
+    if not value:
+        return ""
+    if value.startswith("[") and value.endswith("]"):
+        items = [item.strip() for item in value[1:-1].split(",") if item.strip()]
+        return [_parse_scalar(item) for item in items]
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        return value[1:-1]
+    lowered = value.lower()
+    if lowered in ("true", "false"):
+        return lowered == "true"
+    try:
+        if lowered.startswith("0x"):
+            return int(lowered, 16)
+        if any(ch in value for ch in (".", "e", "E")):
+            return float(value)
+        return int(value)
+    except ValueError:
+        return value
+
+
+def _load_simple_config(path):
+    data = {}
+    current = None
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        if not raw_line.startswith(" ") and raw_line.rstrip().endswith(":"):
+            current = raw_line.strip()[:-1]
+            data[current] = {}
+            continue
+        if current is None or ":" not in raw_line:
+            continue
+        key, value = raw_line.split(":", 1)
+        data[current][key.strip()] = _parse_scalar(value)
+    return data
+
+
 def _load_yaml_config(path):
-    if yaml is None or not path.exists():
+    if not path.exists():
         return {}
+    if yaml is None:
+        return _load_simple_config(path)
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
@@ -84,14 +140,17 @@ def parse_args():
     parser.add_argument("--baud", type=int, default=None, help="ESP32 serial baud; overrides config")
     parser.add_argument("--no-servo", action="store_true", help="Run camera/TFT tracking without ESP32 servos")
     parser.add_argument("--no-stream", action="store_true", help="Disable MJPEG preview stream")
+    parser.add_argument("--no-debug-viz", action="store_true", help="Disable 3D head debug visualizer")
     return parser.parse_args()
 
 ARGS = parse_args()
 CONFIG = _load_yaml_config(Path(ARGS.config))
 SERVO_CFG = _cfg(CONFIG, "servo", default={}) or {}
 BASE_CFG = _cfg(CONFIG, "base", default={}) or {}
+IMU_CFG = _cfg(CONFIG, "imu", default={}) or {}
 CAMERA_CFG = _cfg(CONFIG, "camera", default={}) or {}
 STREAM_CFG = _cfg(CONFIG, "stream", default={}) or {}
+DEBUG_VIZ_CFG = _cfg(CONFIG, "debug_viz", default={}) or {}
 
 FACE_MODEL_PATH = str(APP_DIR / _cfg(CAMERA_CFG, "face_model_path", default="face_detection_yunet_2023mar.onnx"))
 BODY_MODEL_PATH = str(APP_DIR / _cfg(CAMERA_CFG, "body_model_path", default="yolov8n.onnx"))
@@ -213,6 +272,13 @@ KEY_TO_EMOTION = {
 STREAM_ENABLED = bool(_cfg(STREAM_CFG, "enabled", default=True)) and not ARGS.no_stream
 STREAM_HOST = str(_cfg(STREAM_CFG, "host", default="0.0.0.0"))
 STREAM_PORT = int(_cfg(STREAM_CFG, "port", default=8081))
+DEBUG_VIZ_ENABLED = (
+    bool(_cfg(DEBUG_VIZ_CFG, "enabled", default=True))
+    and not ARGS.no_debug_viz
+    and HeadDebugServer is not None
+)
+DEBUG_VIZ_HOST = str(_cfg(DEBUG_VIZ_CFG, "host", default="0.0.0.0"))
+DEBUG_VIZ_PORT = int(_cfg(DEBUG_VIZ_CFG, "port", default=8082))
 STREAM_FPS = int(_cfg(STREAM_CFG, "fps", default=8))
 STREAM_JPEG_QUALITY = int(_cfg(STREAM_CFG, "jpeg_quality", default=70))
 RENDER_FPS = int(_cfg(STREAM_CFG, "render_fps", default=24))
@@ -233,6 +299,37 @@ TILT_MIN = float(SERVO_CFG.get("tilt_min", 100.0))
 TILT_MAX = float(SERVO_CFG.get("tilt_max", 120.0))
 PAN_CENTER = float(SERVO_CFG.get("pan_center", (PAN_MIN + PAN_MAX) * 0.5))
 TILT_CENTER = float(SERVO_CFG.get("tilt_center", (TILT_MIN + TILT_MAX) * 0.5))
+TILT_MECHANICAL_SCALE = float(SERVO_CFG.get("tilt_mechanical_scale", 0.0))
+TILT_MECH_UP_DEG = float(SERVO_CFG.get("tilt_max_mechanical_deg", 45.0))
+TILT_MECH_DOWN_DEG = float(SERVO_CFG.get("tilt_min_mechanical_deg", -35.0))
+PAN_MECH_LEFT_DEG = float(SERVO_CFG.get("pan_mech_left_deg", -40.0))
+PAN_MECH_RIGHT_DEG = float(SERVO_CFG.get("pan_mech_right_deg", 40.0))
+
+
+def _tilt_cmd_to_mechanical(tilt_cmd: float) -> float:
+    if abs(TILT_MECHANICAL_SCALE) > 1e-6:
+        return (tilt_cmd - TILT_CENTER) * TILT_MECHANICAL_SCALE
+    return servo_tilt_to_mechanical(
+        tilt_cmd,
+        center=TILT_CENTER,
+        t_min=TILT_MIN,
+        t_max=TILT_MAX,
+        mech_down_deg=TILT_MECH_DOWN_DEG,
+        mech_up_deg=TILT_MECH_UP_DEG,
+    )
+
+
+def _pan_cmd_to_mechanical(pan_cmd: float) -> float:
+    return servo_pan_to_mechanical(
+        pan_cmd,
+        center=PAN_CENTER,
+        p_min=PAN_MIN,
+        p_max=PAN_MAX,
+        mech_left_deg=PAN_MECH_LEFT_DEG,
+        mech_right_deg=PAN_MECH_RIGHT_DEG,
+    )
+
+
 PAN_TRACK_RANGE = float(SERVO_CFG.get("pan_track_range", 26.0))
 TILT_TRACK_RANGE = float(SERVO_CFG.get("tilt_track_range", 12.0))
 PAN_SIGN = float(SERVO_CFG.get("pan_sign", 1.0))
@@ -290,6 +387,31 @@ TILT_SMOOTH_HZ = float(SERVO_CFG.get("tilt_smooth_hz", 5.5))
 SERVO_SEND_MIN_DEG = float(SERVO_CFG.get("servo_send_min_deg", 0.06))
 SERVO_SEND_HZ = float(SERVO_CFG.get("servo_send_hz", 25.0))
 SERVO_ANGLE_QUANTUM_DEG = float(SERVO_CFG.get("servo_angle_quantum_deg", 0.2))
+SERVO_HOME_SMOOTH_SEC = float(SERVO_CFG.get("home_smooth_sec", 0.9))
+SERVO_HOME_SMOOTH_HZ = float(SERVO_CFG.get("home_smooth_hz", 30.0))
+IMU_ENABLED = bool(IMU_CFG.get("enabled", False))
+IMU_I2C_BUS = int(IMU_CFG.get("i2c_bus", 1))
+IMU_ADDRESS = int(IMU_CFG.get("address", 0x69))
+IMU_SAMPLE_HZ = float(IMU_CFG.get("sample_hz", 100.0))
+IMU_ROLL_PITCH_ALPHA = float(IMU_CFG.get("roll_pitch_alpha", 0.02))
+_imu_axis = IMU_CFG.get("axis_remap")
+IMU_AXIS_REMAP = tuple(int(v) for v in _imu_axis) if _imu_axis else (-3, 2, -1)
+IMU_ROLL_OFFSET_DEG = float(IMU_CFG.get("roll_offset_deg", 0.0))
+IMU_PITCH_OFFSET_DEG = float(IMU_CFG.get("pitch_offset_deg", 0.0))
+IMU_AUTO_LEVEL_ON_START = bool(IMU_CFG.get("auto_level_on_start", True))
+IMU_AUTO_LEVEL_SEC = float(IMU_CFG.get("auto_level_sec", 2.0))
+IMU_AUTO_LEVEL_SETTLE_SEC = float(IMU_CFG.get("auto_level_settle_sec", 0.8))
+IMU_AUTO_LEVEL_WARMUP_SEC = float(IMU_CFG.get("auto_level_warmup_sec", 0.3))
+IMU_AUTO_LEVEL_GYRO_MAX_DPS = float(IMU_CFG.get("auto_level_gyro_max_dps", 8.0))
+IMU_AUTO_LEVEL_MIN_SAMPLES = int(IMU_CFG.get("auto_level_min_samples", 40))
+IMU_HORIZON_TILT_GAIN = float(IMU_CFG.get("horizon_tilt_gain", 1.0))
+IMU_HORIZON_TILT_SIGN = float(IMU_CFG.get("horizon_tilt_sign", 1.0))
+IMU_HORIZON_PITCH_SMOOTH_HZ = float(IMU_CFG.get("horizon_pitch_smooth_hz", 4.0))
+IMU_HORIZON_MAX_BIAS_DEG = float(IMU_CFG.get("horizon_max_bias_deg", 4.0))
+IMU_HORIZON_MAX_PITCH_DEG = float(IMU_CFG.get("horizon_max_pitch_deg", 25.0))
+IMU_HORIZON_GYRO_MAX_DPS = float(IMU_CFG.get("horizon_gyro_max_dps", 35.0))
+IMU_HORIZON_MAX_UP_FROM_CENTER = float(IMU_CFG.get("horizon_max_up_from_center_deg", 2.0))
+IMU_HORIZON_MAX_DOWN_FROM_CENTER = float(IMU_CFG.get("horizon_max_down_from_center_deg", 4.0))
 BASE_WANDER_CHANCE = float(BASE_CFG.get("wander_chance", 0.28))
 BASE_WANDER_MIN_HEAD_STEP_DEG = float(BASE_CFG.get("wander_min_head_step_deg", 10.0))
 
@@ -324,6 +446,12 @@ BASE_ALLOW_MULTI_FACE = bool(BASE_CFG.get("allow_multi_face", False))
 BASE_WAIT_FOR_ACK = bool(BASE_CFG.get("wait_for_ack", False))
 BASE_ERROR_BACKOFF_SEC = float(BASE_CFG.get("error_backoff_sec", 45.0))
 BASE_REQUIRE_CALIBRATED_CPD = bool(BASE_CFG.get("require_calibrated_cpd", True))
+BASE_MAX_YAW_DEG = float(BASE_CFG.get("max_yaw_deg", 120.0))
+BASE_RECENTER_DEADBAND_DEG = float(BASE_CFG.get("recenter_deadband_deg", 15.0))
+BASE_RECENTER_STEP_DEG = float(BASE_CFG.get("recenter_step_deg", 5.0))
+BASE_HEADING_PID_KP = float(BASE_CFG.get("heading_pid_kp", 0.35))
+BASE_HEADING_PID_KD = float(BASE_CFG.get("heading_pid_kd", 0.08))
+BASE_USE_IMU_MOVE_VALIDATION = bool(BASE_CFG.get("use_imu_move_validation", True))
 
 
 
@@ -884,6 +1012,33 @@ if STREAM_ENABLED:
         start_stream_server()
     except Exception as e:
         print(f"Error starting MJPEG stream: {e}")
+
+head_debug_state = HeadDebugState() if HeadDebugState is not None else None
+head_debug_server = None
+if DEBUG_VIZ_ENABLED and HeadDebugServer is not None and head_debug_state is not None:
+    try:
+        head_debug_server = HeadDebugServer(
+            head_debug_state,
+            host=DEBUG_VIZ_HOST,
+            port=DEBUG_VIZ_PORT,
+        )
+        head_debug_server.start()
+        head_debug_state.update(
+            pan_center=PAN_CENTER,
+            tilt_center=TILT_CENTER,
+            pan_min=PAN_MIN,
+            pan_max=PAN_MAX,
+            tilt_min=TILT_MIN,
+            tilt_max=TILT_MAX,
+            tilt_mech_up_deg=TILT_MECH_UP_DEG,
+            tilt_mech_down_deg=TILT_MECH_DOWN_DEG,
+            pan_mech_left_deg=PAN_MECH_LEFT_DEG,
+            pan_mech_right_deg=PAN_MECH_RIGHT_DEG,
+        )
+        print(f"Head debug 3D viz: {head_debug_server.url}")
+    except Exception as e:
+        print(f"Head debug viz disabled: {e}")
+        head_debug_server = None
 
 
 # --- Eye Objects ---
@@ -1585,9 +1740,21 @@ def servo_worker():
         send_hz=SERVO_SEND_HZ,
         quantum_deg=SERVO_ANGLE_QUANTUM_DEG,
     )
+    link.configure_home_motion(
+        duration_sec=SERVO_HOME_SMOOTH_SEC,
+        hz=SERVO_HOME_SMOOTH_HZ,
+    )
     if not link.connect():
         print("Servo tracking unavailable; camera and TFT eyes will continue without head motion.")
         return
+
+    # Mechanical upright before IMU level calibrate (tilt_center = horizon zero).
+    link.write_angles(PAN_CENTER, TILT_CENTER, force=True)
+    print(f"Head servos at upright init: P{PAN_CENTER:.1f} T{TILT_CENTER:.1f}")
+    if IMU_ENABLED and IMU_AUTO_LEVEL_ON_START and IMU_AUTO_LEVEL_SETTLE_SEC > 0:
+        print(f"Waiting {IMU_AUTO_LEVEL_SETTLE_SEC:.1f}s for servos to settle before IMU calibrate...")
+        time.sleep(IMU_AUTO_LEVEL_SETTLE_SEC)
+
     base_cal = None
     if BASE_ENABLED:
         base_cal = configure_base_link(link)
@@ -1596,9 +1763,8 @@ def servo_worker():
                 f"Base calibrated: CPD {base_cal.counts_per_degree:.3f}, "
                 f"sign {base_cal.encoder_sign:+.0f}, scale {base_cal.command_scale:.3f}"
             )
-        if BASE_ZERO_ON_START:
-            link.zero_base()
-            print("Base zero reference sent.")
+        if link.zero_base():
+            print("Base forward zero set (encoder 0° = startup forward).")
 
     base_auto_enabled = BASE_ENABLED
     if BASE_ENABLED and BASE_REQUIRE_CALIBRATED_CPD and (base_cal is None or not base_cal.is_calibrated):
@@ -1607,6 +1773,92 @@ def servo_worker():
             "Base auto motion disabled until CPD is calibrated — head servos still active.\n"
             "  Run: python tests/test_base_motor.py --calibrate-manual --degrees 90 --write-config"
         )
+
+    imu_reader = None
+    horizon_bias = None
+    base_gate = None
+    base_watchdog = None
+    if IMU_ENABLED and ImuReader is not None and HorizonTiltBias is not None:
+        try:
+            imu_reader = ImuReader(
+                bus=IMU_I2C_BUS,
+                address=IMU_ADDRESS,
+                sample_hz=IMU_SAMPLE_HZ,
+                roll_pitch_alpha=IMU_ROLL_PITCH_ALPHA,
+                axis_remap=IMU_AXIS_REMAP,
+                roll_offset_deg=0.0 if IMU_AUTO_LEVEL_ON_START else IMU_ROLL_OFFSET_DEG,
+                pitch_offset_deg=0.0 if IMU_AUTO_LEVEL_ON_START else IMU_PITCH_OFFSET_DEG,
+            )
+            imu_reader.start()
+            if IMU_AUTO_LEVEL_ON_START and startup_level_calibrate is not None:
+                print(
+                    f"IMU level calibrate ({IMU_AUTO_LEVEL_SEC:.1f}s) — "
+                    f"hold head still at upright (T{TILT_CENTER:.0f}), pitch → 0°..."
+                )
+                try:
+                    roll_off, pitch_off, residual_pitch, used = startup_level_calibrate(
+                        imu_reader,
+                        duration_sec=IMU_AUTO_LEVEL_SEC,
+                        warmup_sec=IMU_AUTO_LEVEL_WARMUP_SEC,
+                        max_gyro_dps=IMU_AUTO_LEVEL_GYRO_MAX_DPS,
+                        min_samples=IMU_AUTO_LEVEL_MIN_SAMPLES,
+                    )
+                    latest = imu_reader.latest()
+                    roll_now = latest.roll_deg if latest is not None else 0.0
+                    print(
+                        f"IMU horizon zero at startup: roll offset {roll_off:+.2f}°, "
+                        f"pitch offset {pitch_off:+.2f}° ({used} still samples, "
+                        f"residual pitch {residual_pitch:+.2f}°, roll {roll_now:+.2f}°)"
+                    )
+                except ValueError as exc:
+                    print(f"IMU auto-level skipped: {exc}")
+                    if IMU_ROLL_OFFSET_DEG != 0.0 or IMU_PITCH_OFFSET_DEG != 0.0:
+                        imu_reader.filter.roll_offset_deg = IMU_ROLL_OFFSET_DEG
+                        imu_reader.filter.pitch_offset_deg = IMU_PITCH_OFFSET_DEG
+                        print(
+                            f"Using config offsets: roll {IMU_ROLL_OFFSET_DEG:+.2f}°, "
+                            f"pitch {IMU_PITCH_OFFSET_DEG:+.2f}°"
+                        )
+            horizon_bias = HorizonTiltBias(
+                gain=IMU_HORIZON_TILT_GAIN,
+                bias_sign=IMU_HORIZON_TILT_SIGN,
+                smooth_hz=IMU_HORIZON_PITCH_SMOOTH_HZ,
+                max_bias_deg=IMU_HORIZON_MAX_BIAS_DEG,
+                max_pitch_deg=IMU_HORIZON_MAX_PITCH_DEG,
+                max_up_from_center_deg=IMU_HORIZON_MAX_UP_FROM_CENTER,
+                max_down_from_center_deg=IMU_HORIZON_MAX_DOWN_FROM_CENTER,
+            )
+            if IMU_AUTO_LEVEL_ON_START:
+                horizon_bias.reset()
+            print(
+                f"BMI160 IMU horizon leveling enabled "
+                f"(bus {IMU_I2C_BUS}, 0x{IMU_ADDRESS:02X}, gain {IMU_HORIZON_TILT_GAIN:.2f}, "
+                f"max bias {IMU_HORIZON_MAX_BIAS_DEG:.1f}°, "
+                f"up/down from center +{IMU_HORIZON_MAX_UP_FROM_CENTER:.1f}/"
+                f"-{IMU_HORIZON_MAX_DOWN_FROM_CENTER:.1f}°)"
+            )
+            if BASE_ENABLED and BASE_USE_IMU_MOVE_VALIDATION:
+                base_gate = BaseMotionGate(BASE_ERROR_BACKOFF_SEC)
+                base_watchdog = BaseMoveWatchdog(
+                    link=link,
+                    imu_reader=imu_reader,
+                    gate=base_gate,
+                    config=BaseSafetyConfig(error_backoff_sec=BASE_ERROR_BACKOFF_SEC),
+                )
+                print("Base IMU move validation enabled.")
+        except Exception as exc:
+            print(f"IMU horizon leveling disabled: {exc}")
+            imu_reader = None
+            horizon_bias = None
+            base_gate = None
+            base_watchdog = None
+
+    if BASE_ENABLED:
+        st0 = link.query_status()
+        if st0 is not None:
+            print(f"Base startup status: DEG {st0.degrees:+.1f} BUSY {int(st0.busy)}")
+    if imu_reader is not None:
+        imu_reader.filter.reset_yaw_integral()
 
     loop_delay = 1.0 / max(1.0, SERVO_LOOP_HZ)
     pan = PAN_CENTER
@@ -1622,7 +1874,6 @@ def servo_worker():
     last_base_step = 0.0
     last_base_source = None
     last_base_comp = 0.0
-    base_auto_total_deg = 0.0
     base_trigger_since = 0.0
     last_norm_sample_x = 0.0
     last_norm_sample_ts = 0.0
@@ -1644,8 +1895,16 @@ def servo_worker():
     wander = OrganicWanderSearch()
     wander.reset(PAN_CENTER, TILT_CENTER, time.time())
     link.write_angles(pan, tilt, force=True)
+    print(f"Tracking from upright: pitch IMU target 0°, tilt center {TILT_CENTER:.1f}°")
     last_base_busy_check = 0.0
     base_motion_busy = False
+    yaw_state = BaseYawState(max_yaw_deg=BASE_MAX_YAW_DEG)
+    heading_pid = HeadingPid(BASE_HEADING_PID_KP, BASE_HEADING_PID_KD)
+    last_heading_ts = time.perf_counter()
+    last_horizon_ts = time.perf_counter()
+    effective_tilt_center = TILT_CENTER
+    held_horizon_center = TILT_CENTER
+    imu_pitch_debug = 0.0
 
     def refresh_base_busy(now_ts: float) -> None:
         nonlocal base_motion_busy, last_base_busy_check
@@ -1654,36 +1913,85 @@ def servo_worker():
         status = link.query_status()
         if status is not None:
             base_motion_busy = status.busy
+            yaw_state.update(status.degrees, head_pan_offset_deg(pan))
+            if base_gate is not None:
+                base_gate.clear_backoff(now_ts)
         last_base_busy_check = now_ts
 
     def request_base_nudge(raw_step, source, compensation_gain):
-        nonlocal base_auto_total_deg, filtered_norm_x, servo_target_pan
+        nonlocal filtered_norm_x, servo_target_pan, last_heading_ts
         nonlocal last_base_step, last_base_source, last_base_comp
         if not base_auto_enabled or base_motion_busy:
+            return None
+        if base_gate is not None and not base_gate.allowed(time.time()):
             return None
         step = clamp(raw_step * BASE_SIGN, -BASE_MAX_STEP_DEG, BASE_MAX_STEP_DEG)
         if abs(step) < BASE_MIN_STEP_DEG:
             return None
-        projected_total = base_auto_total_deg + step
-        if abs(projected_total) > BASE_MAX_TOTAL_AUTO_DEG:
+        target_world_yaw = yaw_state.target_clamped(yaw_state.world_yaw_deg + step)
+        now_heading = time.perf_counter()
+        heading_dt = max(0.001, min(0.2, now_heading - last_heading_ts))
+        last_heading_ts = now_heading
+        pid_step = heading_pid.step(
+            current_world_yaw_deg=yaw_state.world_yaw_deg,
+            target_world_yaw_deg=target_world_yaw,
+            dt=heading_dt,
+            min_step_deg=BASE_MIN_STEP_DEG,
+            max_step_deg=BASE_MAX_STEP_DEG,
+        )
+        if abs(pid_step) < BASE_MIN_STEP_DEG:
+            return None
+        if not yaw_state.allow_base_step(pid_step, head_pan_offset_deg(pan)):
             return None
 
-        base_auto_total_deg = projected_total
         # The base yaws the camera too, so reduce the neck pan demand immediately.
-        comp = step * compensation_gain
+        comp = pid_step * compensation_gain
         servo_target_pan = clamp(servo_target_pan - comp, PAN_MIN, PAN_MAX)
         filtered_norm_x *= max(0.0, 1.0 - BASE_PAN_RECENTER_BIAS)
         target_glide.x *= max(0.0, 1.0 - BASE_PAN_RECENTER_BIAS)
         pan_pid.soften(0.15)
 
-        last_base_step = step
+        last_base_step = pid_step
         last_base_source = source
         last_base_comp = comp
-        return step
+        return pid_step
 
     try:
         while running:
             now = time.time()
+            refresh_base_busy(now)
+            now_horizon = time.perf_counter()
+            dt_horizon = now_horizon - last_horizon_ts
+            last_horizon_ts = now_horizon
+            effective_tilt_center = held_horizon_center
+            imu_pitch_debug = 0.0
+            imu_roll_debug = 0.0
+            imu_gyro_debug = 0.0
+            imu_horizon_ok = False
+            imu_accel_trusted = True
+            base_follow_corr = 0.0
+            if imu_reader is not None and horizon_bias is not None:
+                imu_sample = imu_reader.latest()
+                if imu_sample is not None:
+                    horizon_pitch = imu_sample.accel_pitch_deg if imu_sample.accel_trusted else imu_sample.pitch_deg
+                    imu_pitch_debug = horizon_pitch
+                    imu_roll_debug = imu_sample.roll_deg
+                    imu_gyro_debug = imu_sample.gyro_mag_dps
+                    imu_accel_trusted = imu_sample.accel_trusted
+                    imu_horizon_ok = (
+                        imu_sample.accel_trusted
+                        and imu_sample.gyro_mag_dps <= IMU_HORIZON_GYRO_MAX_DPS
+                        and not base_motion_busy
+                    )
+                    if imu_horizon_ok:
+                        held_horizon_center = horizon_bias.effective_center(
+                            TILT_CENTER,
+                            horizon_pitch,
+                            dt_horizon,
+                            TILT_MIN,
+                            TILT_MAX,
+                        )
+                    effective_tilt_center = held_horizon_center
             wander_base_request = None
             with target_lock:
                 face_seen = target_face_detected
@@ -1731,9 +2039,10 @@ def servo_worker():
                 last_mode = mode
 
             if mode == "track" and track_kind != last_track_kind:
-                pan_pid.soften(0.20)
-                tilt_pid.soften(0.20)
-                target_glide.soften()
+                if "multi" in (track_kind, last_track_kind):
+                    pan_pid.soften(0.20)
+                    tilt_pid.soften(0.20)
+                    target_glide.soften()
                 last_track_kind = track_kind
 
             if mode == "track":
@@ -1747,6 +2056,7 @@ def servo_worker():
                 err_y = _apply_deadzone(filtered_norm_y, FACE_SERVO_DEADZONE_Y)
                 pan_corr = clamp(pan_pid.tick(err_x, loop_delay), -1.0, 1.0)
                 tilt_corr = clamp(tilt_pid.tick(err_y, loop_delay), -1.0, 1.0)
+                base_follow_corr = pan_corr
                 if face_count > 1:
                     pan_corr *= MULTI_FACE_TRACK_GAIN
                     tilt_corr *= MULTI_FACE_TRACK_GAIN
@@ -1787,6 +2097,7 @@ def servo_worker():
                 err_y = _apply_deadzone(filtered_norm_y * PREDICT_GAIN, FACE_SERVO_DEADZONE_Y)
                 pan_corr = clamp(pan_pid.tick(err_x, loop_delay), -1.0, 1.0)
                 tilt_corr = clamp(tilt_pid.tick(err_y, loop_delay), -0.45, 0.45)
+                base_follow_corr = pan_corr
                 servo_target_pan = clamp(
                     PAN_CENTER + (pan_corr * PAN_TRACK_RANGE * PAN_SIGN),
                     PAN_MIN,
@@ -1810,6 +2121,7 @@ def servo_worker():
                 err_y = _apply_deadzone(filtered_norm_y * 0.55, FACE_SERVO_DEADZONE_Y)
                 pan_corr = clamp(pan_pid.tick(err_x, loop_delay), -1.0, 1.0)
                 tilt_corr = clamp(tilt_pid.tick(err_y, loop_delay), -0.35, 0.35)
+                base_follow_corr = pan_corr
                 servo_target_pan = clamp(
                     PAN_CENTER + (pan_corr * PAN_TRACK_RANGE * PAN_SIGN),
                     PAN_MIN,
@@ -1898,6 +2210,12 @@ def servo_worker():
             )
 
             refresh_base_busy(now)
+            pan_offset_now = head_pan_offset_deg(pan)
+            if base_watchdog is not None and base_watchdog.active:
+                reason = base_watchdog.tick(pan_offset_deg=pan_offset_now, now=now)
+                if reason:
+                    base_motion_busy = False
+                    print(f"\n[base-watchdog] {reason}")
 
             base_step = None
             if base_auto_enabled:
@@ -1970,14 +2288,13 @@ def servo_worker():
                     base_step is None
                     and mode == "track"
                     and face_seen
-                    and track_kind != "body"
                     and (BASE_ALLOW_MULTI_FACE or face_count <= 1)
                 )
                 pan_offset = head_pan_offset_deg(pan)
                 base_error = filtered_norm_x
-                side_error = abs(base_error) >= BASE_TRIGGER_NORM_X
+                pid_side_demand = abs(base_follow_corr) >= BASE_TRIGGER_NORM_X
                 pan_near_limit = abs(pan_offset) >= BASE_PAN_SOFT_LIMIT_DEG
-                if base_allowed_for_scene and (side_error or pan_near_limit):
+                if base_allowed_for_scene and (pid_side_demand or pan_near_limit):
                     if base_trigger_since <= 0.0:
                         base_trigger_since = now
                     ready_for_nudge = (
@@ -1985,11 +2302,11 @@ def servo_worker():
                         and now - last_base_nudge_ts >= BASE_COOLDOWN_SEC
                     )
                     if ready_for_nudge:
-                        interest_sign = 1.0 if base_error >= 0.0 else -1.0
-                        if pan_near_limit and not side_error:
+                        interest_sign = 1.0 if base_follow_corr >= 0.0 else -1.0
+                        if pan_near_limit and not pid_side_demand:
                             interest_sign = base_head_lead_sign(pan_offset) or interest_sign
                         magnitude = clamp(
-                            abs(base_error) * BASE_NORM_TO_DEG_GAIN,
+                            abs(base_follow_corr) * BASE_NORM_TO_DEG_GAIN,
                             BASE_MIN_STEP_DEG,
                             BASE_MAX_STEP_DEG,
                         )
@@ -2006,6 +2323,27 @@ def servo_worker():
                 else:
                     base_trigger_since = 0.0
 
+                if (
+                    base_step is None
+                    and mode == "wander"
+                    and abs(yaw_state.base_encoder_deg) > BASE_RECENTER_DEADBAND_DEG
+                    and now - last_base_nudge_ts >= BASE_COOLDOWN_SEC
+                ):
+                    recenter_goal = 0.0
+                    recenter_delta = clamp(
+                        recenter_goal - yaw_state.world_yaw_deg,
+                        -BASE_RECENTER_STEP_DEG,
+                        BASE_RECENTER_STEP_DEG,
+                    )
+                    if abs(recenter_delta) >= BASE_MIN_STEP_DEG:
+                        base_step = request_base_nudge(
+                            recenter_delta,
+                            "recenter",
+                            BASE_TRACK_COMPENSATION_GAIN,
+                        )
+                        if base_step is not None:
+                            last_base_nudge_ts = now
+
             if (
                 motion_emotion
                 and motion_emotion != last_motion_emotion
@@ -2016,6 +2354,12 @@ def servo_worker():
                 last_motion_emotion_ts = now
 
             if base_step is not None and not base_motion_busy:
+                if base_watchdog is not None:
+                    base_watchdog.start_move(
+                        commanded_deg=base_step,
+                        encoder_deg=yaw_state.base_encoder_deg,
+                        pan_offset_deg=head_pan_offset_deg(pan),
+                    )
                 if link.write_combined(
                     pan,
                     tilt,
@@ -2025,8 +2369,12 @@ def servo_worker():
                 ):
                     st = link.query_status()
                     base_motion_busy = st.busy if st is not None else True
+                    if st is not None:
+                        yaw_state.update(st.degrees, head_pan_offset_deg(pan))
                     last_base_busy_check = now
                 else:
+                    if base_watchdog is not None:
+                        base_watchdog.finish_move()
                     link.write_angles(pan, tilt)
             else:
                 link.write_angles(pan, tilt)
@@ -2037,17 +2385,63 @@ def servo_worker():
                 if base_auto_enabled and now - last_base_nudge_ts < 2.0:
                     source = last_base_source or "base"
                     base_text = f" base[{source}] {last_base_step:+.1f} comp {last_base_comp:+.1f}"
+                if base_auto_enabled:
+                    base_text += (
+                        f" baseDeg {yaw_state.base_encoder_deg:+5.1f}"
+                        f" world {yaw_state.world_yaw_deg:+5.1f}/{BASE_MAX_YAW_DEG:.0f}"
+                    )
+                imu_text = ""
+                if imu_reader is not None:
+                    imu_text = f" pitch {imu_pitch_debug:+.1f} ctr {effective_tilt_center:5.1f}"
                 sys.stdout.write(
                     f"\r[servo] {label} pan {pan:5.1f}->{servo_target_pan:5.1f} "
-                    f"tilt {tilt:5.1f}->{servo_target_tilt:5.1f}{base_text}   "
+                    f"tilt {tilt:5.1f}->{servo_target_tilt:5.1f}{base_text}{imu_text}   "
                 )
                 sys.stdout.flush()
                 last_debug = now
+
+            if head_debug_state is not None:
+                head_debug_state.update(
+                    pan=pan,
+                    tilt=tilt,
+                    pan_target=servo_target_pan,
+                    tilt_target=servo_target_tilt,
+                    pan_mech_deg=_pan_cmd_to_mechanical(pan),
+                    tilt_mech_deg=_tilt_cmd_to_mechanical(tilt),
+                    pan_target_mech_deg=_pan_cmd_to_mechanical(servo_target_pan),
+                    tilt_target_mech_deg=_tilt_cmd_to_mechanical(servo_target_tilt),
+                    pan_center=PAN_CENTER,
+                    tilt_center=TILT_CENTER,
+                    tilt_effective_center=effective_tilt_center,
+                    pan_min=PAN_MIN,
+                    pan_max=PAN_MAX,
+                    tilt_min=TILT_MIN,
+                    tilt_max=TILT_MAX,
+                    mode=mode,
+                    track_kind=track_kind,
+                    face_seen=face_seen,
+                    face_norm_x=norm_x,
+                    face_norm_y=norm_y,
+                    face_count=face_count,
+                    body_seen=body_seen,
+                    base_yaw_deg=yaw_state.base_encoder_deg,
+                    base_world_yaw_deg=yaw_state.world_yaw_deg,
+                    base_busy=base_motion_busy,
+                    imu_enabled=imu_reader is not None,
+                    imu_pitch_deg=imu_pitch_debug,
+                    imu_roll_deg=imu_roll_debug,
+                    imu_gyro_dps=imu_gyro_debug,
+                    imu_accel_trusted=imu_accel_trusted,
+                    imu_horizon_ok=imu_horizon_ok,
+                    servo_connected=link.connected,
+                )
 
             time.sleep(loop_delay)
     except Exception as e:
         print(f"\nServo tracking error: {e}")
     finally:
+        if imu_reader is not None:
+            imu_reader.stop()
         try:
             link.close(home_pan=PAN_CENTER, home_tilt=TILT_CENTER)
             print("\nServo link closed.")
@@ -2244,6 +2638,13 @@ finally:
             stream_server.shutdown()
             stream_server.server_close()
             print("MJPEG stream stopped.")
+        except Exception as e:
+            print(e)
+
+    if head_debug_server is not None:
+        try:
+            head_debug_server.stop()
+            print("Head debug 3D viz stopped.")
         except Exception as e:
             print(e)
         

@@ -91,6 +91,10 @@ class HeadDebugSnapshot:
     body_seen: bool = False
     base_yaw_deg: float = 0.0
     base_world_yaw_deg: float = 0.0
+    imu_yaw_total_deg: float = 0.0
+    imu_pan_delta_deg: float = 0.0
+    imu_inferred_base_deg: float = 0.0
+    viz_base_yaw_sign: float = 1.0
     base_busy: bool = False
     imu_enabled: bool = False
     imu_pitch_deg: float = 0.0
@@ -99,6 +103,8 @@ class HeadDebugSnapshot:
     imu_accel_trusted: bool = True
     imu_horizon_ok: bool = True
     servo_connected: bool = False
+    person_memories: list[dict[str, Any]] = field(default_factory=list)
+    active_memory_id: int = 0
     limits: dict[str, float] = field(default_factory=dict)
 
 
@@ -153,6 +159,7 @@ _DEBUG_HTML = """<!DOCTYPE html>
       <div><span style="background:#fb923c"></span>target</div>
       <div><span style="background:#60a5fa"></span>IMU frame</div>
       <div><span style="background:#f472b6"></span>look ray</div>
+      <div><span style="background:#facc15"></span>person memory</div>
     </div>
   </div>
   <div id="hud">
@@ -256,6 +263,8 @@ const limitPan = new THREE.Group();
 base.add(limitPan);
 const limitTilt = new THREE.Group();
 panNode.add(limitTilt);
+const memoryGroup = new THREE.Group();
+scene.add(memoryGroup);
 
 let latest = {};
 
@@ -278,6 +287,10 @@ function setStats(s) {
   const cls = (ok) => ok ? 'ok' : 'bad';
   const hz = s.ts ? (1 / Math.max(0.001, performance.now() / 1000 - (window._lastTs || s.ts))).toFixed(1) : '-';
   window._lastTs = performance.now() / 1000;
+  const mems = s.person_memories || [];
+  const memText = mems.length
+    ? mems.map(m => `P${m.id}:${m.kind} ${fmt(m.age_sec,0)}s`).join(' ')
+    : 'none';
   stats.innerHTML = `
     <div class="row"><span class="k">mode</span><span>${s.mode || '-'} / ${s.track_kind || '-'}</span></div>
     <div class="row"><span class="k">pan</span><span>${fmt(s.pan)} cmd (${fmt(s.pan_mech_deg)}° mech) → ${fmt(s.pan_target)}</span></div>
@@ -286,13 +299,74 @@ function setStats(s) {
     <div class="row"><span class="k">mech cal</span><span>up ${fmt(s.tilt_mech_up_deg,0)}° / down ${fmt(s.tilt_mech_down_deg,0)}°</span></div>
     <div class="row"><span class="k">limits</span><span>P ${fmt(s.pan_min)}..${fmt(s.pan_max)} T ${fmt(s.tilt_min)}..${fmt(s.tilt_max)}</span></div>
     <div class="row"><span class="k">face</span><span>${s.face_seen ? 'yes' : 'no'} x=${fmt(s.face_norm_x,2)} y=${fmt(s.face_norm_y,2)} n=${s.face_count||0}</span></div>
-    <div class="row"><span class="k">base</span><span>world ${fmt(s.base_world_yaw_deg)} busy ${s.base_busy ? 'yes' : 'no'}</span></div>
+    <div class="row"><span class="k">memory</span><span>${mems.length} active ${s.active_memory_id ? '#'+s.active_memory_id : '-'}</span></div>
+    <div class="row"><span class="k">mem list</span><span>${memText}</span></div>
+    <div class="row"><span class="k">base</span><span>enc ${fmt(s.base_yaw_deg)} world ${fmt(s.base_world_yaw_deg)} busy ${s.base_busy ? 'yes' : 'no'}</span></div>
+    <div class="row"><span class="k">yaw split</span><span>imu ${fmt(s.imu_yaw_total_deg)} panΔ ${fmt(s.imu_pan_delta_deg)} base≈${fmt(s.imu_inferred_base_deg)}</span></div>
     <div class="row"><span class="k">IMU pitch</span><span class="${Math.abs(s.imu_pitch_deg||0) > 8 ? 'warn' : 'ok'}">${fmt(s.imu_pitch_deg)}° (vs mech ${fmt(s.tilt_mech_deg)}°)</span></div>
     <div class="row"><span class="k">IMU roll</span><span>${fmt(s.imu_roll_deg)}</span></div>
     <div class="row"><span class="k">IMU gyro</span><span class="${(s.imu_gyro_dps||0) > 35 ? 'warn' : ''}">${fmt(s.imu_gyro_dps)} dps</span></div>
     <div class="row"><span class="k">horizon</span><span class="${cls(s.imu_horizon_ok)}">${s.imu_horizon_ok ? 'updating' : 'held'}</span></div>
     <div class="row"><span class="k">servo link</span><span class="${cls(s.servo_connected)}">${s.servo_connected ? 'connected' : 'off'}</span></div>
   `;
+}
+
+function makeTextSprite(text, color='#f8fafc') {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 48;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(15,17,23,0.72)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.font = '24px ui-monospace, monospace';
+  ctx.fillStyle = color;
+  ctx.fillText(text, 8, 31);
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(0.28, 0.105, 1);
+  return sprite;
+}
+
+function updateMemoryMarkers(s) {
+  memoryGroup.clear();
+  const mems = s.person_memories || [];
+  const radius = 1.2;
+  const floorY = 0.025;
+  for (const m of mems) {
+    const yaw = deg(m.world_yaw_deg || 0);
+    const freshness = Math.max(0.12, Math.min(1, m.freshness ?? 1));
+    const color = m.kind === 'body' ? 0x38bdf8 : 0xfacc15;
+    const marker = new THREE.Group();
+    marker.position.set(Math.sin(yaw) * radius, floorY, Math.cos(yaw) * radius);
+    const dot = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.055, 0.055, 0.018, 24),
+      new THREE.MeshStandardMaterial({ color, transparent: true, opacity: freshness })
+    );
+    dot.rotation.x = Math.PI / 2;
+    marker.add(dot);
+    const lineGeom = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, floorY, 0),
+      new THREE.Vector3(marker.position.x, marker.position.y, marker.position.z),
+    ]);
+    const line = new THREE.Line(
+      lineGeom,
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: freshness * 0.45 })
+    );
+    memoryGroup.add(line);
+    const label = makeTextSprite(`P${m.id} ${Math.round(m.age_sec || 0)}s`, m.kind === 'body' ? '#38bdf8' : '#facc15');
+    label.position.y = 0.10;
+    marker.add(label);
+    if (m.id === s.active_memory_id) {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.07, 0.006, 8, 24),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: freshness })
+      );
+      ring.rotation.x = Math.PI / 2;
+      marker.add(ring);
+    }
+    memoryGroup.add(marker);
+  }
 }
 
 function fmt(v, d=1) {
@@ -309,13 +383,18 @@ async function poll() {
     const tPanMech = latest.pan_target_mech_deg ?? (latest.pan_target - latest.pan_center);
     const tTiltMech = latest.tilt_target_mech_deg ?? (latest.tilt_target - latest.tilt_center);
     const t = { pan: deg(tPanMech), tilt: -deg(tTiltMech) };
-    root.rotation.y = deg(latest.base_world_yaw_deg || 0);
+    const baseSign = (latest.viz_base_yaw_sign === undefined || latest.viz_base_yaw_sign === null)
+      ? 1.0
+      : Number(latest.viz_base_yaw_sign);
+    // Base only on root; pan is applied on panNode (world = base + pan).
+    root.rotation.y = deg(latest.base_yaw_deg || 0) * baseSign;
     panNode.rotation.y = a.pan;
     tiltNode.rotation.x = a.tilt;
     targetGroup.rotation.y = t.pan;
     targetGroup.rotation.x = t.tilt;
     imuGroup.rotation.z = deg(latest.imu_roll_deg || 0);
     imuGroup.rotation.x = deg(latest.imu_pitch_deg || 0);
+    updateMemoryMarkers(latest);
     const nearTiltMax = latest.tilt_mech_deg >= (latest.tilt_mech_up_deg - 1);
     const nearTiltMin = latest.tilt_mech_deg <= (latest.tilt_mech_down_deg + 1);
     headMesh.material.color.setHex(nearTiltMax || nearTiltMin ? 0xbf616a : 0x4ade80);

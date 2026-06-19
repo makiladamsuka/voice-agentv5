@@ -108,7 +108,9 @@ class BaseMoveWatchdog:
         encoder_delta = st.degrees - self._encoder_start_deg
         pan_delta = pan_offset_deg - self._pan_start_deg
         expected_total = encoder_delta + pan_delta
-        gyro_integral = self._imu.filter.yaw_integral_deg()
+        gyro_integral = self._imu.filter.yaw_integral_deg() * getattr(
+            self._imu, "yaw_sign", 1.0
+        )
 
         commanded = max(0.1, self._commanded_deg)
         encoder_abs = abs(encoder_delta)

@@ -24,7 +24,7 @@ except ImportError:
 
 from arduino_servo import ArduinoServoLink
 from base_safety import BaseMotionGate, BaseMoveWatchdog, BaseSafetyConfig
-from base_yaw_controller import BaseYawState, HeadingPid
+from base_yaw_controller import BaseYawState, HeadYawFusion, HeadingPid
 from base_motor_utils import configure_base_link
 from elastic_head_motion import (
     OrganicWanderSearch,
@@ -32,6 +32,7 @@ from elastic_head_motion import (
     smooth_toward,
 )
 from person_detector import PersonDetector
+from person_memory import PersonMemory, angular_error_deg, wrap_degrees
 
 try:
     from head_debug_viz import HeadDebugServer, HeadDebugState, servo_pan_to_mechanical, servo_tilt_to_mechanical
@@ -151,6 +152,8 @@ IMU_CFG = _cfg(CONFIG, "imu", default={}) or {}
 CAMERA_CFG = _cfg(CONFIG, "camera", default={}) or {}
 STREAM_CFG = _cfg(CONFIG, "stream", default={}) or {}
 DEBUG_VIZ_CFG = _cfg(CONFIG, "debug_viz", default={}) or {}
+PERSON_MEMORY_CFG = _cfg(CONFIG, "person_memory", default={}) or {}
+LAST_SEEN_SEARCH_CFG = _cfg(CONFIG, "last_seen_search", default={}) or {}
 
 FACE_MODEL_PATH = str(APP_DIR / _cfg(CAMERA_CFG, "face_model_path", default="face_detection_yunet_2023mar.onnx"))
 BODY_MODEL_PATH = str(APP_DIR / _cfg(CAMERA_CFG, "body_model_path", default="yolov8n.onnx"))
@@ -162,6 +165,37 @@ BODY_DETECT_STRIDE = int(_cfg(CAMERA_CFG, "body_detect_stride", default=3))
 BODY_TRACK_SERVO_ALPHA = float(_cfg(CAMERA_CFG, "body_track_servo_alpha", default=0.30))
 BODY_AIM_Y_RATIO = float(_cfg(CAMERA_CFG, "body_aim_y_ratio", default=0.22))
 BODY_CACHE_SEC = float(_cfg(CAMERA_CFG, "body_cache_sec", default=0.75))
+PERSON_MEMORY_ENABLED = bool(PERSON_MEMORY_CFG.get("enabled", True))
+PERSON_MEMORY_TIMEOUT_SEC = float(PERSON_MEMORY_CFG.get("timeout_sec", 20.0))
+PERSON_MEMORY_MERGE_ANGLE_DEG = float(PERSON_MEMORY_CFG.get("merge_angle_deg", 12.0))
+PERSON_MEMORY_CAMERA_HFOV_DEG = float(PERSON_MEMORY_CFG.get("camera_hfov_deg", 62.0))
+PERSON_MEMORY_MAX_ITEMS = int(PERSON_MEMORY_CFG.get("max_items", 6))
+PERSON_MEMORY_TRACK_GAIN = float(PERSON_MEMORY_CFG.get("track_gain", 0.75))
+PERSON_MEMORY_MAX_PAN_STEP_DEG = float(PERSON_MEMORY_CFG.get("max_pan_step_deg", 10.0))
+PERSON_MEMORY_REACQUIRE_DEG = float(PERSON_MEMORY_CFG.get("reacquire_angle_deg", 28.0))
+PERSON_MEMORY_REACQUIRE_AFTER_SEC = float(PERSON_MEMORY_CFG.get("reacquire_after_sec", 5.0))
+PERSON_MEMORY_FACE_CONF = float(PERSON_MEMORY_CFG.get("face_confidence", 1.0))
+PERSON_MEMORY_BODY_CONF = float(PERSON_MEMORY_CFG.get("body_confidence", 0.65))
+PERSON_MEMORY_BASE_ENABLED = bool(PERSON_MEMORY_CFG.get("base_enabled", True))
+PERSON_MEMORY_BASE_MIN_YAW_ERROR_DEG = float(PERSON_MEMORY_CFG.get("base_min_yaw_error_deg", 6.0))
+PERSON_MEMORY_BASE_MIN_STEP_DEG = float(PERSON_MEMORY_CFG.get("base_min_step_deg", 2.0))
+PERSON_MEMORY_BASE_MAX_STEP_DEG = float(PERSON_MEMORY_CFG.get("base_max_step_deg", 5.0))
+PERSON_MEMORY_BASE_YAW_TO_STEP_GAIN = float(PERSON_MEMORY_CFG.get("base_yaw_to_step_gain", 0.20))
+PERSON_MEMORY_BASE_COOLDOWN_SEC = float(PERSON_MEMORY_CFG.get("base_cooldown_sec", 1.2))
+PERSON_MEMORY_BASE_COMP_GAIN = float(PERSON_MEMORY_CFG.get("base_compensation_gain", 0.35))
+LAST_SEEN_SEARCH_ENABLED = bool(LAST_SEEN_SEARCH_CFG.get("enabled", True))
+LAST_SEEN_EDGE_NORM = float(LAST_SEEN_SEARCH_CFG.get("edge_norm", 0.40))
+LAST_SEEN_SEARCH_TIMEOUT_SEC = float(LAST_SEEN_SEARCH_CFG.get("timeout_sec", 5.0))
+LAST_SEEN_TRACK_GAIN = float(LAST_SEEN_SEARCH_CFG.get("track_gain", 0.65))
+LAST_SEEN_MAX_PAN_STEP_DEG = float(LAST_SEEN_SEARCH_CFG.get("max_pan_step_deg", 8.0))
+LAST_SEEN_BASE_ENABLED = bool(LAST_SEEN_SEARCH_CFG.get("base_enabled", True))
+LAST_SEEN_BASE_MIN_YAW_ERROR_DEG = float(LAST_SEEN_SEARCH_CFG.get("base_min_yaw_error_deg", 3.0))
+LAST_SEEN_BASE_MIN_STEP_DEG = float(LAST_SEEN_SEARCH_CFG.get("base_min_step_deg", 2.5))
+LAST_SEEN_BASE_MAX_STEP_DEG = float(LAST_SEEN_SEARCH_CFG.get("base_max_step_deg", 5.0))
+LAST_SEEN_BASE_YAW_TO_STEP_GAIN = float(LAST_SEEN_SEARCH_CFG.get("base_yaw_to_step_gain", 0.24))
+LAST_SEEN_BASE_COOLDOWN_SEC = float(LAST_SEEN_SEARCH_CFG.get("base_cooldown_sec", 0.85))
+LAST_SEEN_BASE_COMP_GAIN = float(LAST_SEEN_SEARCH_CFG.get("base_compensation_gain", 0.35))
+LAST_SEEN_EDGE_TRACK_BASE = bool(LAST_SEEN_SEARCH_CFG.get("edge_track_base", True))
 # Use a larger 16:9 main stream for wider/detail-rich source frames (wider field of view)
 CAMERA_MAIN_RES = tuple(_cfg(CAMERA_CFG, "main_res", default=[1920, 1080]))
 # Balanced 16:9 processing for detail + CPU headroom (better for emotion models)
@@ -330,12 +364,20 @@ def _pan_cmd_to_mechanical(pan_cmd: float) -> float:
     )
 
 
-PAN_TRACK_RANGE = float(SERVO_CFG.get("pan_track_range", 26.0))
-TILT_TRACK_RANGE = float(SERVO_CFG.get("tilt_track_range", 12.0))
+PAN_TRACK_RANGE = min(
+    float(SERVO_CFG.get("pan_track_range", 26.0)),
+    max(PAN_MAX - PAN_MIN, 1.0) * 0.5,
+)
+TILT_TRACK_RANGE = min(
+    float(SERVO_CFG.get("tilt_track_range", 12.0)),
+    max(TILT_MAX - TILT_MIN, 1.0) * 0.5,
+)
 PAN_SIGN = float(SERVO_CFG.get("pan_sign", 1.0))
 TILT_SIGN = float(SERVO_CFG.get("tilt_sign", -1.0))
 FACE_SERVO_DEADZONE_X = float(SERVO_CFG.get("deadzone_x", 0.04))
 FACE_SERVO_DEADZONE_Y = float(SERVO_CFG.get("deadzone_y", 0.05))
+PAN_CENTER_NORM_X = float(SERVO_CFG.get("pan_center_norm_x", 0.08))
+TILT_CENTER_NORM_Y = float(SERVO_CFG.get("tilt_center_norm_y", 0.12))
 SERVO_LOOP_HZ = float(SERVO_CFG.get("loop_hz", 100.0))
 SERVO_NO_FACE_HOME_SEC = float(SERVO_CFG.get("no_face_home_sec", 0.8))
 SERVO_DEBUG_HZ = float(SERVO_CFG.get("debug_hz", 2.0))
@@ -412,6 +454,8 @@ IMU_HORIZON_MAX_PITCH_DEG = float(IMU_CFG.get("horizon_max_pitch_deg", 25.0))
 IMU_HORIZON_GYRO_MAX_DPS = float(IMU_CFG.get("horizon_gyro_max_dps", 35.0))
 IMU_HORIZON_MAX_UP_FROM_CENTER = float(IMU_CFG.get("horizon_max_up_from_center_deg", 2.0))
 IMU_HORIZON_MAX_DOWN_FROM_CENTER = float(IMU_CFG.get("horizon_max_down_from_center_deg", 4.0))
+IMU_YAW_SIGN = float(IMU_CFG.get("yaw_sign", 1.0))
+DEBUG_VIZ_BASE_YAW_SIGN = float(DEBUG_VIZ_CFG.get("base_yaw_sign", 1.0))
 BASE_WANDER_CHANCE = float(BASE_CFG.get("wander_chance", 0.28))
 BASE_WANDER_MIN_HEAD_STEP_DEG = float(BASE_CFG.get("wander_min_head_step_deg", 10.0))
 
@@ -427,8 +471,27 @@ BASE_MIN_STEP_DEG = float(BASE_CFG.get("min_step_deg", 0.8))
 BASE_MAX_STEP_DEG = float(BASE_CFG.get("max_step_deg", 2.5))
 BASE_NORM_TO_DEG_GAIN = float(BASE_CFG.get("norm_to_deg_gain", 2.2))
 BASE_PAN_SOFT_LIMIT_DEG = float(BASE_CFG.get("pan_soft_limit_deg", 18.0))
+BASE_PAN_SOFT_LIMIT_SCALE = float(BASE_CFG.get("pan_soft_limit_scale", 0.60))
+BASE_PAN_LIMIT_MARGIN = float(BASE_CFG.get("pan_limit_margin", 0.35))
 BASE_PAN_RECENTER_BIAS = float(BASE_CFG.get("pan_recenter_bias", 0.35))
+BASE_PAN_OFFSET_TO_STEP_GAIN = float(BASE_CFG.get("pan_offset_to_step_gain", 0.30))
+BASE_TRIGGER_HOLD_AT_LIMIT_SEC = float(BASE_CFG.get("trigger_hold_at_limit_sec", 0.25))
 BASE_TRACK_COMPENSATION_GAIN = float(BASE_CFG.get("track_compensation_gain", 0.45))
+BASE_BODY_BASE_ENABLED = bool(BASE_CFG.get("body_base_enabled", True))
+BASE_BODY_COOLDOWN_SEC = float(BASE_CFG.get("body_base_cooldown_sec", 0.75))
+BASE_BODY_MIN_STEP_DEG = float(BASE_CFG.get("body_base_min_step_deg", 2.5))
+BASE_BODY_MAX_STEP_DEG = float(BASE_CFG.get("body_base_max_step_deg", 5.0))
+BASE_BODY_AIM_TO_STEP_GAIN = float(BASE_CFG.get("body_base_aim_to_step_gain", 5.5))
+BASE_BODY_COMP_GAIN = float(BASE_CFG.get("body_base_compensation_gain", 0.38))
+BASE_LIMIT_AIM_TO_STEP_GAIN = float(BASE_CFG.get("limit_base_aim_to_step_gain", 4.5))
+_pan_mech_span = max(
+    abs(_pan_cmd_to_mechanical(PAN_MIN)),
+    abs(_pan_cmd_to_mechanical(PAN_MAX)),
+)
+BASE_PAN_SOFT_LIMIT_EFFECTIVE = min(
+    BASE_PAN_SOFT_LIMIT_DEG,
+    max(BASE_HEAD_LEAD_MIN_DEG + 0.5, _pan_mech_span * BASE_PAN_SOFT_LIMIT_SCALE),
+)
 BASE_FAST_FACE_ENABLED = bool(BASE_CFG.get("fast_face_enabled", True))
 BASE_FAST_FACE_VELOCITY_NORM_SEC = float(BASE_CFG.get("fast_face_velocity_norm_sec", 3.0))
 BASE_FAST_FACE_COOLDOWN_SEC = float(BASE_CFG.get("fast_face_cooldown_sec", 0.9))
@@ -1619,6 +1682,51 @@ def _apply_deadzone(value, deadzone):
     return sign * ((abs(value) - deadzone) / max(0.001, 1.0 - deadzone))
 
 
+def _tilt_track_target(
+    tilt_pid,
+    filtered_norm_y,
+    loop_delay,
+    *,
+    tilt_current: float,
+    err_scale=1.0,
+    max_corr=1.0,
+):
+    """Hold tilt steady when face is vertically centered; gentle correction otherwise."""
+    if abs(filtered_norm_y) <= TILT_CENTER_NORM_Y:
+        tilt_pid.reset()
+        return tilt_current, 0.0
+    err_y = _apply_deadzone(filtered_norm_y * err_scale, FACE_SERVO_DEADZONE_Y)
+    tilt_corr = clamp(tilt_pid.tick(err_y, loop_delay), -max_corr, max_corr)
+    target = clamp(
+        TILT_CENTER + (tilt_corr * TILT_TRACK_RANGE * TILT_SIGN),
+        TILT_MIN,
+        TILT_MAX,
+    )
+    return target, tilt_corr
+
+
+def _pan_track_target(
+    pan_pid,
+    filtered_norm_x,
+    loop_delay,
+    *,
+    pan_current: float,
+    hold_center: bool = True,
+):
+    """Hold pan steady when face is centered; gentle correction otherwise."""
+    if hold_center and abs(filtered_norm_x) <= PAN_CENTER_NORM_X:
+        pan_pid.reset()
+        return pan_current, 0.0
+    err_x = _apply_deadzone(filtered_norm_x, FACE_SERVO_DEADZONE_X)
+    pan_corr = clamp(pan_pid.tick(err_x, loop_delay), -1.0, 1.0)
+    target = clamp(
+        PAN_CENTER + (pan_corr * PAN_TRACK_RANGE * PAN_SIGN),
+        PAN_MIN,
+        PAN_MAX,
+    )
+    return target, pan_corr
+
+
 class PidAxis:
     def __init__(self, kp, ki, kd, integral_limit):
         self.kp = kp
@@ -1692,8 +1800,52 @@ def _motion_emotion_from_hint(hint):
 
 
 def head_pan_offset_deg(pan_angle: float) -> float:
-    """Positive = head/camera looking right relative to body."""
-    return (pan_angle - PAN_CENTER) * PAN_SIGN
+    """Positive = head/camera looking right relative to body (mechanical degrees)."""
+    return _pan_cmd_to_mechanical(pan_angle)
+
+
+def pan_at_servo_limit(pan_cmd: float) -> bool:
+    margin = BASE_PAN_LIMIT_MARGIN
+    return pan_cmd <= PAN_MIN + margin or pan_cmd >= PAN_MAX - margin
+
+
+def pan_needs_base_help(pan_cmd: float, pan_offset_mech: float) -> bool:
+    if pan_at_servo_limit(pan_cmd):
+        return True
+    return abs(pan_offset_mech) >= BASE_PAN_SOFT_LIMIT_EFFECTIVE * 0.65
+
+
+def base_follow_from_aim(pan_corr: float, aim_norm_x: float) -> float:
+    """When pan is stuck, drive base from remaining camera aim error."""
+    if abs(aim_norm_x) <= FACE_SERVO_DEADZONE_X:
+        return pan_corr
+    aim_corr = clamp(aim_norm_x * 1.15, -1.0, 1.0)
+    if abs(aim_corr) <= abs(pan_corr):
+        return pan_corr
+    return aim_corr
+
+
+def plan_limit_base_step(
+    pan_offset_mech: float,
+    aim_norm_x: float,
+    *,
+    min_step_deg: float,
+    max_step_deg: float,
+    aim_gain: float,
+) -> float | None:
+    """Turn base when head pan is exhausted but target is still off-center."""
+    if abs(aim_norm_x) <= FACE_SERVO_DEADZONE_X:
+        return None
+    aim_sign = 1.0 if aim_norm_x >= 0.0 else -1.0
+    head_sign = base_head_lead_sign(pan_offset_mech) or aim_sign
+    if aim_sign * head_sign < 0.0:
+        return None
+    mag = clamp(
+        abs(aim_norm_x) * aim_gain + abs(pan_offset_mech) * BASE_PAN_OFFSET_TO_STEP_GAIN,
+        min_step_deg,
+        max_step_deg,
+    )
+    return head_sign * mag
 
 
 def base_head_lead_sign(pan_offset: float) -> float:
@@ -1702,6 +1854,27 @@ def base_head_lead_sign(pan_offset: float) -> float:
     if pan_offset < -0.5:
         return -1.0
     return 0.0
+
+
+def plan_track_base_step(pan_offset_mech: float, face_pull_sign: float = 0.0) -> float | None:
+    """Turn base to support head pan during face/body tracking."""
+    if abs(pan_offset_mech) < BASE_HEAD_LEAD_MIN_DEG:
+        return None
+    head_sign = base_head_lead_sign(pan_offset_mech)
+    if head_sign == 0.0:
+        return None
+    at_soft_limit = abs(pan_offset_mech) >= BASE_PAN_SOFT_LIMIT_EFFECTIVE
+    if not at_soft_limit and face_pull_sign != 0.0:
+        pull_sign = 1.0 if face_pull_sign > 0.0 else -1.0
+        if pull_sign * head_sign < 0.0:
+            return None
+    direction = head_sign
+    mag = clamp(
+        abs(pan_offset_mech) * BASE_PAN_OFFSET_TO_STEP_GAIN,
+        BASE_MIN_STEP_DEG,
+        BASE_MAX_STEP_DEG,
+    )
+    return direction * mag
 
 
 def plan_base_follow_step(
@@ -1725,6 +1898,86 @@ def plan_base_follow_step(
     direction = head_sign if BASE_FOLLOW_HEAD_DIRECTION else interest_sign
     mag = clamp(abs(magnitude_deg), BASE_MIN_STEP_DEG, BASE_MAX_STEP_DEG)
     return direction * mag
+
+
+def plan_direct_base_step(
+    yaw_error_deg: float,
+    *,
+    min_yaw_error_deg: float,
+    min_step_deg: float,
+    max_step_deg: float,
+    yaw_to_step_gain: float,
+) -> float | None:
+    """Turn base directly toward a world-yaw bearing."""
+    if abs(yaw_error_deg) < min_yaw_error_deg:
+        return None
+    direction = 1.0 if yaw_error_deg >= 0.0 else -1.0
+    mag = clamp(
+        abs(yaw_error_deg) * yaw_to_step_gain,
+        min_step_deg,
+        max_step_deg,
+    )
+    return direction * mag
+
+
+def plan_memory_base_step(yaw_error_deg: float) -> float | None:
+    """Turn base directly toward a remembered person's world yaw."""
+    return plan_direct_base_step(
+        yaw_error_deg,
+        min_yaw_error_deg=PERSON_MEMORY_BASE_MIN_YAW_ERROR_DEG,
+        min_step_deg=PERSON_MEMORY_BASE_MIN_STEP_DEG,
+        max_step_deg=PERSON_MEMORY_BASE_MAX_STEP_DEG,
+        yaw_to_step_gain=PERSON_MEMORY_BASE_YAW_TO_STEP_GAIN,
+    )
+
+
+def plan_last_seen_base_step(yaw_error_deg: float) -> float | None:
+    """Turn base toward the last-seen exit direction."""
+    return plan_direct_base_step(
+        yaw_error_deg,
+        min_yaw_error_deg=LAST_SEEN_BASE_MIN_YAW_ERROR_DEG,
+        min_step_deg=LAST_SEEN_BASE_MIN_STEP_DEG,
+        max_step_deg=LAST_SEEN_BASE_MAX_STEP_DEG,
+        yaw_to_step_gain=LAST_SEEN_BASE_YAW_TO_STEP_GAIN,
+    )
+
+
+def _detection_world_yaw(
+    norm_x: float,
+    *,
+    base_encoder_deg: float,
+    pan_mech_deg: float,
+    person_memory: PersonMemory | None,
+) -> float:
+    if person_memory is not None:
+        return person_memory.detection_to_yaw(
+            norm_x=norm_x,
+            base_world_yaw_deg=base_encoder_deg,
+            pan_mech_deg=pan_mech_deg,
+        )
+    camera_yaw_offset = clamp(norm_x, -1.0, 1.0) * (PERSON_MEMORY_CAMERA_HFOV_DEG * 0.5)
+    return wrap_degrees(base_encoder_deg + pan_mech_deg + camera_yaw_offset)
+
+
+def _aim_toward_world_yaw(
+    world_yaw_deg: float,
+    pan_current: float,
+    current_world_yaw_deg: float,
+    *,
+    track_gain: float,
+    max_pan_step_deg: float,
+    reacquire_scale_deg: float,
+) -> tuple[float, float, float]:
+    """Pan toward a floor bearing; returns (target_pan, base_follow_corr, yaw_error)."""
+    yaw_error = angular_error_deg(world_yaw_deg, current_world_yaw_deg)
+    pan_step = clamp(
+        yaw_error * track_gain,
+        -max_pan_step_deg,
+        max_pan_step_deg,
+    )
+    target_pan = clamp(pan_current + (pan_step * PAN_SIGN), PAN_MIN, PAN_MAX)
+    base_corr = clamp(yaw_error / max(reacquire_scale_deg, 1.0), -1.0, 1.0)
+    return target_pan, base_corr, yaw_error
 
 
 def servo_worker():
@@ -1788,6 +2041,7 @@ def servo_worker():
                 axis_remap=IMU_AXIS_REMAP,
                 roll_offset_deg=0.0 if IMU_AUTO_LEVEL_ON_START else IMU_ROLL_OFFSET_DEG,
                 pitch_offset_deg=0.0 if IMU_AUTO_LEVEL_ON_START else IMU_PITCH_OFFSET_DEG,
+                yaw_sign=IMU_YAW_SIGN,
             )
             imu_reader.start()
             if IMU_AUTO_LEVEL_ON_START and startup_level_calibrate is not None:
@@ -1870,6 +2124,8 @@ def servo_worker():
     last_base_nudge_ts = 0.0
     last_fast_base_nudge_ts = 0.0
     last_lost_base_nudge_ts = 0.0
+    last_memory_base_nudge_ts = 0.0
+    last_body_base_nudge_ts = 0.0
     last_wander_base_nudge_ts = 0.0
     last_base_step = 0.0
     last_base_source = None
@@ -1885,6 +2141,10 @@ def servo_worker():
     last_face_vel_x = 0.0
     last_face_vel_y = 0.0
     last_face_near_edge = False
+    last_seen_world_yaw: float | None = None
+    last_seen_at_edge = False
+    last_seen_yaw_error = 0.0
+    last_seen_base_nudge_ts = 0.0
     servo_target_pan = PAN_CENTER
     servo_target_tilt = TILT_CENTER
     filtered_norm_x = 0.0
@@ -1900,11 +2160,27 @@ def servo_worker():
     base_motion_busy = False
     yaw_state = BaseYawState(max_yaw_deg=BASE_MAX_YAW_DEG)
     heading_pid = HeadingPid(BASE_HEADING_PID_KP, BASE_HEADING_PID_KD)
+    person_memory = (
+        PersonMemory(
+            timeout_sec=PERSON_MEMORY_TIMEOUT_SEC,
+            merge_angle_deg=PERSON_MEMORY_MERGE_ANGLE_DEG,
+            camera_hfov_deg=PERSON_MEMORY_CAMERA_HFOV_DEG,
+            max_items=PERSON_MEMORY_MAX_ITEMS,
+        )
+        if PERSON_MEMORY_ENABLED
+        else None
+    )
+    memory_snapshots = []
+    memory_reacquire = None
     last_heading_ts = time.perf_counter()
     last_horizon_ts = time.perf_counter()
     effective_tilt_center = TILT_CENTER
     held_horizon_center = TILT_CENTER
     imu_pitch_debug = 0.0
+    yaw_fusion = HeadYawFusion(imu_yaw_sign=IMU_YAW_SIGN)
+    imu_yaw_total_debug = 0.0
+    imu_pan_delta_debug = 0.0
+    imu_inferred_base_debug = 0.0
 
     def refresh_base_busy(now_ts: float) -> None:
         nonlocal base_motion_busy, last_base_busy_check
@@ -1970,6 +2246,10 @@ def servo_worker():
             imu_horizon_ok = False
             imu_accel_trusted = True
             base_follow_corr = 0.0
+            memory_yaw_error = 0.0
+            last_seen_yaw_error = 0.0
+            track_body_scene = False
+            track_pan_stuck = False
             if imu_reader is not None and horizon_bias is not None:
                 imu_sample = imu_reader.latest()
                 if imu_sample is not None:
@@ -1977,6 +2257,21 @@ def servo_worker():
                     imu_pitch_debug = horizon_pitch
                     imu_roll_debug = imu_sample.roll_deg
                     imu_gyro_debug = imu_sample.gyro_mag_dps
+                    pan_mech_now = _pan_cmd_to_mechanical(pan)
+                    if yaw_fusion._last_ts is None:
+                        yaw_fusion.reset_reference(
+                            pan_mech_deg=pan_mech_now,
+                            base_encoder_deg=yaw_state.base_encoder_deg,
+                            now=imu_sample.timestamp,
+                        )
+                    else:
+                        dt_imu = imu_sample.timestamp - yaw_fusion._last_ts
+                        if 0.0 < dt_imu < 0.15:
+                            yaw_fusion.integrate_gyro(imu_sample.gyro_z_dps, dt_imu)
+                        yaw_fusion._last_ts = imu_sample.timestamp
+                    imu_pan_delta_debug = yaw_fusion.pan_delta_deg(pan_mech_now)
+                    imu_yaw_total_debug = yaw_fusion.imu_yaw_total_deg
+                    imu_inferred_base_debug = yaw_fusion.inferred_base_encoder_deg(pan_mech_now)
                     imu_accel_trusted = imu_sample.accel_trusted
                     imu_horizon_ok = (
                         imu_sample.accel_trusted
@@ -2001,6 +2296,20 @@ def servo_worker():
                 face_count = target_face_count
                 body_seen = target_body_detected
 
+            memory_reacquire = None
+            memory_snapshots = []
+            if person_memory is not None:
+                if face_seen and track_kind != "body":
+                    person_memory.observe(
+                        norm_x=norm_x,
+                        base_world_yaw_deg=yaw_state.base_encoder_deg,
+                        pan_mech_deg=_pan_cmd_to_mechanical(pan),
+                        kind="face",
+                        confidence=PERSON_MEMORY_FACE_CONF,
+                        now=now,
+                    )
+                memory_snapshots = person_memory.snapshots(now)
+
             if face_seen:
                 if track_kind != "body":
                     if last_norm_sample_ts > 0.0:
@@ -2018,16 +2327,46 @@ def servo_worker():
                     abs(norm_x) >= PREDICT_EDGE_NORM
                     or abs(norm_y) >= PREDICT_EDGE_NORM
                 )
+                pan_mech_now = _pan_cmd_to_mechanical(pan)
+                last_seen_world_yaw = _detection_world_yaw(
+                    norm_x,
+                    base_encoder_deg=yaw_state.base_encoder_deg,
+                    pan_mech_deg=pan_mech_now,
+                    person_memory=person_memory,
+                )
+                at_edge = (
+                    abs(norm_x) >= LAST_SEEN_EDGE_NORM
+                    or abs(norm_y) >= LAST_SEEN_EDGE_NORM
+                )
+                if at_edge:
+                    last_seen_at_edge = True
+                elif track_kind != "body" and abs(norm_x) < LAST_SEEN_EDGE_NORM * 0.45:
+                    last_seen_at_edge = False
 
             since_face = now - last_seen_face
+            if since_face >= LAST_SEEN_SEARCH_TIMEOUT_SEC:
+                last_seen_at_edge = False
             if face_seen:
                 mode = "track"
             elif since_face <= PREDICT_HOLD_SEC:
                 mode = "predict"
-            elif since_face <= LOST_SEARCH_HOLD_SEC:
+            elif since_face < PERSON_MEMORY_REACQUIRE_AFTER_SEC:
                 mode = "lost_search"
             else:
-                mode = "wander"
+                if person_memory is not None:
+                    memory_reacquire = person_memory.best_for_reacquire(
+                        current_world_yaw_deg=yaw_state.world_yaw_deg,
+                        now=now,
+                    )
+                mode = "memory_track" if memory_reacquire is not None else "wander"
+
+            last_seen_search_active = (
+                LAST_SEEN_SEARCH_ENABLED
+                and last_seen_world_yaw is not None
+                and last_seen_at_edge
+                and since_face < LAST_SEEN_SEARCH_TIMEOUT_SEC
+                and mode in ("predict", "lost_search")
+            )
 
             if mode != last_mode:
                 if mode == "track":
@@ -2052,24 +2391,43 @@ def servo_worker():
                 glide_x, glide_y = target_glide.tick(norm_x, norm_y, loop_delay, glide_alpha)
                 filtered_norm_x += (glide_x - filtered_norm_x) * SERVO_FACE_ALPHA_X
                 filtered_norm_y += (glide_y - filtered_norm_y) * SERVO_FACE_ALPHA_Y
-                err_x = _apply_deadzone(filtered_norm_x, FACE_SERVO_DEADZONE_X)
-                err_y = _apply_deadzone(filtered_norm_y, FACE_SERVO_DEADZONE_Y)
-                pan_corr = clamp(pan_pid.tick(err_x, loop_delay), -1.0, 1.0)
-                tilt_corr = clamp(tilt_pid.tick(err_y, loop_delay), -1.0, 1.0)
+                track_body_scene = body_seen or track_kind == "body"
+                track_pan_stuck = pan_needs_base_help(pan, head_pan_offset_deg(pan))
+                pan_hold_ok = (
+                    not track_body_scene
+                    and not track_pan_stuck
+                )
+                servo_target_pan, pan_corr = _pan_track_target(
+                    pan_pid,
+                    filtered_norm_x,
+                    loop_delay,
+                    pan_current=pan,
+                    hold_center=pan_hold_ok,
+                )
+                servo_target_tilt, tilt_corr = _tilt_track_target(
+                    tilt_pid,
+                    filtered_norm_y,
+                    loop_delay,
+                    tilt_current=tilt,
+                )
                 base_follow_corr = pan_corr
+                if track_pan_stuck:
+                    base_follow_corr = base_follow_from_aim(pan_corr, filtered_norm_x)
                 if face_count > 1:
                     pan_corr *= MULTI_FACE_TRACK_GAIN
                     tilt_corr *= MULTI_FACE_TRACK_GAIN
-                servo_target_pan = clamp(
-                    PAN_CENTER + (pan_corr * PAN_TRACK_RANGE * PAN_SIGN),
-                    PAN_MIN,
-                    PAN_MAX,
-                )
-                servo_target_tilt = clamp(
-                    TILT_CENTER + (tilt_corr * TILT_TRACK_RANGE * TILT_SIGN),
-                    TILT_MIN,
-                    TILT_MAX,
-                )
+                    if abs(filtered_norm_x) > PAN_CENTER_NORM_X:
+                        servo_target_pan = clamp(
+                            PAN_CENTER + (pan_corr * PAN_TRACK_RANGE * PAN_SIGN),
+                            PAN_MIN,
+                            PAN_MAX,
+                        )
+                    if abs(filtered_norm_y) > TILT_CENTER_NORM_Y:
+                        servo_target_tilt = clamp(
+                            TILT_CENTER + (tilt_corr * TILT_TRACK_RANGE * TILT_SIGN),
+                            TILT_MIN,
+                            TILT_MAX,
+                        )
                 if track_kind == "body":
                     motion_emotion = "attentive"
                 elif track_kind == "center":
@@ -2081,58 +2439,101 @@ def servo_worker():
                 else:
                     motion_emotion = None
             elif mode == "predict":
-                predicted_x = clamp(
-                    last_face_norm_x + (last_face_vel_x * since_face * LOST_SEARCH_VELOCITY_GAIN),
-                    -1.0,
-                    1.0,
-                )
-                predicted_y = clamp(
-                    last_face_norm_y + (last_face_vel_y * since_face * LOST_SEARCH_VELOCITY_GAIN),
-                    -1.0,
-                    1.0,
-                )
-                filtered_norm_x += (predicted_x - filtered_norm_x) * SERVO_FACE_ALPHA_X
-                filtered_norm_y += (predicted_y - filtered_norm_y) * SERVO_FACE_ALPHA_Y
-                err_x = _apply_deadzone(filtered_norm_x * PREDICT_GAIN, FACE_SERVO_DEADZONE_X)
-                err_y = _apply_deadzone(filtered_norm_y * PREDICT_GAIN, FACE_SERVO_DEADZONE_Y)
-                pan_corr = clamp(pan_pid.tick(err_x, loop_delay), -1.0, 1.0)
-                tilt_corr = clamp(tilt_pid.tick(err_y, loop_delay), -0.45, 0.45)
-                base_follow_corr = pan_corr
-                servo_target_pan = clamp(
-                    PAN_CENTER + (pan_corr * PAN_TRACK_RANGE * PAN_SIGN),
-                    PAN_MIN,
-                    PAN_MAX,
-                )
-                servo_target_tilt = clamp(
-                    TILT_CENTER + (tilt_corr * TILT_TRACK_RANGE * TILT_SIGN),
-                    TILT_MIN,
-                    TILT_MAX,
-                )
-                motion_emotion = _looking_emotion_for_pan_goal(servo_target_pan)
+                if last_seen_search_active:
+                    servo_target_pan, base_follow_corr, last_seen_yaw_error = _aim_toward_world_yaw(
+                        last_seen_world_yaw,
+                        pan,
+                        yaw_state.world_yaw_deg,
+                        track_gain=LAST_SEEN_TRACK_GAIN,
+                        max_pan_step_deg=LAST_SEEN_MAX_PAN_STEP_DEG,
+                        reacquire_scale_deg=PERSON_MEMORY_REACQUIRE_DEG,
+                    )
+                    servo_target_tilt = clamp(TILT_CENTER, TILT_MIN, TILT_MAX)
+                    filtered_norm_x += (0.0 - filtered_norm_x) * SERVO_FACE_ALPHA_X
+                    filtered_norm_y += (0.0 - filtered_norm_y) * SERVO_FACE_ALPHA_Y
+                    motion_emotion = _looking_emotion_for_pan_goal(servo_target_pan)
+                else:
+                    predicted_x = clamp(
+                        last_face_norm_x + (last_face_vel_x * since_face * LOST_SEARCH_VELOCITY_GAIN),
+                        -1.0,
+                        1.0,
+                    )
+                    predicted_y = clamp(
+                        last_face_norm_y + (last_face_vel_y * since_face * LOST_SEARCH_VELOCITY_GAIN),
+                        -1.0,
+                        1.0,
+                    )
+                    filtered_norm_x += (predicted_x - filtered_norm_x) * SERVO_FACE_ALPHA_X
+                    filtered_norm_y += (predicted_y - filtered_norm_y) * SERVO_FACE_ALPHA_Y
+                    err_x = _apply_deadzone(filtered_norm_x * PREDICT_GAIN, FACE_SERVO_DEADZONE_X)
+                    pan_corr = clamp(pan_pid.tick(err_x, loop_delay), -1.0, 1.0)
+                    servo_target_tilt, tilt_corr = _tilt_track_target(
+                        tilt_pid,
+                        filtered_norm_y,
+                        loop_delay,
+                        tilt_current=tilt,
+                        err_scale=PREDICT_GAIN,
+                        max_corr=0.45,
+                    )
+                    base_follow_corr = pan_corr
+                    servo_target_pan = clamp(
+                        PAN_CENTER + (pan_corr * PAN_TRACK_RANGE * PAN_SIGN),
+                        PAN_MIN,
+                        PAN_MAX,
+                    )
+                    motion_emotion = _looking_emotion_for_pan_goal(servo_target_pan)
             elif mode == "lost_search":
-                search_x = last_face_norm_x + (last_face_vel_x * LOST_SEARCH_VELOCITY_GAIN)
-                if abs(search_x) < LOST_SEARCH_MIN_NORM_X:
-                    search_x = LOST_SEARCH_MIN_NORM_X if last_face_norm_x >= 0 else -LOST_SEARCH_MIN_NORM_X
-                search_x = clamp(search_x, -1.0, 1.0)
-                search_y = clamp(last_face_norm_y * 0.65, -0.65, 0.65)
-                filtered_norm_x += (search_x - filtered_norm_x) * SERVO_FACE_ALPHA_X
-                filtered_norm_y += (search_y - filtered_norm_y) * SERVO_FACE_ALPHA_Y
-                err_x = _apply_deadzone(filtered_norm_x, FACE_SERVO_DEADZONE_X)
-                err_y = _apply_deadzone(filtered_norm_y * 0.55, FACE_SERVO_DEADZONE_Y)
-                pan_corr = clamp(pan_pid.tick(err_x, loop_delay), -1.0, 1.0)
-                tilt_corr = clamp(tilt_pid.tick(err_y, loop_delay), -0.35, 0.35)
-                base_follow_corr = pan_corr
-                servo_target_pan = clamp(
-                    PAN_CENTER + (pan_corr * PAN_TRACK_RANGE * PAN_SIGN),
-                    PAN_MIN,
-                    PAN_MAX,
+                if last_seen_search_active:
+                    servo_target_pan, base_follow_corr, last_seen_yaw_error = _aim_toward_world_yaw(
+                        last_seen_world_yaw,
+                        pan,
+                        yaw_state.world_yaw_deg,
+                        track_gain=LAST_SEEN_TRACK_GAIN,
+                        max_pan_step_deg=LAST_SEEN_MAX_PAN_STEP_DEG,
+                        reacquire_scale_deg=PERSON_MEMORY_REACQUIRE_DEG,
+                    )
+                    servo_target_tilt = clamp(TILT_CENTER, TILT_MIN, TILT_MAX)
+                    filtered_norm_x += (0.0 - filtered_norm_x) * SERVO_FACE_ALPHA_X
+                    filtered_norm_y += (0.0 - filtered_norm_y) * SERVO_FACE_ALPHA_Y
+                    motion_emotion = _looking_emotion_for_pan_goal(servo_target_pan)
+                else:
+                    search_x = last_face_norm_x + (last_face_vel_x * LOST_SEARCH_VELOCITY_GAIN)
+                    if abs(search_x) < LOST_SEARCH_MIN_NORM_X:
+                        search_x = LOST_SEARCH_MIN_NORM_X if last_face_norm_x >= 0 else -LOST_SEARCH_MIN_NORM_X
+                    search_x = clamp(search_x, -1.0, 1.0)
+                    search_y = clamp(last_face_norm_y * 0.65, -0.65, 0.65)
+                    filtered_norm_x += (search_x - filtered_norm_x) * SERVO_FACE_ALPHA_X
+                    filtered_norm_y += (search_y - filtered_norm_y) * SERVO_FACE_ALPHA_Y
+                    err_x = _apply_deadzone(filtered_norm_x, FACE_SERVO_DEADZONE_X)
+                    pan_corr = clamp(pan_pid.tick(err_x, loop_delay), -1.0, 1.0)
+                    servo_target_tilt, tilt_corr = _tilt_track_target(
+                        tilt_pid,
+                        filtered_norm_y,
+                        loop_delay,
+                        tilt_current=tilt,
+                        err_scale=0.55,
+                        max_corr=0.35,
+                    )
+                    base_follow_corr = pan_corr
+                    servo_target_pan = clamp(
+                        PAN_CENTER + (pan_corr * PAN_TRACK_RANGE * PAN_SIGN),
+                        PAN_MIN,
+                        PAN_MAX,
+                    )
+                    motion_emotion = _looking_emotion_for_pan_goal(servo_target_pan)
+            elif mode == "memory_track" and memory_reacquire is not None:
+                current_world_head_yaw = yaw_state.world_yaw_deg
+                yaw_error = angular_error_deg(memory_reacquire.world_yaw_deg, current_world_head_yaw)
+                pan_step = clamp(
+                    yaw_error * PERSON_MEMORY_TRACK_GAIN,
+                    -PERSON_MEMORY_MAX_PAN_STEP_DEG,
+                    PERSON_MEMORY_MAX_PAN_STEP_DEG,
                 )
-                servo_target_tilt = clamp(
-                    TILT_CENTER + (tilt_corr * TILT_TRACK_RANGE * TILT_SIGN),
-                    TILT_MIN,
-                    TILT_MAX,
-                )
-                motion_emotion = _looking_emotion_for_pan_goal(servo_target_pan)
+                servo_target_pan = clamp(pan + (pan_step * PAN_SIGN), PAN_MIN, PAN_MAX)
+                servo_target_tilt = clamp(TILT_CENTER, TILT_MIN, TILT_MAX)
+                base_follow_corr = clamp(yaw_error / max(PERSON_MEMORY_REACQUIRE_DEG, 1.0), -1.0, 1.0)
+                memory_yaw_error = yaw_error
+                motion_emotion = "remembering"
             else:
                 filtered_norm_x += (0.0 - filtered_norm_x) * SERVO_FACE_ALPHA_X
                 filtered_norm_y += (0.0 - filtered_norm_y) * SERVO_FACE_ALPHA_Y
@@ -2260,9 +2661,79 @@ def servo_worker():
                         base_trigger_since = 0.0
                         fast_face_vel_x *= 0.25
 
+                memory_base_allowed = (
+                    base_step is None
+                    and PERSON_MEMORY_BASE_ENABLED
+                    and mode == "memory_track"
+                    and memory_reacquire is not None
+                    and now - last_memory_base_nudge_ts >= PERSON_MEMORY_BASE_COOLDOWN_SEC
+                    and now - last_base_nudge_ts >= PERSON_MEMORY_BASE_COOLDOWN_SEC
+                )
+                if memory_base_allowed:
+                    planned = plan_memory_base_step(memory_yaw_error)
+                    if planned is not None:
+                        base_step = request_base_nudge(
+                            planned,
+                            "memory",
+                            PERSON_MEMORY_BASE_COMP_GAIN,
+                        )
+                    if base_step is not None:
+                        last_base_nudge_ts = now
+                        last_memory_base_nudge_ts = now
+                        base_trigger_since = 0.0
+
+                last_seen_base_allowed = (
+                    base_step is None
+                    and LAST_SEEN_BASE_ENABLED
+                    and last_seen_search_active
+                    and now - last_seen_base_nudge_ts >= LAST_SEEN_BASE_COOLDOWN_SEC
+                    and now - last_base_nudge_ts >= LAST_SEEN_BASE_COOLDOWN_SEC
+                )
+                if last_seen_base_allowed:
+                    planned = plan_last_seen_base_step(last_seen_yaw_error)
+                    if planned is not None:
+                        base_step = request_base_nudge(
+                            planned,
+                            "last_seen",
+                            LAST_SEEN_BASE_COMP_GAIN,
+                        )
+                    if base_step is not None:
+                        last_base_nudge_ts = now
+                        last_seen_base_nudge_ts = now
+                        base_trigger_since = 0.0
+
+                edge_track_base_allowed = (
+                    base_step is None
+                    and LAST_SEEN_EDGE_TRACK_BASE
+                    and LAST_SEEN_BASE_ENABLED
+                    and mode == "track"
+                    and face_seen
+                    and last_seen_at_edge
+                    and last_seen_world_yaw is not None
+                    and now - last_seen_base_nudge_ts >= LAST_SEEN_BASE_COOLDOWN_SEC
+                    and now - last_base_nudge_ts >= LAST_SEEN_BASE_COOLDOWN_SEC
+                )
+                if edge_track_base_allowed:
+                    edge_yaw_error = angular_error_deg(
+                        last_seen_world_yaw,
+                        yaw_state.world_yaw_deg,
+                    )
+                    planned = plan_last_seen_base_step(edge_yaw_error)
+                    if planned is not None:
+                        base_step = request_base_nudge(
+                            planned,
+                            "edge",
+                            LAST_SEEN_BASE_COMP_GAIN,
+                        )
+                    if base_step is not None:
+                        last_base_nudge_ts = now
+                        last_seen_base_nudge_ts = now
+                        base_trigger_since = 0.0
+
                 lost_allowed_for_scene = (
                     base_step is None
                     and mode == "lost_search"
+                    and not last_seen_search_active
                     and now - last_lost_base_nudge_ts >= LOST_SEARCH_BASE_COOLDOWN_SEC
                     and now - last_base_nudge_ts >= LOST_SEARCH_BASE_COOLDOWN_SEC
                 )
@@ -2284,33 +2755,112 @@ def servo_worker():
                         last_base_nudge_ts = now
                         last_lost_base_nudge_ts = now
 
-                base_allowed_for_scene = (
+                body_base_allowed = (
+                    base_step is None
+                    and BASE_BODY_BASE_ENABLED
+                    and mode == "track"
+                    and track_body_scene
+                    and track_pan_stuck
+                    and abs(filtered_norm_x) > FACE_SERVO_DEADZONE_X
+                    and now - last_body_base_nudge_ts >= BASE_BODY_COOLDOWN_SEC
+                    and now - last_base_nudge_ts >= BASE_BODY_COOLDOWN_SEC
+                )
+                if body_base_allowed:
+                    planned = plan_limit_base_step(
+                        head_pan_offset_deg(pan),
+                        filtered_norm_x,
+                        min_step_deg=BASE_BODY_MIN_STEP_DEG,
+                        max_step_deg=BASE_BODY_MAX_STEP_DEG,
+                        aim_gain=BASE_BODY_AIM_TO_STEP_GAIN,
+                    )
+                    if planned is not None:
+                        base_step = request_base_nudge(
+                            planned,
+                            "body",
+                            BASE_BODY_COMP_GAIN,
+                        )
+                    if base_step is not None:
+                        last_base_nudge_ts = now
+                        last_body_base_nudge_ts = now
+                        base_trigger_since = 0.0
+
+                limit_base_allowed = (
                     base_step is None
                     and mode == "track"
-                    and face_seen
+                    and not track_body_scene
+                    and track_pan_stuck
+                    and abs(filtered_norm_x) > FACE_SERVO_DEADZONE_X
+                    and now - last_base_nudge_ts >= BASE_TRIGGER_HOLD_AT_LIMIT_SEC
+                )
+                if limit_base_allowed:
+                    planned = plan_limit_base_step(
+                        head_pan_offset_deg(pan),
+                        filtered_norm_x,
+                        min_step_deg=BASE_MIN_STEP_DEG,
+                        max_step_deg=BASE_MAX_STEP_DEG,
+                        aim_gain=BASE_LIMIT_AIM_TO_STEP_GAIN,
+                    )
+                    if planned is not None:
+                        base_step = request_base_nudge(
+                            planned,
+                            "limit",
+                            BASE_TRACK_COMPENSATION_GAIN,
+                        )
+                    if base_step is not None:
+                        last_base_nudge_ts = now
+                        base_trigger_since = 0.0
+
+                base_allowed_for_scene = (
+                    base_step is None
+                    and not last_seen_search_active
+                    and mode in ("track", "predict", "lost_search", "memory_track")
+                    and (face_seen or mode in ("predict", "lost_search"))
                     and (BASE_ALLOW_MULTI_FACE or face_count <= 1)
                 )
                 pan_offset = head_pan_offset_deg(pan)
-                base_error = filtered_norm_x
                 pid_side_demand = abs(base_follow_corr) >= BASE_TRIGGER_NORM_X
-                pan_near_limit = abs(pan_offset) >= BASE_PAN_SOFT_LIMIT_DEG
-                if base_allowed_for_scene and (pid_side_demand or pan_near_limit):
+                head_off_center = abs(pan_offset) >= BASE_HEAD_LEAD_MIN_DEG
+                pan_near_limit = abs(pan_offset) >= BASE_PAN_SOFT_LIMIT_EFFECTIVE
+                if base_allowed_for_scene and mode != "memory_track" and (head_off_center or pid_side_demand):
                     if base_trigger_since <= 0.0:
                         base_trigger_since = now
+                    hold_sec = BASE_TRIGGER_HOLD_AT_LIMIT_SEC
+                    if track_body_scene:
+                        hold_sec = min(hold_sec, 0.15)
+                    elif not pan_near_limit:
+                        hold_sec = BASE_TRIGGER_HOLD_SEC
                     ready_for_nudge = (
-                        now - base_trigger_since >= BASE_TRIGGER_HOLD_SEC
+                        now - base_trigger_since >= hold_sec
                         and now - last_base_nudge_ts >= BASE_COOLDOWN_SEC
                     )
                     if ready_for_nudge:
-                        interest_sign = 1.0 if base_follow_corr >= 0.0 else -1.0
-                        if pan_near_limit and not pid_side_demand:
-                            interest_sign = base_head_lead_sign(pan_offset) or interest_sign
-                        magnitude = clamp(
-                            abs(base_follow_corr) * BASE_NORM_TO_DEG_GAIN,
-                            BASE_MIN_STEP_DEG,
-                            BASE_MAX_STEP_DEG,
-                        )
-                        planned = plan_base_follow_step(magnitude, interest_sign, pan)
+                        planned = plan_track_base_step(pan_offset, base_follow_corr)
+                        if planned is None and pid_side_demand:
+                            interest_sign = 1.0 if base_follow_corr >= 0.0 else -1.0
+                            magnitude = clamp(
+                                abs(base_follow_corr) * BASE_NORM_TO_DEG_GAIN,
+                                BASE_MIN_STEP_DEG,
+                                BASE_MAX_STEP_DEG,
+                            )
+                            planned = plan_base_follow_step(magnitude, interest_sign, pan)
+                        if planned is not None:
+                            base_step = request_base_nudge(
+                                planned,
+                                "track",
+                                BASE_TRACK_COMPENSATION_GAIN,
+                            )
+                        if base_step is not None:
+                            last_base_nudge_ts = now
+                            base_trigger_since = 0.0
+                elif base_allowed_for_scene and mode == "memory_track" and pan_near_limit:
+                    if base_trigger_since <= 0.0:
+                        base_trigger_since = now
+                    ready_for_nudge = (
+                        now - base_trigger_since >= BASE_TRIGGER_HOLD_AT_LIMIT_SEC
+                        and now - last_base_nudge_ts >= BASE_COOLDOWN_SEC
+                    )
+                    if ready_for_nudge:
+                        planned = plan_track_base_step(pan_offset, base_follow_corr)
                         if planned is not None:
                             base_step = request_base_nudge(
                                 planned,
@@ -2393,9 +2943,18 @@ def servo_worker():
                 imu_text = ""
                 if imu_reader is not None:
                     imu_text = f" pitch {imu_pitch_debug:+.1f} ctr {effective_tilt_center:5.1f}"
+                mem_text = ""
+                if memory_snapshots:
+                    mem_id = memory_reacquire.id if memory_reacquire is not None else 0
+                    mem_text = f" mem {len(memory_snapshots)}#{mem_id}"
+                seen_text = ""
+                if last_seen_world_yaw is not None and (last_seen_at_edge or last_seen_search_active):
+                    seen_text = f" seen {last_seen_world_yaw:+.0f}"
+                    if last_seen_search_active:
+                        seen_text += " search"
                 sys.stdout.write(
                     f"\r[servo] {label} pan {pan:5.1f}->{servo_target_pan:5.1f} "
-                    f"tilt {tilt:5.1f}->{servo_target_tilt:5.1f}{base_text}{imu_text}   "
+                    f"tilt {tilt:5.1f}->{servo_target_tilt:5.1f}{base_text}{imu_text}{mem_text}{seen_text}   "
                 )
                 sys.stdout.flush()
                 last_debug = now
@@ -2426,6 +2985,10 @@ def servo_worker():
                     body_seen=body_seen,
                     base_yaw_deg=yaw_state.base_encoder_deg,
                     base_world_yaw_deg=yaw_state.world_yaw_deg,
+                    imu_yaw_total_deg=imu_yaw_total_debug,
+                    imu_pan_delta_deg=imu_pan_delta_debug,
+                    imu_inferred_base_deg=imu_inferred_base_debug,
+                    viz_base_yaw_sign=DEBUG_VIZ_BASE_YAW_SIGN,
                     base_busy=base_motion_busy,
                     imu_enabled=imu_reader is not None,
                     imu_pitch_deg=imu_pitch_debug,
@@ -2434,6 +2997,8 @@ def servo_worker():
                     imu_accel_trusted=imu_accel_trusted,
                     imu_horizon_ok=imu_horizon_ok,
                     servo_connected=link.connected,
+                    person_memories=memory_snapshots,
+                    active_memory_id=memory_reacquire.id if memory_reacquire is not None else 0,
                 )
 
             time.sleep(loop_delay)

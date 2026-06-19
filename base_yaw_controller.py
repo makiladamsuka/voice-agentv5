@@ -28,6 +28,52 @@ class BaseYawState:
         return abs(projected_world) <= self.max_yaw_deg
 
 
+@dataclass
+class HeadYawFusion:
+    """Decompose inertial head yaw into base vs neck-pan using gyro + known pan."""
+
+    imu_yaw_sign: float = 1.0
+    ref_pan_mech_deg: float = 0.0
+    ref_base_encoder_deg: float = 0.0
+    imu_yaw_total_deg: float = 0.0
+    _last_ts: float | None = None
+
+    def reset_reference(
+        self,
+        *,
+        pan_mech_deg: float,
+        base_encoder_deg: float,
+        imu_yaw_total_deg: float = 0.0,
+        now: float | None = None,
+    ) -> None:
+        self.ref_pan_mech_deg = pan_mech_deg
+        self.ref_base_encoder_deg = base_encoder_deg
+        self.imu_yaw_total_deg = imu_yaw_total_deg
+        self._last_ts = now
+
+    def integrate_gyro(self, gyro_z_dps: float, dt: float) -> float:
+        dt = max(0.0, min(0.2, dt))
+        delta = gyro_z_dps * self.imu_yaw_sign * dt
+        self.imu_yaw_total_deg += delta
+        return delta
+
+    def pan_delta_deg(self, pan_mech_deg: float) -> float:
+        return pan_mech_deg - self.ref_pan_mech_deg
+
+    def encoder_base_delta_deg(self, base_encoder_deg: float) -> float:
+        return base_encoder_deg - self.ref_base_encoder_deg
+
+    def inferred_base_delta_deg(self, pan_mech_deg: float) -> float:
+        """Base rotation ≈ total IMU yaw minus neck pan change."""
+        return self.imu_yaw_total_deg - self.pan_delta_deg(pan_mech_deg)
+
+    def inferred_base_encoder_deg(self, pan_mech_deg: float) -> float:
+        return self.ref_base_encoder_deg + self.inferred_base_delta_deg(pan_mech_deg)
+
+    def world_yaw_deg(self, *, base_encoder_deg: float, pan_mech_deg: float) -> float:
+        return base_encoder_deg + pan_mech_deg
+
+
 class HeadingPid:
     def __init__(self, kp: float, kd: float):
         self.kp = kp

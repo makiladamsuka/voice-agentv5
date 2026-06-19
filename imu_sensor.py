@@ -379,9 +379,11 @@ class ImuReader:
         axis_remap: Sequence[int] = (0, 1, 2),
         roll_offset_deg: float = 0.0,
         pitch_offset_deg: float = 0.0,
+        yaw_sign: float = 1.0,
     ):
         self._device = Bmi160(bus=bus, address=address)
         self._sample_hz = max(1.0, sample_hz)
+        self.yaw_sign = 1.0 if yaw_sign >= 0.0 else -1.0
         self._filter = ImuAttitudeFilter(
             roll_pitch_alpha=roll_pitch_alpha,
             axis_remap=axis_remap,

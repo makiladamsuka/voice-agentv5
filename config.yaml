@@ -49,11 +49,11 @@ person_memory:
   body_confidence: 0.65
   base_enabled: true
   base_min_yaw_error_deg: 6.0
-  base_min_step_deg: 2.0
-  base_max_step_deg: 5.0
-  base_yaw_to_step_gain: 0.20
-  base_cooldown_sec: 1.2
-  base_compensation_gain: 0.35
+  base_min_step_deg: 1.5
+  base_max_step_deg: 3.0
+  base_yaw_to_step_gain: 0.12
+  base_cooldown_sec: 1.6
+  base_compensation_gain: 0.55
 
 last_seen_search:
   enabled: true
@@ -62,13 +62,13 @@ last_seen_search:
   track_gain: 0.65
   max_pan_step_deg: 8.0
   base_enabled: true
-  base_min_yaw_error_deg: 3.0
-  base_min_step_deg: 2.5
-  base_max_step_deg: 5.0
-  base_yaw_to_step_gain: 0.24
-  base_cooldown_sec: 0.85
-  base_compensation_gain: 0.35
-  edge_track_base: true        # base nudge while still tracking someone at a corner
+  base_min_yaw_error_deg: 5.0
+  base_min_step_deg: 1.5
+  base_max_step_deg: 2.5
+  base_yaw_to_step_gain: 0.14
+  base_cooldown_sec: 1.5
+  base_compensation_gain: 0.50
+  edge_track_base: true        # only when pan is stuck at limit
 
 imu:
   enabled: true
@@ -109,29 +109,29 @@ base:
   require_calibrated_cpd: true
   zero_on_start: false
   sign: -1.0          # plate rotation sign vs B command; flip if base opposes head
-  head_lead_min_deg: 4.0   # neck must turn this far before base may follow
+  head_lead_min_deg: 5.0   # neck must turn this far before base may follow
   follow_head_direction: true
   trigger_norm_x: 0.35
-  trigger_hold_sec: 0.7
-  cooldown_sec: 1.2
-  min_step_deg: 2.0
-  max_step_deg: 5.0
-  single_shot_max_deg: 5.0
-  norm_to_deg_gain: 4.5
+  trigger_hold_sec: 1.0
+  cooldown_sec: 1.8
+  min_step_deg: 1.0
+  max_step_deg: 2.5
+  single_shot_max_deg: 3.0
+  norm_to_deg_gain: 2.5
   pan_soft_limit_deg: 10.0
   pan_soft_limit_scale: 0.60   # fraction of max head pan mech travel for "near limit"
   pan_limit_margin: 0.35      # servo cmd units — head at hardware stop
-  pan_recenter_bias: 0.22
-  pan_offset_to_step_gain: 0.30   # base step scales with head pan offset (mech deg)
-  trigger_hold_at_limit_sec: 0.25 # faster base follow when head near pan limit
-  track_compensation_gain: 0.30
+  pan_recenter_bias: 0.50
+  pan_offset_to_step_gain: 0.18   # base step scales with head pan offset (mech deg)
+  trigger_hold_at_limit_sec: 0.55 # slower base follow when head near pan limit
+  track_compensation_gain: 0.95   # counter-rotate neck ~1:1 with base during track
   body_base_enabled: true
-  body_base_cooldown_sec: 0.75
-  body_base_min_step_deg: 2.5
-  body_base_max_step_deg: 5.0
-  body_base_aim_to_step_gain: 5.5
-  body_base_compensation_gain: 0.38
-  limit_base_aim_to_step_gain: 4.5  # face/body when pan is stuck at min/max
+  body_base_cooldown_sec: 1.0
+  body_base_min_step_deg: 1.0
+  body_base_max_step_deg: 2.5
+  body_base_aim_to_step_gain: 2.8
+  body_base_compensation_gain: 0.90
+  limit_base_aim_to_step_gain: 2.2  # face/body when pan is stuck at min/max
   fast_face_enabled: false
   fast_face_velocity_norm_sec: 3.5
   fast_face_cooldown_sec: 1.4
@@ -149,9 +149,9 @@ base:
   max_total_auto_deg: 36.0
   max_yaw_deg: 120.0
   recenter_deadband_deg: 15.0
-  recenter_step_deg: 5.0
-  heading_pid_kp: 0.35
-  heading_pid_kd: 0.08
+  recenter_step_deg: 3.0
+  heading_pid_kp: 0.22
+  heading_pid_kd: 0.14
   use_imu_move_validation: true
   allow_multi_face: false
   wait_for_ack: false
@@ -198,8 +198,8 @@ servo:
   lost_search_hold_sec: 0.6
   lost_search_velocity_gain: 0.30
   lost_search_min_norm_x: 0.22
-  lost_search_base_step_deg: 3.0
-  lost_search_base_cooldown_sec: 4.0
+  lost_search_base_step_deg: 2.0
+  lost_search_base_cooldown_sec: 2.0
   wander_pan_amp_deg: 10.0   # soft limit from center when picking direction
   wander_step_min_deg: 1.0
   wander_step_max_deg: 3.0   # small search steps so camera can settle

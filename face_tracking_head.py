@@ -364,6 +364,41 @@ def _pan_cmd_to_mechanical(pan_cmd: float) -> float:
     )
 
 
+def _pan_mech_to_cmd(pan_mech: float) -> float:
+    if pan_mech >= 0.0:
+        span = max(PAN_MAX - PAN_CENTER, 1e-6)
+        return PAN_CENTER + (pan_mech / max(PAN_MECH_RIGHT_DEG, 1e-6)) * span
+    span = max(PAN_CENTER - PAN_MIN, 1e-6)
+    return PAN_CENTER + (pan_mech / min(PAN_MECH_LEFT_DEG, -1e-6)) * span
+
+
+def _aim_norm_to_yaw_deg(norm_x: float, *, hfov_deg: float) -> float:
+    return clamp(norm_x, -1.0, 1.0) * (hfov_deg * 0.5)
+
+
+def _cap_base_step_for_aim(
+    step_deg: float,
+    aim_norm_x: float,
+    *,
+    hfov_deg: float,
+    margin: float = 1.05,
+) -> float:
+    """Limit base rotation so it does not overshoot the remaining camera aim error."""
+    if step_deg == 0.0 or abs(aim_norm_x) <= FACE_SERVO_DEADZONE_X:
+        return step_deg
+    aim_deg = abs(_aim_norm_to_yaw_deg(aim_norm_x, hfov_deg=hfov_deg))
+    if aim_deg < 0.4:
+        return 0.0
+    aim_sign = 1.0 if aim_norm_x >= 0.0 else -1.0
+    step_sign = 1.0 if step_deg >= 0.0 else -1.0
+    if aim_sign * step_sign < 0.0:
+        return step_deg
+    max_useful = aim_deg * margin
+    if abs(step_deg) <= max_useful:
+        return step_deg
+    return step_sign * max(max_useful, BASE_MIN_STEP_DEG * 0.5)
+
+
 PAN_TRACK_RANGE = min(
     float(SERVO_CFG.get("pan_track_range", 26.0)),
     max(PAN_MAX - PAN_MIN, 1.0) * 0.5,
@@ -2194,13 +2229,21 @@ def servo_worker():
                 base_gate.clear_backoff(now_ts)
         last_base_busy_check = now_ts
 
-    def request_base_nudge(raw_step, source, compensation_gain):
-        nonlocal filtered_norm_x, servo_target_pan, last_heading_ts
+    def request_base_nudge(raw_step, source, compensation_gain, aim_norm_x=None):
+        nonlocal filtered_norm_x, servo_target_pan, pan, last_heading_ts
         nonlocal last_base_step, last_base_source, last_base_comp
         if not base_auto_enabled or base_motion_busy:
             return None
         if base_gate is not None and not base_gate.allowed(time.time()):
             return None
+        if aim_norm_x is not None:
+            raw_step = _cap_base_step_for_aim(
+                raw_step,
+                aim_norm_x,
+                hfov_deg=PERSON_MEMORY_CAMERA_HFOV_DEG,
+            )
+            if abs(raw_step) < BASE_MIN_STEP_DEG * 0.5:
+                return None
         step = clamp(raw_step * BASE_SIGN, -BASE_MAX_STEP_DEG, BASE_MAX_STEP_DEG)
         if abs(step) < BASE_MIN_STEP_DEG:
             return None
@@ -2220,16 +2263,24 @@ def servo_worker():
         if not yaw_state.allow_base_step(pid_step, head_pan_offset_deg(pan)):
             return None
 
-        # The base yaws the camera too, so reduce the neck pan demand immediately.
-        comp = pid_step * compensation_gain
-        servo_target_pan = clamp(servo_target_pan - comp, PAN_MIN, PAN_MAX)
+        # Counter-rotate neck in mechanical degrees so the camera does not overshoot.
+        pan_mech = _pan_cmd_to_mechanical(pan)
+        comp_mech = pid_step * compensation_gain
+        compensated_mech = pan_mech - comp_mech
+        compensated_pan = clamp(_pan_mech_to_cmd(compensated_mech), PAN_MIN, PAN_MAX)
+        servo_target_pan = compensated_pan
+        pan = clamp(
+            _pan_mech_to_cmd(pan_mech - comp_mech * 0.65),
+            PAN_MIN,
+            PAN_MAX,
+        )
         filtered_norm_x *= max(0.0, 1.0 - BASE_PAN_RECENTER_BIAS)
         target_glide.x *= max(0.0, 1.0 - BASE_PAN_RECENTER_BIAS)
         pan_pid.soften(0.15)
 
         last_base_step = pid_step
         last_base_source = source
-        last_base_comp = comp
+        last_base_comp = comp_mech
         return pid_step
 
     try:
@@ -2654,6 +2705,7 @@ def servo_worker():
                             planned,
                             "fast",
                             BASE_FAST_FACE_COMPENSATION_GAIN,
+                            aim_norm_x=filtered_norm_x,
                         )
                     if base_step is not None:
                         last_base_nudge_ts = now
@@ -2708,6 +2760,7 @@ def servo_worker():
                     and LAST_SEEN_BASE_ENABLED
                     and mode == "track"
                     and face_seen
+                    and track_pan_stuck
                     and last_seen_at_edge
                     and last_seen_world_yaw is not None
                     and now - last_seen_base_nudge_ts >= LAST_SEEN_BASE_COOLDOWN_SEC
@@ -2724,6 +2777,7 @@ def servo_worker():
                             planned,
                             "edge",
                             LAST_SEEN_BASE_COMP_GAIN,
+                            aim_norm_x=filtered_norm_x,
                         )
                     if base_step is not None:
                         last_base_nudge_ts = now
@@ -2778,6 +2832,7 @@ def servo_worker():
                             planned,
                             "body",
                             BASE_BODY_COMP_GAIN,
+                            aim_norm_x=filtered_norm_x,
                         )
                     if base_step is not None:
                         last_base_nudge_ts = now
@@ -2805,6 +2860,7 @@ def servo_worker():
                             planned,
                             "limit",
                             BASE_TRACK_COMPENSATION_GAIN,
+                            aim_norm_x=filtered_norm_x,
                         )
                     if base_step is not None:
                         last_base_nudge_ts = now
@@ -2848,6 +2904,7 @@ def servo_worker():
                                 planned,
                                 "track",
                                 BASE_TRACK_COMPENSATION_GAIN,
+                                aim_norm_x=filtered_norm_x,
                             )
                         if base_step is not None:
                             last_base_nudge_ts = now

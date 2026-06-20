@@ -59,6 +59,10 @@ def main():
             link.set_encoder_sign(esign)
             link.base_command_scale = scale
             print(f"Applied base cal: CPD={cpd:.2f}, sign={esign}, scale={scale:.2f}")
+            
+            if base_cfg.get("zero_on_start", True):
+                link.zero_base()
+                print("Zeroed base encoder (assumed current position is forward center).")
         else:
             print("WARNING: ESP32 connect failed. Running in dry-run mode.")
             link.close(skip_home=True)

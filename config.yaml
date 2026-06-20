@@ -107,7 +107,7 @@ base:
   # --- behavior (safe to tune) ---
   error_backoff_sec: 45.0
   require_calibrated_cpd: true
-  zero_on_start: false
+  zero_on_start: true
   sign: -1.0          # plate rotation sign vs B command; flip if base opposes head
   head_lead_min_deg: 5.0   # neck must turn this far before base may follow
   follow_head_direction: true

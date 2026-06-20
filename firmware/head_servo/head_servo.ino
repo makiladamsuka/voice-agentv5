@@ -28,12 +28,17 @@ const int LED_PIN = 2;
 
 const uint8_t PAN_CH = 4;
 const uint8_t TILT_CH = 5;
-const float PAN_MIN = 55.0f;
-const float PAN_MAX = 90.0f;
-const float TILT_MIN = 112.0f;
-const float TILT_MAX = 116.0f;
-const float PAN_CENTER = 73.0f;
-const float TILT_CENTER = 114.0f;
+const float PAN_MIN = 25.0f;
+const float PAN_MAX = 150.0f;
+const float TILT_MIN = 100.0f;
+const float TILT_MAX = 150.0f;
+const float PAN_CENTER = 85.0f;
+const float TILT_CENTER = 125.0f;
+// Runtime limits (writable via U/R for manual limit finding).
+float panLimitMin = PAN_MIN;
+float panLimitMax = PAN_MAX;
+float tiltLimitMin = TILT_MIN;
+float tiltLimitMax = TILT_MAX;
 const int PULSE_MIN_US = 450;
 const int PULSE_MAX_US = 2600;
 
@@ -239,8 +244,8 @@ void printBaseBusy() {
 }
 
 void writeAngles(float pan, float tilt, bool emitAck) {
-  panAngle = clampf(pan, PAN_MIN, PAN_MAX);
-  tiltAngle = clampf(tilt, TILT_MIN, TILT_MAX);
+  panAngle = clampf(pan, panLimitMin, panLimitMax);
+  tiltAngle = clampf(tilt, tiltLimitMin, tiltLimitMax);
   if (!pcaReady) {
     if (emitAck) Serial.println(F("ERR PCA9685"));
     return;
@@ -380,6 +385,24 @@ void handleLine() {
     }
     if (lineBuffer[0] == 'X') {
       stopBaseMotion();
+      lineLen = 0;
+      return;
+    }
+    if (lineBuffer[0] == 'U') {
+      panLimitMin = 0.0f;
+      panLimitMax = 180.0f;
+      tiltLimitMin = 0.0f;
+      tiltLimitMax = 180.0f;
+      Serial.println(F("OK U"));
+      lineLen = 0;
+      return;
+    }
+    if (lineBuffer[0] == 'R') {
+      panLimitMin = PAN_MIN;
+      panLimitMax = PAN_MAX;
+      tiltLimitMin = TILT_MIN;
+      tiltLimitMax = TILT_MAX;
+      Serial.println(F("OK R"));
       lineLen = 0;
       return;
     }

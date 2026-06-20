@@ -162,6 +162,11 @@ def main() -> int:
     parser.add_argument("--pan", type=float, default=float(servo.get("pan_center", 75.0)))
     parser.add_argument("--tilt", type=float, default=float(servo.get("tilt_center", 112.0)))
     parser.add_argument("--step", type=float, default=1.0, help="Initial jog step (servo cmd units)")
+    parser.add_argument(
+        "--limits",
+        action="store_true",
+        help="Keep firmware pan/tilt clamp (default: unlock 0-180 for limit finding)",
+    )
     parser.add_argument("--no-home", action="store_true", help="Do not move to center on exit")
     args = parser.parse_args()
 
@@ -172,6 +177,10 @@ def main() -> int:
     if not link.connect():
         print("Could not connect to ESP32.")
         return 1
+
+    if not args.limits:
+        link.send_line("U", drain_after=False)
+        print("Firmware limits unlocked (0-180 pan/tilt). Use --limits to keep config clamp.", flush=True)
 
     pan = args.pan
     tilt = args.tilt
@@ -267,6 +276,8 @@ def main() -> int:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
         home_pan = marks["pan_center"] if marks["pan_center"] is not None else pan_center
         home_tilt = marks["tilt_center"] if marks["tilt_center"] is not None else tilt_center
+        if not args.limits:
+            link.send_line("R", drain_after=False)
         link.close(
             home_pan=home_pan,
             home_tilt=home_tilt,

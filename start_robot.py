@@ -14,6 +14,7 @@ from core.base_controller import BaseController
 from core.servo_mixer import ServoMixer
 from core.emotion_engine import EmotionEngine
 from core.eye_renderer import EyeRenderer
+from core.debug_dashboard import DebugDashboard
 from hardware.arduino_servo import ArduinoServoLink
 
 APP_DIR = Path(__file__).resolve().parent
@@ -80,6 +81,9 @@ def main():
     
     # Screen Rendering
     threads.append(threading.Thread(target=EyeRenderer(bb).run, daemon=True, name="EyeRenderer"))
+
+    # Unified Debug Dashboard (Camera Stream + 3D Viz)
+    threads.append(threading.Thread(target=DebugDashboard(bb).run, daemon=True, name="DebugDashboard"))
 
     # 4. Start all services
     for t in threads:

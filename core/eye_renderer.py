@@ -311,17 +311,24 @@ class EyeRenderer:
             # Blink
             if now >= next_blink:
                 speed = random.uniform(BLINK_SPEED_MIN, BLINK_SPEED_MAX)
-                left_eye.start_blink(speed); right_eye.start_blink(speed)
+                # Align blink start conditions so both displays animate the same phase
+                avg_y = (left_eye.current_pos[1] + right_eye.current_pos[1]) * 0.5
+                avg_w = (left_eye.current_w + right_eye.current_w) * 0.5
+                avg_h = (left_eye.current_h + right_eye.current_h) * 0.5
+                for eye in (left_eye, right_eye):
+                    eye.blink_state = "IDLE"
+                    eye.vy = 0
+                    eye.current_pos[1] = avg_y
+                    eye.current_w = avg_w
+                    eye.current_h = avg_h
+                    eye.w = avg_w
+                    eye.h = avg_h
+                left_eye.start_blink(speed)
+                right_eye.start_blink(speed)
                 next_blink = now + random.uniform(3, 7)
 
             # Update physics
             left_eye.update()
-            # Mirror blink state to right eye for sync
-            right_eye.blink_state = left_eye.blink_state
-            right_eye.vy = left_eye.vy
-            right_eye.current_pos[1] = left_eye.current_pos[1]
-            right_eye.current_w = left_eye.current_w
-            right_eye.current_h = left_eye.current_h
             right_eye.update()
 
             # Render to displays

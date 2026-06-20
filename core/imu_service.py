@@ -88,6 +88,7 @@ class ImuService:
         self._tilt_center = float(servo.get("tilt_center", 114.0))
         self._tilt_min = float(servo.get("tilt_min", 112.0))
         self._tilt_max = float(servo.get("tilt_max", 115.0))
+        self._tilt_mechanical_scale = float(servo.get("tilt_mechanical_scale", 3.0))
         self._held_tilt_center = self._tilt_center
 
         self._reader = None
@@ -145,6 +146,7 @@ class ImuService:
             max_pitch_deg=self.horizon_max_pitch,
             max_up_from_center_deg=self.horizon_max_up,
             max_down_from_center_deg=self.horizon_max_down,
+            mechanical_scale=self._tilt_mechanical_scale,
         )
         self._horizon.reset()
 

@@ -460,6 +460,7 @@ class HorizonTiltBias:
         max_pitch_deg: float = 25.0,
         max_up_from_center_deg: float = 2.0,
         max_down_from_center_deg: float = 4.0,
+        mechanical_scale: float = 1.0,
     ):
         self.gain = gain
         self.bias_sign = 1.0 if bias_sign >= 0.0 else -1.0
@@ -468,6 +469,7 @@ class HorizonTiltBias:
         self._max_pitch_deg = max(1.0, max_pitch_deg)
         self._max_up_from_center_deg = max(0.0, max_up_from_center_deg)
         self._max_down_from_center_deg = max(0.0, max_down_from_center_deg)
+        self.mechanical_scale = max(0.1, mechanical_scale)
         self._pitch_smooth = 0.0
         self._initialized = False
 
@@ -493,7 +495,9 @@ class HorizonTiltBias:
         tilt_min: float,
         tilt_max: float,
     ) -> float:
-        bias = pitch_deg * self.gain * self.bias_sign
+        # pitch_deg is a physical angle. Convert the correction into servo command units
+        # by dividing by the mechanical gear ratio.
+        bias = (pitch_deg * self.gain * self.bias_sign) / self.mechanical_scale
         bias = max(-self._max_bias_deg, min(self._max_bias_deg, bias))
         value = base_center - bias
         lo = max(tilt_min, base_center - self._max_down_from_center_deg)

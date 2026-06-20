@@ -172,8 +172,9 @@ servo:
   tilt_max: 115.0
   pan_center: 73.0
   tilt_center: 114.0  # mechanical upright (0°)
-  # Servo cmd units != physical degrees. Calibrate: at full look-up, note T cmd vs real angle.
-  tilt_mechanical_scale: 3.0   # mech° = (tilt_cmd - tilt_center) * scale  (e.g. +15 cmd → +45°)
+  # Your Arduino maps 112-115 across the full 2150us servo pulse range!
+  # 1 command unit = ~45 physical degrees. 
+  tilt_mechanical_scale: 45.0   # mech° = (tilt_cmd - tilt_center) * scale
   tilt_max_mechanical_deg: 45.0
   tilt_min_mechanical_deg: -35.0
   pan_mech_left_deg: -40.0

@@ -24,7 +24,10 @@ class BaseYawState:
         return _clamp(target_world_yaw_deg, -self.max_yaw_deg, self.max_yaw_deg)
 
     def allow_base_step(self, step_deg: float, head_pan_offset_deg: float) -> bool:
-        projected_world = self.base_encoder_deg + step_deg + head_pan_offset_deg
+        projected_base = self.base_encoder_deg + step_deg
+        if abs(projected_base) > self.max_yaw_deg:
+            return False
+        projected_world = projected_base + head_pan_offset_deg
         return abs(projected_world) <= self.max_yaw_deg
 
 

@@ -115,15 +115,10 @@ float clampf(float v, float lo, float hi) {
   return v;
 }
 
-// Old mapAngleToUs removed. We now map 1 command degree = 11.94us exactly.
-// PAN_CENTER (73.0) mapped to the old center pulse (1555us)
-// TILT_CENTER (114.0) mapped to the old center pulse (1525us)
-int mapPanToUs(float angle) {
-  return 1555 + (int)((angle - PAN_CENTER) * 11.94f);
-}
-
-int mapTiltToUs(float angle) {
-  return 1525 + (int)((angle - TILT_CENTER) * 11.94f);
+int mapAngleToUs(float deg, float degMin, float degMax) {
+  float t = (deg - degMin) / (degMax - degMin);
+  t = clampf(t, 0.0f, 1.0f);
+  return PULSE_MIN_US + (int)(t * (float)(PULSE_MAX_US - PULSE_MIN_US));
 }
 
 void setServoPulseUs(uint8_t ch, int pulseUs) {
@@ -251,9 +246,9 @@ void writeAngles(float pan, float tilt, bool emitAck) {
     return;
   }
   
-  // Map using direct 1 degree = 1 physical degree scaling!
-  setServoPulseUs(PAN_CH, mapPanToUs(panAngle));
-  setServoPulseUs(TILT_CH, mapTiltToUs(tiltAngle));
+  // Standard 0-180 degree mapping
+  setServoPulseUs(PAN_CH, mapAngleToUs(panAngle, 0.0f, 180.0f));
+  setServoPulseUs(TILT_CH, mapAngleToUs(tiltAngle, 0.0f, 180.0f));
   digitalWrite(LED_PIN, HIGH);
   digitalWrite(LED_PIN, LOW);
   if (emitAck) printServoAck();

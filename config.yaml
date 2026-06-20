@@ -88,14 +88,14 @@ imu:
   # Used only when auto_level_on_start is false (manual test_imu.py calibration)
   roll_offset_deg: -7.34
   pitch_offset_deg: 12.84
-  horizon_tilt_gain: 0.0
-  horizon_tilt_sign: 1.0
-  horizon_pitch_smooth_hz: 2.0
-  horizon_max_bias_deg: 0.0
+  horizon_tilt_gain: 1.0
+  horizon_tilt_sign: -1.0   # nose-down pitch → raise tilt cmd (look up)
+  horizon_pitch_smooth_hz: 3.0
+  horizon_max_bias_deg: 2.0
   horizon_max_pitch_deg: 12.0
   horizon_gyro_max_dps: 35.0       # ignore horizon when spinning/moving
-  horizon_max_up_from_center_deg: 0.0
-  horizon_max_down_from_center_deg: 0.0
+  horizon_max_up_from_center_deg: 1.0
+  horizon_max_down_from_center_deg: 2.0
   yaw_sign: 1.0              # flip if IMU yaw integral opposes encoder/base
 
 base:
@@ -146,6 +146,11 @@ base:
   wander_min_pan_offset_deg: 6.0
   wander_min_head_step_deg: 2.0
   wander_compensation_gain: 0.20
+  wander_random_turn_enabled: true
+  wander_random_turn_deg: 30.0      # total turn target (delivered in chunks)
+  wander_random_turn_chunk_deg: 3.0
+  wander_random_turn_min_sec: 120.0
+  wander_random_turn_max_sec: 300.0
   max_total_auto_deg: 36.0
   max_yaw_deg: 120.0
   recenter_deadband_deg: 22.0
@@ -181,7 +186,7 @@ servo:
   pan_center_norm_x: 0.08   # hold pan steady when face is this close to horizontal center
   tilt_center_norm_y: 0.12   # hold tilt steady when face is this close to vertical center
   loop_hz: 80.0
-  no_face_home_sec: 0.8
+  no_face_home_sec: 1.2
   debug_hz: 2.0
   face_alpha_x: 0.10
   face_alpha_y: 0.08
@@ -190,7 +195,7 @@ servo:
   pan_pid_kd: 0.04
   tilt_pid_kp: 0.28
   tilt_pid_ki: 0.0
-  tilt_pid_kd: 0.03
+  tilt_pid_kd: 0.015
   pid_integral_limit: 0.40
   predict_hold_sec: 1.0
   predict_edge_norm: 0.55
@@ -215,7 +220,7 @@ servo:
   wander_thinking_hold_max_sec: 8.0
   wander_long_stare_chance: 0.14
   wander_pan_smooth_hz: 3.0   # slow, peaceful neck motion
-  wander_tilt_smooth_hz: 2.8
+  wander_tilt_smooth_hz: 1.5
   motion_emotion_min_sec: 2.6
   attention_hold_min_sec: 3.2
   attention_hold_max_sec: 6.5
@@ -227,9 +232,10 @@ servo:
   social_multi_grace_sec: 2.4
   target_smooth_hz: 3.0   # face aim smoothing (replaces spring glide)
   pan_smooth_hz: 3.2    # neck pan follow — lower = less jitter when locked on face
-  tilt_smooth_hz: 3.0   # neck tilt follow
+  tilt_smooth_hz: 2.0   # neck tilt follow — lower = softer vertical motion
   servo_send_min_deg: 0.04
   servo_send_hz: 45.0
-  servo_angle_quantum_deg: 0.1
+  servo_angle_quantum_deg: 0.05
+  tilt_send_smooth_hz: 2.5   # final softening before ESP32 — reduces serial jerk
   home_smooth_sec: 0.9
   home_smooth_hz: 30.0

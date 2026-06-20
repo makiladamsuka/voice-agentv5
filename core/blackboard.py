@@ -46,6 +46,7 @@ class Blackboard:
     base_step_ready: bool = False  # BaseController signals a new step is pending
     base_world_yaw_deg: float = 0.0
     base_encoder_deg: float = 0.0
+    base_encoder_synced: bool = False
     base_motion_busy: bool = False
     base_motion_allowed: bool = True
     base_fault_reason: str | None = None
@@ -60,6 +61,7 @@ class Blackboard:
     imu_accel_trusted: bool = True
     imu_horizon_ok: bool = True
     imu_available: bool = False    # False until ImuService confirms hardware
+    imu_effective_tilt_center: float = 114.0
 
     # ── Person Memory (written by FaceTracker) ─────────────────────────────
     person_snapshots: list = None  # list[dict] from PersonMemory.snapshots()

@@ -16,6 +16,7 @@ class BaseSafetyConfig:
     gyro_runaway_scale: float = 1.5
     gyro_slip_scale: float = 0.25
     encoder_runaway_margin_deg: float = 8.0
+    encoder_lag_ratio: float = 0.25
     min_gyro_runaway_deg: float = 25.0
     poll_interval_sec: float = 0.04
 
@@ -136,15 +137,27 @@ class BaseMoveWatchdog:
             reason = f"encoder runaway ({encoder_delta:+.1f}° vs commanded {commanded:+.1f}°)"
         elif gyro_abs > gyro_limit:
             reason = f"gyro spin ({gyro_integral:+.1f}° integral vs limit {gyro_limit:.1f}°)"
+        elif st.busy and commanded >= 3.0 and gyro_abs > max(8.0, commanded * 0.35) and encoder_abs < commanded * self._cfg.encoder_lag_ratio:
+            reason = (
+                f"encoder lag vs gyro "
+                f"(enc {encoder_delta:+.1f}°, gyro {gyro_integral:+.1f}°, cmd {commanded:.1f}°)"
+            )
         elif st.busy and expected_abs > 3.0 and gyro_abs < self._cfg.gyro_slip_scale * expected_abs:
             reason = (
                 f"encoder/pan vs gyro slip "
                 f"(enc {encoder_delta:+.1f}°, pan {pan_delta:+.1f}°, gyro {gyro_integral:+.1f}°)"
             )
 
-        if reason is None and not st.busy and encoder_abs >= max(0.5, commanded * 0.5):
-            self.finish_move()
-            return None
+        if reason is None and not st.busy:
+            if commanded >= 3.0 and encoder_abs < commanded * 0.35 and gyro_abs > max(6.0, commanded * 0.25):
+                self._trip(
+                    f"encoder did not track move (enc {encoder_delta:+.1f}°, gyro {gyro_integral:+.1f}°)",
+                    now,
+                )
+                return self._gate.last_reason
+            if encoder_abs >= max(0.5, commanded * 0.35):
+                self.finish_move()
+                return None
         if reason is None:
             return None
 

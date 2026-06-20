@@ -271,12 +271,12 @@ class OrganicWanderSearch:
         tilt_lo = clamp(tilt_center - max(0.0, tilt_max_down_deg), tilt_min, tilt_max)
         tilt_hi = clamp(tilt_center + max(0.0, tilt_max_up_deg), tilt_min, tilt_max)
         tilt_span = max(0.0, min(tilt_step_max_deg, tilt_hi - tilt_lo))
-        if tilt_span <= 0.001 or random.random() < 0.70:
-            self.tilt_goal = clamp(tilt_center, tilt_lo, tilt_hi)
+        if tilt_span <= 0.001 or random.random() < 0.75:
+            self.tilt_goal = clamp(tilt_current, tilt_lo, tilt_hi)
         else:
-            # Idle wander should read as eye contact, not scanning the floor/ceiling.
+            # Small nudge from current tilt — avoids snapping back toward center.
             offset = random.triangular(-tilt_span, tilt_span, 0.0)
-            self.tilt_goal = clamp(tilt_center + offset, tilt_lo, tilt_hi)
+            self.tilt_goal = clamp(tilt_current + offset, tilt_lo, tilt_hi)
 
     def _assign_pause_kind(
         self,

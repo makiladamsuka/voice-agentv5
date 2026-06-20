@@ -83,6 +83,7 @@ class _PidAxis:
         dt = max(0.001, min(0.5, dt))
         self._integral = clamp(self._integral + error * dt, -self.integral_limit, self.integral_limit)
         deriv = 0.0 if not self._initialized else (error - self._prev_error) / dt
+        deriv = clamp(deriv, -6.0, 6.0)
         self._prev_error = error
         self._initialized = True
         return self.kp * error + self.ki * self._integral + self.kd * deriv
@@ -217,6 +218,7 @@ class ServoLoop:
         self.imu_max_up = float(imu.get("horizon_max_up_from_center_deg", 2.0))
         self.imu_max_down = float(imu.get("horizon_max_down_from_center_deg", 4.0))
         self._imu_pitch_smooth = 0.0
+        self._effective_tilt_center_smooth = self.tilt_center
 
         # ── Person memory / last-seen ─────────────────────────────────────────
         self.pm_reacquire_deg = float(pm.get("reacquire_angle_deg", 28.0))
@@ -257,21 +259,35 @@ class ServoLoop:
     # ── IMU tilt compensation ──────────────────────────────────────────────────
 
     def _effective_tilt_center(self, dt: float) -> float:
-        """Adjust tilt center based on IMU pitch to keep the horizon level."""
-        state = self.bb.read("imu_available", "imu_pitch_deg", "imu_horizon_ok")
-        if not state["imu_available"] or not state["imu_horizon_ok"]:
+        """IMU-leveled tilt center from ImuService (held when head is moving fast)."""
+        state = self.bb.read(
+            "imu_available", "imu_horizon_ok", "imu_effective_tilt_center",
+        )
+        if not state["imu_available"]:
             return self.tilt_center
 
-        pitch = state["imu_pitch_deg"]
-        alpha = 1.0 - math.exp(-max(0.1, self.imu_horizon_smooth) * max(0.001, dt))
-        self._imu_pitch_smooth += (pitch - self._imu_pitch_smooth) * alpha
+        if state["imu_horizon_ok"]:
+            target = state["imu_effective_tilt_center"]
+        else:
+            target = self._effective_tilt_center_smooth
 
-        bias = self._imu_pitch_smooth * self.imu_horizon_gain * self.imu_horizon_sign
-        bias = clamp(bias, -self.imu_max_bias, self.imu_max_bias)
-        center = self.tilt_center - bias
-        lo = max(self.tilt_min, self.tilt_center - self.imu_max_down)
-        hi = min(self.tilt_max, self.tilt_center + self.imu_max_up)
-        return clamp(center, lo, hi)
+        center_alpha = 1.0 - math.exp(-3.0 * max(0.001, dt))
+        self._effective_tilt_center_smooth += (target - self._effective_tilt_center_smooth) * center_alpha
+        return self._effective_tilt_center_smooth
+
+    def _on_mode_change(self, old_mode: str, new_mode: str) -> None:
+        """Avoid PID derivative spikes when switching track ↔ wander."""
+        if old_mode == new_mode:
+            return
+        self._pan_pid.reset()
+        self._tilt_pid.reset()
+        self._target_glide.target_x = 0.0
+        self._target_glide.target_y = 0.0
+        self._prev_face_x = 0.0
+        self._prev_face_y = 0.0
+        if new_mode == "wander":
+            self._wander.tilt_goal = self._tilt
+            self._wander.pan_goal = self._pan
 
     # ── Track mode ─────────────────────────────────────────────────────────────
 
@@ -318,16 +334,13 @@ class ServoLoop:
             self.pan_min, self.pan_max,
         )
         tilt_target = clamp(
-            self._tilt + self.tilt_sign * tilt_corr * self.tilt_track_range,
+            effective_tilt_center + self.tilt_sign * tilt_corr * self.tilt_track_range,
             self.tilt_min, self.tilt_max,
         )
 
         self._pan = smooth_toward(self._pan, pan_target, dt, smooth_hz=self.pan_smooth_hz, lo=self.pan_min, hi=self.pan_max)
-        
-        # Asymmetric tilt smoothing for heavy head (brake when going down)
-        tilt_hz = self.tilt_smooth_hz * 0.4  # Slow down tilt overall
-        if tilt_target < self._tilt:  # Moving down
-            tilt_hz *= 0.5  # Add extra braking against gravity
+
+        tilt_hz = self.tilt_smooth_hz * 0.28
         self._tilt = smooth_toward(self._tilt, tilt_target, dt, smooth_hz=tilt_hz, lo=self.tilt_min, hi=self.tilt_max)
 
         return "track"
@@ -380,11 +393,8 @@ class ServoLoop:
         )
 
         self._pan = smooth_toward(self._pan, pan_goal, dt, smooth_hz=self.wander_pan_smooth, lo=self.pan_min, hi=self.pan_max)
-        
-        # Asymmetric tilt smoothing for wandering
-        tilt_hz = self.wander_tilt_smooth * 0.4
-        if tilt_goal < self._tilt:
-            tilt_hz *= 0.5
+
+        tilt_hz = self.wander_tilt_smooth * 0.28
         self._tilt = smooth_toward(self._tilt, tilt_goal, dt, smooth_hz=tilt_hz, lo=self.tilt_min, hi=self.tilt_max)
         return "wander"
 
@@ -409,10 +419,8 @@ class ServoLoop:
         pan_step = clamp(yaw_err * self.lss_track_gain, -self.lss_max_step, self.lss_max_step)
         pan_target = clamp(self._pan + pan_step, self.pan_min, self.pan_max)
         self._pan = smooth_toward(self._pan, pan_target, dt, smooth_hz=self.pan_smooth_hz, lo=self.pan_min, hi=self.pan_max)
-        
-        tilt_hz = self.tilt_smooth_hz * 0.4
-        if effective_tilt_center < self._tilt:
-            tilt_hz *= 0.5
+
+        tilt_hz = self.tilt_smooth_hz * 0.28
         self._tilt = smooth_toward(self._tilt, effective_tilt_center, dt, smooth_hz=tilt_hz, lo=self.tilt_min, hi=self.tilt_max)
         return "last_seen"
 
@@ -447,6 +455,11 @@ class ServoLoop:
                 if face_gone and body_gone:
                     next_mode = "wander"
                     self._wander.reset(self.pan_center, effective_tilt_center, now)
+                    self._wander.tilt_goal = self._tilt
+                    self._wander.pan_goal = self._pan
+
+            if next_mode != self._mode:
+                self._on_mode_change(self._mode, next_mode)
 
             self._mode = next_mode
 

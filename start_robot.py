@@ -17,6 +17,7 @@ from core.emotion_engine import EmotionEngine
 from core.eye_renderer import EyeRenderer
 from core.debug_dashboard import DebugDashboard
 from hardware.arduino_servo import ArduinoServoLink
+from base_motor_utils import apply_base_calibration_to_nano
 
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
@@ -37,6 +38,7 @@ def _load_yaml(path: Path) -> dict:
 def main():
     cfg = _load_yaml(DEFAULT_CONFIG_PATH)
     servo_cfg = cfg.get("servo", {}) or {}
+    base_cfg = cfg.get("base", {}) or {}
     port = servo_cfg.get("port") or ""
     baud = int(servo_cfg.get("baud", 115200))
 
@@ -52,14 +54,16 @@ def main():
     try:
         link = ArduinoServoLink(port=port, baud=baud)
         if link.connect():
-            base_cfg = cfg.get("base", {}) or {}
-            cpd = float(base_cfg.get("counts_per_degree", 31.1667))
-            esign = float(base_cfg.get("encoder_sign", -1.0))
-            scale = float(base_cfg.get("command_scale", 1.0))
-            link.set_counts_per_degree(cpd)
-            link.set_encoder_sign(esign)
-            link.base_command_scale = scale
-            print(f"Applied base cal: CPD={cpd:.2f}, sign={esign}, scale={scale:.2f}")
+            if apply_base_calibration_to_nano(link):
+                print(f"Applied base cal: scale={link.base_command_scale:.4f}")
+            else:
+                cpd = float(base_cfg.get("counts_per_degree", 31.1667))
+                esign = float(base_cfg.get("encoder_sign", -1.0))
+                scale = float(base_cfg.get("command_scale", 1.0))
+                link.set_counts_per_degree(cpd)
+                link.set_encoder_sign(esign)
+                link.base_command_scale = scale
+                print(f"Applied base cal: CPD={cpd:.2f}, sign={esign}, scale={scale:.2f}")
             
             if base_cfg.get("zero_on_start", False):
                 link.zero_base()
@@ -74,9 +78,8 @@ def main():
 
     # 3. Instantiate Core Services
     threads = []
-    base_cfg = cfg.get("base", {}) or {}
     base_gate = BaseMotionGate(backoff_sec=float(base_cfg.get("error_backoff_sec", 45.0)))
-    bb.write(base_motion_allowed=True)
+    bb.write(base_motion_allowed=True, base_encoder_synced=False)
     
     # Vision Pipeline
     threads.append(threading.Thread(target=FaceTracker(bb).run, daemon=True, name="FaceTracker"))

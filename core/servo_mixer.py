@@ -21,6 +21,7 @@ except ImportError:
 from core.blackboard import Blackboard
 from core.base_controller import _pan_to_mech
 from base_safety import BaseMotionGate, BaseMoveWatchdog, BaseSafetyConfig
+from lib.elastic_head_motion import smooth_toward
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
@@ -67,6 +68,7 @@ class ServoMixer:
         self.send_min_deg = float(s.get("servo_send_min_deg", 0.06))
         self.send_hz = float(s.get("servo_send_hz", 25.0))
         self.angle_quantum = float(s.get("servo_angle_quantum_deg", 0.2))
+        self.tilt_send_smooth_hz = float(s.get("tilt_send_smooth_hz", 2.5))
         self.loop_hz = float(s.get("loop_hz", 100.0))
         self.base_busy_check_hz = 5.0  # poll status 5x/sec when base is moving
 
@@ -85,9 +87,34 @@ class ServoMixer:
 
         self._prev_pan = None
         self._prev_tilt = None
+        self._send_tilt = None
         self._last_send_ts = 0.0
         self._last_busy_check_ts = 0.0
         self._encoder_deg = 0.0
+        self._last_encoder_poll_ts = 0.0
+        self._encoder_poll_hz = 2.0
+
+    def _publish_encoder(self, enc: float, pan: float, busy: bool, *, synced: bool = True) -> None:
+        self._encoder_deg = enc
+        self.bb.write(
+            base_motion_busy=busy,
+            base_encoder_deg=enc,
+            base_encoder_synced=synced,
+            base_world_yaw_deg=self._world_yaw(enc, pan),
+        )
+
+    def _sync_encoder(self, pan: float) -> bool:
+        if self._link is None:
+            self.bb.write(base_encoder_synced=False)
+            return False
+        try:
+            st = self._link.query_status()
+            if st is None:
+                return False
+            self._publish_encoder(st.degrees, pan, st.busy)
+            return True
+        except Exception:
+            return False
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -118,6 +145,12 @@ class ServoMixer:
     def run(self) -> None:
         if self._link is None or not self._link.connected:
             print("[ServoMixer] No servo link — running in dry-run mode.")
+        else:
+            pan = self._quantize(self.bb.read("servo_pan")["servo_pan"])
+            if self._sync_encoder(pan):
+                print(f"[ServoMixer] Encoder synced: {self._encoder_deg:+.1f}°")
+            else:
+                print("[ServoMixer] WARNING: could not read base encoder — base moves blocked.")
 
         loop_delay = 1.0 / max(1.0, self.loop_hz)
 
@@ -145,6 +178,13 @@ class ServoMixer:
             if state["base_motion_busy"] and (now - self._last_busy_check_ts) > (1.0 / self.base_busy_check_hz):
                 self._last_busy_check_ts = now
                 self._poll_base_busy(pan)
+            elif (
+                not state["base_motion_busy"]
+                and self._link is not None
+                and (now - self._last_encoder_poll_ts) > (1.0 / self._encoder_poll_hz)
+            ):
+                self._last_encoder_poll_ts = now
+                self._sync_encoder(pan)
 
             # ── Send head angles ───────────────────────────────────────────
             if self._should_send(pan, tilt, now):
@@ -157,11 +197,25 @@ class ServoMixer:
 
         print("[ServoMixer] Stopped.")
 
+    def _tilt_for_send(self, tilt: float) -> float:
+        dt = 1.0 / max(1.0, self.loop_hz)
+        if self._send_tilt is None:
+            self._send_tilt = tilt
+        self._send_tilt = smooth_toward(
+            self._send_tilt,
+            tilt,
+            dt,
+            smooth_hz=self.tilt_send_smooth_hz,
+            lo=-360.0,
+            hi=360.0,
+        )
+        return self._send_tilt
+
     def _send_angles(self, pan: float, tilt: float) -> None:
         if self._link is None:
             return
         try:
-            self._link.write_angles(pan, tilt)
+            self._link.write_angles(pan, self._tilt_for_send(tilt))
         except Exception as e:
             print(f"[ServoMixer] write_angles failed: {e}")
 
@@ -177,7 +231,7 @@ class ServoMixer:
                     encoder_deg=enc,
                     pan_offset_deg=pan_mech,
                 )
-            ok = self._link.write_combined(pan, tilt, step, wait_base=True)
+            ok = self._link.write_combined(pan, self._tilt_for_send(tilt), step, wait_base=True)
             if not ok:
                 err = self._link.last_base_error or "no ack"
                 print(f"[ServoMixer] Base step {step:+.1f}° ({source}) rejected: {err}")
@@ -187,17 +241,11 @@ class ServoMixer:
                 return
             st = self._link.query_status()
             if st is not None:
-                busy = st.busy
-                enc = st.degrees
-                self._encoder_deg = enc
-                self.bb.write(
-                    base_motion_busy=busy,
-                    base_encoder_deg=enc,
-                    base_world_yaw_deg=self._world_yaw(enc, pan),
-                )
+                self._publish_encoder(st.degrees, pan, st.busy)
                 self._last_busy_check_ts = now
-                print(f"[ServoMixer] Base step {step:+.1f}° ({source}) enc={enc:+.1f}°")
+                print(f"[ServoMixer] Base step {step:+.1f}° ({source}) enc={st.degrees:+.1f}°")
             else:
+                self.bb.write(base_motion_busy=True)
                 self._send_angles(pan, tilt)
         except Exception as e:
             print(f"[ServoMixer] base step failed: {e}")
@@ -218,15 +266,8 @@ class ServoMixer:
                     return
             st = self._link.query_status()
             if st is not None:
-                enc = st.degrees
-                self._encoder_deg = enc
-                busy = st.busy
-                self.bb.write(
-                    base_motion_busy=busy,
-                    base_encoder_deg=enc,
-                    base_world_yaw_deg=self._world_yaw(enc, pan),
-                )
-                if self._watchdog is not None and self._watchdog.active and not busy:
+                self._publish_encoder(st.degrees, pan, st.busy)
+                if self._watchdog is not None and self._watchdog.active and not st.busy:
                     self._watchdog.finish_move()
             else:
                 self.bb.write(base_motion_busy=False)

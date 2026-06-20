@@ -83,6 +83,12 @@ class ImuService:
         self.horizon_max_up: float = float(imu.get("horizon_max_up_from_center_deg", 2.0))
         self.horizon_max_down: float = float(imu.get("horizon_max_down_from_center_deg", 4.0))
 
+        servo = _cfg(cfg, "servo", default={}) or {}
+        self._tilt_center = float(servo.get("tilt_center", 114.0))
+        self._tilt_min = float(servo.get("tilt_min", 112.0))
+        self._tilt_max = float(servo.get("tilt_max", 115.0))
+        self._held_tilt_center = self._tilt_center
+
         self._reader = None
         self._horizon = None
 
@@ -139,8 +145,12 @@ class ImuService:
             max_up_from_center_deg=self.horizon_max_up,
             max_down_from_center_deg=self.horizon_max_down,
         )
+        self._horizon.reset()
 
-        self.bb.write(imu_available=True)
+        self.bb.write(
+            imu_available=True,
+            imu_effective_tilt_center=self._tilt_center,
+        )
         print("[ImuService] IMU online and publishing to Blackboard.")
 
         prev_ts = time.perf_counter()
@@ -159,6 +169,15 @@ class ImuService:
             prev_ts = now
 
             gyro_ok = sample.gyro_mag_dps < self.horizon_gyro_max
+            pitch = sample.accel_pitch_deg if sample.accel_trusted else sample.pitch_deg
+            if gyro_ok and self._horizon is not None:
+                self._held_tilt_center = self._horizon.effective_center(
+                    self._tilt_center,
+                    pitch,
+                    dt,
+                    self._tilt_min,
+                    self._tilt_max,
+                )
             self.bb.write(
                 imu_pitch_deg=sample.pitch_deg,
                 imu_roll_deg=sample.roll_deg,
@@ -167,6 +186,7 @@ class ImuService:
                 imu_yaw_integral_deg=self._reader.filter.yaw_integral_deg() * self.yaw_sign,
                 imu_accel_trusted=sample.accel_trusted,
                 imu_horizon_ok=gyro_ok,
+                imu_effective_tilt_center=self._held_tilt_center,
             )
             time.sleep(0.008)  # ~120 Hz publish ceiling
 

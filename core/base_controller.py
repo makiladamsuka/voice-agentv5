@@ -109,6 +109,7 @@ class BaseController:
         # ── Step sizes ────────────────────────────────────────────────────────
         self.min_step = float(b.get("min_step_deg", 0.8))
         self.max_step = float(b.get("max_step_deg", 2.5))
+        self.single_shot_max = float(b.get("single_shot_max_deg", 3.0))
         self.norm_to_deg = float(b.get("norm_to_deg_gain", 2.2))
         self.pan_offset_to_step = float(b.get("pan_offset_to_step_gain", 0.30))
         self.track_comp_gain = float(b.get("track_compensation_gain", 0.45))
@@ -153,6 +154,11 @@ class BaseController:
         self.wander_base_chance = float(b.get("wander_chance", 0.40))
         self.wander_min_pan = float(b.get("wander_min_pan_offset_deg", 10.0))
         self.wander_min_head_step = float(b.get("wander_min_head_step_deg", 6.0))
+        self.wander_random_turn_enabled = bool(b.get("wander_random_turn_enabled", True))
+        self.wander_random_turn_deg = float(b.get("wander_random_turn_deg", 30.0))
+        self.wander_random_turn_chunk = float(b.get("wander_random_turn_chunk_deg", 3.0))
+        self.wander_random_turn_min_sec = float(b.get("wander_random_turn_min_sec", 120.0))
+        self.wander_random_turn_max_sec = float(b.get("wander_random_turn_max_sec", 300.0))
 
         # ── Safety gate ──────────────────────────────────────────────────────
         self._gate = gate if gate is not None else BaseMotionGate(
@@ -168,6 +174,12 @@ class BaseController:
         self._last_lss_ts = 0.0
         self._last_wander_ts = 0.0
         self._was_wander_moving = False
+        self._next_random_turn_ts = time.time() + random.uniform(
+            self.wander_random_turn_min_sec,
+            self.wander_random_turn_max_sec,
+        )
+        self._random_turn_remaining = 0.0
+        self._random_turn_sign = 0.0
         self._trigger_since = 0.0
 
     # ── Helpers ────────────────────────────────────────────────────────────────
@@ -210,10 +222,53 @@ class BaseController:
         direction = head_sign if self.follow_head_direction else head_sign
         return direction * mag
 
+    def _schedule_next_random_turn(self, now: float) -> None:
+        self._next_random_turn_ts = now + random.uniform(
+            self.wander_random_turn_min_sec,
+            self.wander_random_turn_max_sec,
+        )
+
+    def _plan_random_wander_turn(
+        self, now: float, pan: float, enc: float, wander_moving: bool, state: dict,
+    ) -> tuple[Optional[float], str]:
+        """Occasional large turn as several small safe steps (~3° each)."""
+        if not self.wander_random_turn_enabled:
+            return None, ""
+        if wander_moving:
+            return None, ""
+
+        if self._random_turn_remaining <= 0.0:
+            if now < self._next_random_turn_ts:
+                return None, ""
+            self._random_turn_sign = random.choice([-1.0, 1.0])
+            self._random_turn_remaining = self.wander_random_turn_deg * random.uniform(0.9, 1.1)
+            self._schedule_next_random_turn(now)
+
+        if (now - self._last_wander_ts) < self.wander_base_cooldown:
+            return None, ""
+
+        chunk = min(
+            self.wander_random_turn_chunk,
+            self.single_shot_max,
+            self._random_turn_remaining,
+        )
+        step = self._random_turn_sign * chunk * self.base_sign
+        step = self._apply_gate(step, pan, enc, state)
+        if abs(step) < self.min_step:
+            self._random_turn_remaining = 0.0
+            return None, ""
+
+        self._random_turn_remaining = max(0.0, self._random_turn_remaining - abs(step))
+        self._last_wander_ts = now
+        return step, "wander_random_turn"
+
     def _apply_gate(self, step: float, pan_cmd: float, encoder_deg: float, state: dict) -> float:
         """Return 0 if base not allowed; apply encoder and world-yaw limits."""
         if not self._gate.allowed() or not state.get("base_motion_allowed", True):
             return 0.0
+        hard_max = min(self.max_step, self.single_shot_max)
+        if abs(step) > hard_max:
+            step = math.copysign(hard_max, step)
         pan_offset = self._head_pan_offset(pan_cmd)
         self._yaw_state.update(encoder_deg, pan_offset)
         if not self._yaw_state.allow_base_step(step, pan_offset):
@@ -277,10 +332,13 @@ class BaseController:
         step: Optional[float] = None
         source = ""
 
+        # Rare full-body turn — left or right, on a long random timer.
+        step, source = self._plan_random_wander_turn(now, pan, enc, wander_moving, state)
+
         # Base follows head only when a wander glance finishes (moving → holding).
         head_settled = self._was_wander_moving and not wander_moving
         self._was_wander_moving = wander_moving
-        if (
+        if step is None and (
             head_settled
             and self.wander_base_enabled
             and (now - self._last_wander_ts) >= self.wander_base_cooldown
@@ -368,6 +426,7 @@ class BaseController:
                 "servo_pan", "servo_mode",
                 "wander_moving", "wander_last_step_deg",
                 "base_encoder_deg", "base_world_yaw_deg", "base_motion_busy",
+                "base_encoder_synced",
                 "base_motion_allowed",
                 "person_snapshots", "last_seen_world_yaw",
                 "imu_available",
@@ -380,6 +439,10 @@ class BaseController:
             if self._gate.allowed(now):
                 self.bb.write(base_motion_allowed=True)
             self.bb.write(base_fault_reason=self._gate.last_reason)
+
+            if not state["base_encoder_synced"]:
+                time.sleep(loop_delay)
+                continue
 
             if state["base_motion_busy"]:
                 time.sleep(loop_delay)

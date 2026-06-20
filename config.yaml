@@ -88,15 +88,15 @@ imu:
   # Used only when auto_level_on_start is false (manual test_imu.py calibration)
   roll_offset_deg: -7.34
   pitch_offset_deg: 12.84
-  horizon_tilt_gain: 1.0
-  horizon_tilt_sign: 1.0    # nose-down pitch → raise tilt cmd (look up)
-  horizon_pitch_bias_deg: 0.0  # +ve value forces head to look higher than auto-leveled 0°
-  horizon_pitch_smooth_hz: 3.0
-  horizon_max_bias_deg: 2.0
+  horizon_tilt_gain: 0.65
+  horizon_tilt_sign: -1.0   # keep camera horizontal; flip if tilt runs wrong way
+  horizon_pitch_bias_deg: 0.0
+  horizon_pitch_smooth_hz: 2.5
+  horizon_max_bias_deg: 4.0
   horizon_max_pitch_deg: 12.0
   horizon_gyro_max_dps: 35.0       # ignore horizon when spinning/moving
-  horizon_max_up_from_center_deg: 1.0
-  horizon_max_down_from_center_deg: 2.0
+  horizon_max_up_from_center_deg: 3.0
+  horizon_max_down_from_center_deg: 3.0
   yaw_sign: 1.0              # flip if IMU yaw integral opposes encoder/base
 
 base:
@@ -116,8 +116,8 @@ base:
   trigger_hold_sec: 1.0
   cooldown_sec: 1.8
   min_step_deg: 1.0
-  max_step_deg: 2.5
-  single_shot_max_deg: 3.0
+  max_step_deg: 5.0
+  single_shot_max_deg: 5.0
   norm_to_deg_gain: 2.5
   pan_soft_limit_deg: 10.0
   pan_soft_limit_scale: 0.60   # fraction of max head pan mech travel for "near limit"
@@ -149,7 +149,7 @@ base:
   wander_compensation_gain: 0.20
   wander_random_turn_enabled: true
   wander_random_turn_deg: 30.0      # total turn target (delivered in chunks)
-  wander_random_turn_chunk_deg: 3.0
+  wander_random_turn_chunk_deg: 5.0
   wander_random_turn_min_sec: 120.0
   wander_random_turn_max_sec: 300.0
   max_total_auto_deg: 36.0
@@ -170,8 +170,8 @@ servo:
   pan_max: 150.0
   tilt_min: 100.0
   tilt_max: 150.0
-  pan_center: 85.0
-  tilt_center: 125.0  # mechanical upright (0°)
+  pan_center: 100.0
+  tilt_center: 110.0  # mechanical upright (0°)
   # 1 command unit = 1 physical servo degree (firmware bug fixed)
   tilt_mechanical_scale: 1.0   # mech° = (tilt_cmd - tilt_center) * scale
   tilt_max_mechanical_deg: 45.0
@@ -179,7 +179,7 @@ servo:
   pan_mech_left_deg: -40.0
   pan_mech_right_deg: 40.0
   pan_track_range: 35.0
-  tilt_track_range: 25.0
+  tilt_track_range: 8.0
   pan_sign: 1.0
   tilt_sign: -1.0
   deadzone_x: 0.05
@@ -211,9 +211,9 @@ servo:
   wander_step_max_deg: 15.0    # small glances, then hold
   wander_jump_chance: 0.0     # no sudden jumps
   wander_arrival_deg: 1.2
-  wander_tilt_step_max_deg: 3.0
-  wander_tilt_max_up_deg: 8.0
-  wander_tilt_max_down_deg: 10.0   # stay near eye level
+  wander_tilt_step_max_deg: 1.0
+  wander_tilt_max_up_deg: 3.0
+  wander_tilt_max_down_deg: 3.0   # stay near horizon / eye level
   wander_hold_min_sec: 2.2
   wander_hold_max_sec: 6.0
   wander_thinking_hold_chance: 0.38

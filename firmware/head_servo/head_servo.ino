@@ -32,8 +32,8 @@ const float PAN_MIN = 25.0f;
 const float PAN_MAX = 150.0f;
 const float TILT_MIN = 100.0f;
 const float TILT_MAX = 150.0f;
-const float PAN_CENTER = 85.0f;
-const float TILT_CENTER = 125.0f;
+const float PAN_CENTER = 100.0f;
+const float TILT_CENTER = 110.0f;
 // Runtime limits (writable via U/R for manual limit finding).
 float panLimitMin = PAN_MIN;
 float panLimitMax = PAN_MAX;

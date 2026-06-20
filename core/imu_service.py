@@ -173,9 +173,7 @@ class ImuService:
 
             gyro_ok = sample.gyro_mag_dps < self.horizon_gyro_max
             pitch = sample.accel_pitch_deg if sample.accel_trusted else sample.pitch_deg
-            # Subtract bias so the IMU thinks we are pitched nose-down, forcing it to look up
-            pitch -= self.horizon_bias 
-            
+
             if gyro_ok and self._horizon is not None:
                 self._held_tilt_center = self._horizon.effective_center(
                     self._tilt_center,

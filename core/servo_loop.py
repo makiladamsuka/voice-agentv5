@@ -150,6 +150,7 @@ class ServoLoop:
         imu = _cfg(cfg, "imu", default={}) or {}
         pm = _cfg(cfg, "person_memory", default={}) or {}
         lss = _cfg(cfg, "last_seen_search", default={}) or {}
+        b = _cfg(cfg, "base", default={}) or {}
 
         # ── Servo limits ──────────────────────────────────────────────────────
         self.pan_min = float(s.get("pan_min", 40.0))
@@ -180,6 +181,10 @@ class ServoLoop:
         self.target_smooth_hz = float(s.get("target_smooth_hz", 4.5))
         self.pan_smooth_hz = float(s.get("pan_smooth_hz", 7.0))
         self.tilt_smooth_hz = float(s.get("tilt_smooth_hz", 5.5))
+        
+        # ── Base compensation ─────────────────────────────────────────────────
+        self.base_sign = float(b.get("sign", 1.0))
+        self.base_comp_gain = float(b.get("track_compensation_gain", 0.95))
 
         # ── Loop timing ───────────────────────────────────────────────────────
         self.loop_hz = float(s.get("loop_hz", 100.0))
@@ -275,7 +280,7 @@ class ServoLoop:
             return
             
         # Counter-rotate by subtracting the base delta from the pan
-        pan_shift = -delta
+        pan_shift = -delta * self.base_sign * self.base_comp_gain
         
         self._pan = clamp(self._pan + pan_shift, self.pan_min, self.pan_max)
         self._wander.pan_goal = clamp(self._wander.pan_goal + pan_shift, self.pan_min, self.pan_max)

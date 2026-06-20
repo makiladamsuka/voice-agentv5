@@ -277,7 +277,7 @@ def main() -> int:
         home_pan = marks["pan_center"] if marks["pan_center"] is not None else pan_center
         home_tilt = marks["tilt_center"] if marks["tilt_center"] is not None else tilt_center
         if not args.limits:
-            link.send_line("R", drain_after=False)
+            link.send_line("RL", drain_after=False)
         link.close(
             home_pan=home_pan,
             home_tilt=home_tilt,

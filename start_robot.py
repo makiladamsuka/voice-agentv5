@@ -55,7 +55,7 @@ def main():
         link = ArduinoServoLink(port=port, baud=baud)
         if link.connect():
             if apply_base_calibration_to_nano(link):
-                print(f"Applied base cal: scale={link.base_command_scale:.4f}")
+                print("Applied base cal (CPD/sign); base moves use L/R spin like robottest.")
             else:
                 cpd = float(base_cfg.get("counts_per_degree", 31.1667))
                 esign = float(base_cfg.get("encoder_sign", -1.0))

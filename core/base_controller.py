@@ -360,7 +360,8 @@ class BaseController:
 
         # Gentle recenter when idle — slow drift back toward center.
         if step is None and abs(enc) > self.recenter_deadband:
-            step = clamp(-enc * 0.18, -self.recenter_step, self.recenter_step) * self.base_sign
+            mag = min(abs(enc) * 0.18, self.recenter_step)
+            step = -math.copysign(mag, enc)
             step = self._apply_gate(step, pan, enc, state)
             if abs(step) >= self.min_step:
                 source = "recenter"

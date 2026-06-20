@@ -73,6 +73,9 @@ class ServoMixer:
         self.base_busy_check_hz = 5.0  # poll status 5x/sec when base is moving
 
         self.use_imu_validation = bool(b.get("use_imu_move_validation", True))
+        self.spin_tolerance_deg = float(b.get("spin_stop_tolerance_deg", 1.5))
+        self.spin_timeout_sec = float(b.get("spin_timeout_sec", 12.0))
+        self.spin_positive_uses_left = bool(b.get("spin_positive_uses_left", False))
         self._gate = gate if gate is not None else BaseMotionGate(
             backoff_sec=float(b.get("error_backoff_sec", 45.0))
         )
@@ -231,22 +234,28 @@ class ServoMixer:
                     encoder_deg=enc,
                     pan_offset_deg=pan_mech,
                 )
-            ok = self._link.write_combined(pan, self._tilt_for_send(tilt), step, wait_base=True)
-            if not ok:
-                err = self._link.last_base_error or "no ack"
-                print(f"[ServoMixer] Base step {step:+.1f}° ({source}) rejected: {err}")
-                if self._watchdog is not None:
-                    self._watchdog.finish_move()
-                self.bb.write(base_motion_busy=False)
-                return
+            self._send_angles(pan, self._tilt_for_send(tilt))
+            self.bb.write(base_motion_busy=True)
+            ok = self._link.write_base_step_spin(
+                step,
+                tolerance_deg=self.spin_tolerance_deg,
+                timeout_sec=self.spin_timeout_sec,
+                positive_uses_left=self.spin_positive_uses_left,
+            )
+            if self._watchdog is not None:
+                self._watchdog.finish_move()
             st = self._link.query_status()
             if st is not None:
-                self._publish_encoder(st.degrees, pan, st.busy)
+                self._publish_encoder(st.degrees, pan, False)
                 self._last_busy_check_ts = now
-                print(f"[ServoMixer] Base step {step:+.1f}° ({source}) enc={st.degrees:+.1f}°")
+                if ok:
+                    print(f"[ServoMixer] Base spin {step:+.1f}° ({source}) enc={st.degrees:+.1f}°")
+                else:
+                    print(f"[ServoMixer] Base spin {step:+.1f}° ({source}) incomplete enc={st.degrees:+.1f}°")
             else:
-                self.bb.write(base_motion_busy=True)
-                self._send_angles(pan, tilt)
+                self.bb.write(base_motion_busy=False)
+            if not ok:
+                self._gate.record_fault(f"spin move incomplete ({source})", now)
         except Exception as e:
             print(f"[ServoMixer] base step failed: {e}")
             if self._watchdog is not None:

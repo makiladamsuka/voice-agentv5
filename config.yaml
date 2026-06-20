@@ -104,7 +104,10 @@ base:
   # --- BASE CALIBRATION (change only via test_base_motor.py, not face-tracking tuning) ---
   counts_per_degree: 31.166667  # set by --calibrate-manual# set by --calibrate-manual
   encoder_sign: -1  # set by --calibrate-manual (+deg → encoder counts decrease)
-  command_scale: 0.1714  # plate degrees; measured 10° cmd → 35° actual before tune
+  command_scale: 0.1714  # legacy; spin control uses encoder DEG directly (see spin_*)
+  spin_stop_tolerance_deg: 1.5
+  spin_timeout_sec: 12.0
+  spin_positive_uses_left: false  # +step = R spin; -step = L spin (encoder DEG axis)
   # --- behavior (safe to tune) ---
   error_backoff_sec: 45.0
   require_calibrated_cpd: true

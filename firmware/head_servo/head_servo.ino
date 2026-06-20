@@ -13,8 +13,10 @@
  *   C1.222        -> set counts per base degree
  *   E-1 / E1      -> encoder sign (+deg command maps to sign*cpd counts)
  *   Z              -> zero base encoder reference
- *   X              -> stop base motor
- *   ?              -> POS <count> DEG <deg> CPD <cpd> BUSY 0|1
+ *   L / R          -> spin base left / right (until X)
+ *   X              -> stop base motor (spin, jog, or encoder move)
+ *   RL             -> restore pan/tilt limits from firmware defaults
+ *   U              -> unlock pan/tilt to 0-180 (manual limit finding)
  *   S              -> bench sweep
  */
 
@@ -54,6 +56,7 @@ const int COARSE_ERR_COUNTS = 48;
 const int COARSE_PWM = 150;
 const int FINE_MIN_PWM = 82;
 const int PWM_MAX = 150;
+const int SPIN_PWM = 120;
 const unsigned long STALL_MS = 4000;
 const int MOTOR_DIR_SIGN = -1;
 const int STALL_MIN_PROGRESS = 1;
@@ -99,6 +102,7 @@ long moveMaxTravelCounts = 0;
 int overshootCycles = 0;
 float ackBaseDeg = 0.0f;
 bool pendingBaseAck = false;
+int spinPwm = 0;
 float countsPerBaseDeg = 1.0f;
 float encoderSign = 1.0f;
 
@@ -218,8 +222,30 @@ void motorDrive(int pwm) {
 void stopBaseMotion() {
   moveActive = false;
   jogActive = false;
+  spinPwm = 0;
   baseBusy = false;
   motorStop();
+}
+
+void startBaseSpin(int pwm) {
+  moveActive = false;
+  jogActive = false;
+  pendingBaseAck = false;
+  spinPwm = constrain(pwm, -SPIN_PWM, SPIN_PWM);
+  baseBusy = spinPwm != 0;
+  if (spinPwm != 0) {
+    motorDrive(spinPwm);
+  } else {
+    motorStop();
+  }
+}
+
+void startBaseSpinLeft() {
+  startBaseSpin(-SPIN_PWM);
+}
+
+void startBaseSpinRight() {
+  startBaseSpin(SPIN_PWM);
 }
 
 void printServoAck() {
@@ -357,6 +383,16 @@ void handleLine() {
   if (lineLen == 0) return;
   lineBuffer[lineLen] = '\0';
 
+  if (lineLen == 2 && lineBuffer[0] == 'R' && lineBuffer[1] == 'L') {
+    panLimitMin = PAN_MIN;
+    panLimitMax = PAN_MAX;
+    tiltLimitMin = TILT_MIN;
+    tiltLimitMax = TILT_MAX;
+    Serial.println(F("OK RL"));
+    lineLen = 0;
+    return;
+  }
+
   if (lineLen == 1) {
     if (lineBuffer[0] == 'H') {
       Serial.println(F("READY"));
@@ -383,21 +419,24 @@ void handleLine() {
       lineLen = 0;
       return;
     }
+    if (lineBuffer[0] == 'L') {
+      startBaseSpinLeft();
+      Serial.println(F("OK L"));
+      lineLen = 0;
+      return;
+    }
+    if (lineBuffer[0] == 'R') {
+      startBaseSpinRight();
+      Serial.println(F("OK R"));
+      lineLen = 0;
+      return;
+    }
     if (lineBuffer[0] == 'U') {
       panLimitMin = 0.0f;
       panLimitMax = 180.0f;
       tiltLimitMin = 0.0f;
       tiltLimitMax = 180.0f;
       Serial.println(F("OK U"));
-      lineLen = 0;
-      return;
-    }
-    if (lineBuffer[0] == 'R') {
-      panLimitMin = PAN_MIN;
-      panLimitMax = PAN_MAX;
-      tiltLimitMin = TILT_MIN;
-      tiltLimitMax = TILT_MAX;
-      Serial.println(F("OK R"));
       lineLen = 0;
       return;
     }
@@ -628,6 +667,10 @@ void loop() {
 
   updateBaseMotor();
   updateBaseJog();
+
+  if (spinPwm != 0) {
+    motorDrive(spinPwm);
+  }
 
   if (pendingBaseAck) {
     pendingBaseAck = false;

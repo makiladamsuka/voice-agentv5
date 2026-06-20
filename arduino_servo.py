@@ -284,31 +284,62 @@ class ArduinoServoLink:
         pan = _quantize_servo_angle(pan, self.servo_angle_quantum_deg)
         tilt = _quantize_servo_angle(tilt, self.servo_angle_quantum_deg)
         parts = [f"P{pan:.1f}", f"T{tilt:.1f}"]
-        if base_rel is not None and abs(base_rel) > 0.001:
-            base_rel = self._scale_base_command(base_rel)
-            sign = "+" if base_rel >= 0 else ""
-            parts.append(f"B{sign}{base_rel:.1f}")
         ok = self.send_line(
             " ".join(parts),
             wait_servo=wait_servo,
-            wait_base=wait_base and base_rel is not None,
+            wait_base=False,
         )
         if ok:
             self._last_pan = pan
             self._last_tilt = tilt
             self._last_send_ts = time.time()
-        return ok
-
-    def write_base_relative(self, deg: float, *, wait: bool = False) -> bool:
-        deg = self._scale_base_command(deg)
-        sign = "+" if deg >= 0 else ""
-        return self.send_line(f"B{sign}{deg:.1f}", wait_base=wait, drain_after=not wait)
+        if not ok or base_rel is None or abs(base_rel) <= 0.001:
+            return ok
+        return self.write_base_step_spin(
+            base_rel,
+            timeout_sec=self.base_move_timeout_sec if wait_base else 12.0,
+        )
 
     def zero_base(self) -> bool:
         return self.send_line("Z")
 
     def write_base_stop(self) -> bool:
         return self.send_line("X", drain_after=False)
+
+    def write_base_spin_left(self) -> bool:
+        return self.send_line("L", drain_after=False)
+
+    def write_base_spin_right(self) -> bool:
+        return self.send_line("R", drain_after=False)
+
+    def write_base_step_spin(
+        self,
+        plate_deg: float,
+        *,
+        tolerance_deg: float = 1.5,
+        timeout_sec: float | None = None,
+        poll_hz: float = 25.0,
+        positive_uses_left: bool = False,
+    ) -> bool:
+        """Move base using firmware L/R spin until encoder reaches target (robottest style)."""
+        from base_spin_motion import write_base_step_spin
+
+        if timeout_sec is None:
+            timeout_sec = self.base_move_timeout_sec
+        ok, _delta = write_base_step_spin(
+            self,
+            plate_deg,
+            tolerance_deg=tolerance_deg,
+            timeout_sec=timeout_sec,
+            poll_hz=poll_hz,
+            positive_uses_left=positive_uses_left,
+        )
+        return ok
+
+    def write_base_relative(self, deg: float, *, wait: bool = False) -> bool:
+        """Plate-degree move — uses spin control (same as robottest M/N, automated)."""
+        ok = self.write_base_step_spin(deg, timeout_sec=self.base_move_timeout_sec if wait else 12.0)
+        return ok
 
     def write_base_jog(self, pwm: int, ms: int) -> bool:
         pwm = max(-150, min(150, int(pwm)))

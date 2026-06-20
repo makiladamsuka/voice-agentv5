@@ -163,7 +163,7 @@ servo:
   pan_min: 70.0
   pan_max: 80.0
   tilt_min: 112.0
-  tilt_max: 116.0
+  tilt_max: 115.0
   pan_center: 73.0
   tilt_center: 114.0  # mechanical upright (0°)
   # Servo cmd units != physical degrees. Calibrate: at full look-up, note T cmd vs real angle.

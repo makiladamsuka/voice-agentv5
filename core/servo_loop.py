@@ -323,7 +323,12 @@ class ServoLoop:
         )
 
         self._pan = smooth_toward(self._pan, pan_target, dt, smooth_hz=self.pan_smooth_hz, lo=self.pan_min, hi=self.pan_max)
-        self._tilt = smooth_toward(self._tilt, tilt_target, dt, smooth_hz=self.tilt_smooth_hz, lo=self.tilt_min, hi=self.tilt_max)
+        
+        # Asymmetric tilt smoothing for heavy head (brake when going down)
+        tilt_hz = self.tilt_smooth_hz * 0.4  # Slow down tilt overall
+        if tilt_target < self._tilt:  # Moving down
+            tilt_hz *= 0.5  # Add extra braking against gravity
+        self._tilt = smooth_toward(self._tilt, tilt_target, dt, smooth_hz=tilt_hz, lo=self.tilt_min, hi=self.tilt_max)
 
         return "track"
 
@@ -371,7 +376,12 @@ class ServoLoop:
         )
 
         self._pan = smooth_toward(self._pan, pan_goal, dt, smooth_hz=self.wander_pan_smooth, lo=self.pan_min, hi=self.pan_max)
-        self._tilt = smooth_toward(self._tilt, tilt_goal, dt, smooth_hz=self.wander_tilt_smooth, lo=self.tilt_min, hi=self.tilt_max)
+        
+        # Asymmetric tilt smoothing for wandering
+        tilt_hz = self.wander_tilt_smooth * 0.4
+        if tilt_goal < self._tilt:
+            tilt_hz *= 0.5
+        self._tilt = smooth_toward(self._tilt, tilt_goal, dt, smooth_hz=tilt_hz, lo=self.tilt_min, hi=self.tilt_max)
         return "wander"
 
     # ── Last-seen mode ─────────────────────────────────────────────────────────
@@ -395,7 +405,11 @@ class ServoLoop:
         pan_step = clamp(yaw_err * self.lss_track_gain, -self.lss_max_step, self.lss_max_step)
         pan_target = clamp(self._pan + pan_step, self.pan_min, self.pan_max)
         self._pan = smooth_toward(self._pan, pan_target, dt, smooth_hz=self.pan_smooth_hz, lo=self.pan_min, hi=self.pan_max)
-        self._tilt = smooth_toward(self._tilt, effective_tilt_center, dt, smooth_hz=self.tilt_smooth_hz, lo=self.tilt_min, hi=self.tilt_max)
+        
+        tilt_hz = self.tilt_smooth_hz * 0.4
+        if effective_tilt_center < self._tilt:
+            tilt_hz *= 0.5
+        self._tilt = smooth_toward(self._tilt, effective_tilt_center, dt, smooth_hz=tilt_hz, lo=self.tilt_min, hi=self.tilt_max)
         return "last_seen"
 
     # ── Main loop ──────────────────────────────────────────────────────────────

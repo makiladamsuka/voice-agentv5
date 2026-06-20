@@ -286,6 +286,9 @@ class BaseController:
                 "person_snapshots", "last_seen_world_yaw",
             )
 
+            pan_offset = self._head_pan_offset(state["servo_pan"])
+            self._yaw_state.update(state["base_encoder_deg"], pan_offset)
+
             self._gate.clear_backoff(now)
 
             if state["base_motion_busy"]:

@@ -95,7 +95,10 @@ def main():
         bb.write(running=False)
         time.sleep(0.5)
         if link is not None:
-            link.close()
+            pan_center = float(servo_cfg.get("pan_center", 80.0))
+            tilt_center = float(servo_cfg.get("tilt_center", 110.0))
+            print(f"Homing servos (pan={pan_center}, tilt={tilt_center}) and stopping base...")
+            link.close(home_pan=pan_center, home_tilt=tilt_center)
         sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)

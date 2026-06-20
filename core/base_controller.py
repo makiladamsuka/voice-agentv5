@@ -136,6 +136,13 @@ class BaseController:
         self.lss_edge_norm = float(lss.get("edge_norm", 0.40))
         self.lss_edge_base = bool(lss.get("edge_track_base", True))
 
+        # ── Wander base steps ──────────────────────────────────────────────────
+        self.wander_base_enabled = bool(b.get("wander_enabled", True))
+        self.wander_base_step = float(b.get("wander_step_deg", 5.0))
+        self.wander_base_cooldown = float(b.get("wander_cooldown_sec", 6.0))
+        self.wander_base_chance = float(b.get("wander_chance", 0.40))
+        self.wander_min_pan = float(b.get("wander_min_pan_offset_deg", 10.0))
+        
         # ── Safety gate ──────────────────────────────────────────────────────
         self._gate = BaseMotionGate(backoff_sec=float(b.get("error_backoff_sec", 45.0)))
         self._yaw_state = BaseYawState(max_yaw_deg=self.max_yaw_deg)
@@ -145,6 +152,7 @@ class BaseController:
         self._last_fast_ts = 0.0
         self._last_pm_ts = 0.0
         self._last_lss_ts = 0.0
+        self._last_wander_ts = 0.0
         self._trigger_since = 0.0
 
     # ── Helpers ────────────────────────────────────────────────────────────────
@@ -215,17 +223,38 @@ class BaseController:
         return step, f"track|comp={comp:+.2f}"
 
     def _plan_wander_recenter(self, now: float, state: dict) -> tuple[Optional[float], str]:
-        """Gently re-center base yaw during wander when encoder has drifted."""
+        """Gently re-center base yaw during wander, or actively wander if enabled."""
         enc = state["base_encoder_deg"]
-        if abs(enc) <= self.recenter_deadband:
-            return None, ""
+        pan = state["servo_pan"]
+        
         if (now - self._last_nudge_ts) < self.cooldown_sec:
             return None, ""
-        step = clamp(-enc * 0.30, -self.recenter_step, self.recenter_step) * self.base_sign
-        step = self._apply_gate(step, state["servo_pan"])
-        if abs(step) < self.min_step:
-            return None, ""
-        return step, "recenter"
+            
+        # 1. Active Wander
+        if self.wander_base_enabled and (now - self._last_wander_ts) > self.wander_base_cooldown:
+            import random
+            if random.random() < self.wander_base_chance:
+                # Decide direction based on current pan to amplify the look, or random if centered
+                pan_mech = self._pan_mech(pan)
+                if abs(pan_mech) > self.wander_min_pan:
+                    sign = math.copysign(1.0, pan_mech)
+                else:
+                    sign = random.choice([-1.0, 1.0])
+                    
+                step = self.wander_base_step * sign * self.base_sign
+                step = self._apply_gate(step, pan)
+                if abs(step) >= self.min_step:
+                    self._last_wander_ts = now
+                    return step, "wander_explore"
+
+        # 2. Gentle Recenter (only if we didn't wander)
+        if abs(enc) > self.recenter_deadband:
+            step = clamp(-enc * 0.30, -self.recenter_step, self.recenter_step) * self.base_sign
+            step = self._apply_gate(step, pan)
+            if abs(step) >= self.min_step:
+                return step, "recenter"
+                
+        return None, ""
 
     def _plan_memory_step(self, now: float, state: dict) -> tuple[Optional[float], str]:
         if not self.pm_base_enabled:

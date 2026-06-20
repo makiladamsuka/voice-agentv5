@@ -178,8 +178,8 @@ servo:
   tilt_min_mechanical_deg: -35.0
   pan_mech_left_deg: -40.0
   pan_mech_right_deg: 40.0
-  pan_track_range: 5.0
-  tilt_track_range: 1.5
+  pan_track_range: 35.0
+  tilt_track_range: 25.0
   pan_sign: 1.0
   tilt_sign: -1.0
   deadzone_x: 0.05
@@ -206,14 +206,14 @@ servo:
   lost_search_min_norm_x: 0.22
   lost_search_base_step_deg: 2.0
   lost_search_base_cooldown_sec: 2.0
-  wander_pan_amp_deg: 8.0    # soft envelope within narrow pan range
-  wander_step_min_deg: 1.0
-  wander_step_max_deg: 3.5    # small glances, then hold
+  wander_pan_amp_deg: 30.0    # soft envelope within narrow pan range
+  wander_step_min_deg: 5.0
+  wander_step_max_deg: 15.0    # small glances, then hold
   wander_jump_chance: 0.0     # no sudden jumps
   wander_arrival_deg: 1.2
-  wander_tilt_step_max_deg: 0.35
-  wander_tilt_max_up_deg: 0.6
-  wander_tilt_max_down_deg: 0.8   # stay near eye level
+  wander_tilt_step_max_deg: 3.0
+  wander_tilt_max_up_deg: 8.0
+  wander_tilt_max_down_deg: 10.0   # stay near eye level
   wander_hold_min_sec: 2.2
   wander_hold_max_sec: 6.0
   wander_thinking_hold_chance: 0.38

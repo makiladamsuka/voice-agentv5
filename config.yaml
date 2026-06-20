@@ -102,7 +102,7 @@ base:
   enabled: true
   # --- BASE CALIBRATION (change only via test_base_motor.py, not face-tracking tuning) ---
   counts_per_degree: 31.166667  # set by --calibrate-manual# set by --calibrate-manual
-  encoder_sign: -1  # set by --calibrate-manual# set by --calibrate-manual (+deg → encoder counts decrease)
+  encoder_sign: 1  # set by --calibrate-manual# set by --calibrate-manual (+deg → encoder counts decrease)
   command_scale: 0.6  # plate degrees; --relative 20 measured 5° → 0.15×(20/5)
   # --- behavior (safe to tune) ---
   error_backoff_sec: 45.0

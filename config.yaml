@@ -89,7 +89,8 @@ imu:
   roll_offset_deg: -7.34
   pitch_offset_deg: 12.84
   horizon_tilt_gain: 1.0
-  horizon_tilt_sign: -1.0   # nose-down pitch → raise tilt cmd (look up)
+  horizon_tilt_sign: 1.0    # nose-down pitch → raise tilt cmd (look up)
+  horizon_pitch_bias_deg: 0.0  # +ve value forces head to look higher than auto-leveled 0°
   horizon_pitch_smooth_hz: 3.0
   horizon_max_bias_deg: 2.0
   horizon_max_pitch_deg: 12.0

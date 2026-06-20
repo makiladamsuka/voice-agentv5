@@ -76,6 +76,7 @@ class ImuService:
         # HorizonTiltBias config
         self.horizon_gain: float = float(imu.get("horizon_tilt_gain", 1.0))
         self.horizon_sign: float = float(imu.get("horizon_tilt_sign", 1.0))
+        self.horizon_bias: float = float(imu.get("horizon_pitch_bias_deg", 0.0))
         self.horizon_smooth_hz: float = float(imu.get("horizon_pitch_smooth_hz", 4.0))
         self.horizon_max_bias: float = float(imu.get("horizon_max_bias_deg", 4.0))
         self.horizon_max_pitch: float = float(imu.get("horizon_max_pitch_deg", 25.0))
@@ -170,6 +171,9 @@ class ImuService:
 
             gyro_ok = sample.gyro_mag_dps < self.horizon_gyro_max
             pitch = sample.accel_pitch_deg if sample.accel_trusted else sample.pitch_deg
+            # Subtract bias so the IMU thinks we are pitched nose-down, forcing it to look up
+            pitch -= self.horizon_bias 
+            
             if gyro_ok and self._horizon is not None:
                 self._held_tilt_center = self._horizon.effective_center(
                     self._tilt_center,

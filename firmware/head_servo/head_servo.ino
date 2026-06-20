@@ -200,12 +200,12 @@ void motorDrive(int pwm) {
     return;
   }
   if (pwm > 0) {
-    digitalWrite(MOTOR_AIN1_PIN, HIGH);
-    digitalWrite(MOTOR_AIN2_PIN, LOW);
-    motorPwmWrite(pwm);
-  } else {
     digitalWrite(MOTOR_AIN1_PIN, LOW);
     digitalWrite(MOTOR_AIN2_PIN, HIGH);
+    motorPwmWrite(pwm);
+  } else {
+    digitalWrite(MOTOR_AIN1_PIN, HIGH);
+    digitalWrite(MOTOR_AIN2_PIN, LOW);
     motorPwmWrite(-pwm);
   }
 }

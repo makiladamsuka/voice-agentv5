@@ -60,7 +60,7 @@ def main():
             link.base_command_scale = scale
             print(f"Applied base cal: CPD={cpd:.2f}, sign={esign}, scale={scale:.2f}")
             
-            if base_cfg.get("zero_on_start", True):
+            if base_cfg.get("zero_on_start", False):
                 link.zero_base()
                 print("Zeroed base encoder (assumed current position is forward center).")
         else:

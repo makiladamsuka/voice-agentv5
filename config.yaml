@@ -102,12 +102,12 @@ base:
   enabled: true
   # --- BASE CALIBRATION (change only via test_base_motor.py, not face-tracking tuning) ---
   counts_per_degree: 31.166667  # set by --calibrate-manual# set by --calibrate-manual
-  encoder_sign: 1  # set by --calibrate-manual# set by --calibrate-manual (+deg → encoder counts decrease)
-  command_scale: 0.6  # plate degrees; --relative 20 measured 5° → 0.15×(20/5)
+  encoder_sign: -1  # set by --calibrate-manual (+deg → encoder counts decrease)
+  command_scale: 0.1714  # plate degrees; measured 10° cmd → 35° actual before tune
   # --- behavior (safe to tune) ---
   error_backoff_sec: 45.0
   require_calibrated_cpd: true
-  zero_on_start: true
+  zero_on_start: false
   sign: -1.0          # plate rotation sign vs B command; flip if base opposes head
   head_lead_min_deg: 5.0   # neck must turn this far before base may follow
   follow_head_direction: true

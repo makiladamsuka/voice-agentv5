@@ -24,6 +24,7 @@ from base_motor_utils import (
     correct_command_scale,
     load_command_scale,
     load_move_timeout,
+    load_zero_on_start,
     write_command_scale_to_config,
     write_cpd_to_config,
     write_encoder_sign_to_config,
@@ -275,6 +276,10 @@ def main() -> int:
             apply_base_calibration_to_nano(link)
             if link.base_command_scale != 1.0:
                 print(f"Base command_scale {link.base_command_scale:.4f} (plate vs encoder)")
+            
+            if load_zero_on_start():
+                link.zero_base()
+                print("Auto-zeroed base from config (zero_on_start=true)")
 
         if args.correct_move:
             commanded, actual = args.correct_move

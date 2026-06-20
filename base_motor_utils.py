@@ -54,6 +54,15 @@ def load_move_timeout() -> float:
     return DEFAULT_MOVE_TIMEOUT
 
 
+def load_zero_on_start() -> bool:
+    if CONFIG_PATH.exists():
+        text = CONFIG_PATH.read_text(encoding="utf-8")
+        match = re.search(r"^\s*zero_on_start:\s*(true|false)\s*(?:#.*)?$", text, re.MULTILINE | re.IGNORECASE)
+        if match:
+            return match.group(1).lower() == "true"
+    return False
+
+
 def load_counts_per_degree() -> float:
     if CONFIG_PATH.exists():
         text = CONFIG_PATH.read_text(encoding="utf-8")

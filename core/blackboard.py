@@ -1,0 +1,97 @@
+"""Thread-safe shared state bus for the face tracking robot.
+
+All inter-module communication flows through this object.
+No business logic lives here — only typed storage and atomic read/write.
+"""
+
+from __future__ import annotations
+
+import threading
+from typing import Any
+
+
+class Blackboard:
+    """Central shared-memory object.
+
+    Usage::
+
+        bb = Blackboard()
+        bb.write(face_detected=True, face_norm_x=0.12)
+        state = bb.read("face_norm_x", "servo_pan")
+        x = state["face_norm_x"]
+    """
+
+    # ── Vision (written by FaceTracker) ──────────────────────────────────────
+    face_detected: bool = False
+    face_norm_x: float = 0.0       # -1.0 (left) … +1.0 (right)
+    face_norm_y: float = 0.0       # -1.0 (top)  … +1.0 (bottom)
+    face_roll_deg: float = 0.0
+    face_area_ratio: float = 0.0
+    face_count: int = 0
+    face_candidates: list = None
+    body_detected: bool = False
+    track_kind: str = "none"       # "face"|"multi"|"body"|"none"
+    stream_frame: Any = None       # latest numpy frame for MJPEG
+
+    # ── Servo targets (written by ServoLoop) ─────────────────────────────────
+    servo_pan: float = 80.0        # servo command degrees
+    servo_tilt: float = 110.0
+    servo_mode: str = "wander"     # "track"|"wander"|"memory_track"|"last_seen"
+
+    # ── Base rotation (written by BaseController / ServoMixer) ────────────────
+    base_step_deg: float = 0.0
+    base_step_source: str = ""
+    base_step_ready: bool = False  # BaseController signals a new step is pending
+    base_world_yaw_deg: float = 0.0
+    base_encoder_deg: float = 0.0
+    base_motion_busy: bool = False
+
+    # ── IMU (written by ImuService) ───────────────────────────────────────────
+    imu_pitch_deg: float = 0.0
+    imu_roll_deg: float = 0.0
+    imu_gyro_dps: float = 0.0
+    imu_accel_trusted: bool = True
+    imu_horizon_ok: bool = True
+    imu_available: bool = False    # False until ImuService confirms hardware
+
+    # ── Person Memory (written by FaceTracker) ─────────────────────────────
+    person_snapshots: list = None  # list[dict] from PersonMemory.snapshots()
+    last_seen_world_yaw: float = None  # world yaw of last-seen-at-edge position
+
+    # ── Emotion (written by EmotionEngine) ───────────────────────────────────
+    emotion: str = "idle"
+    emotion_intensity: float = 1.0
+    manual_emotion: str = None     # set via terminal/API override
+
+    # ── Control ──────────────────────────────────────────────────────────────
+    running: bool = True
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        # Mutable defaults that can't be class-level
+        self.face_candidates = []
+        self.person_snapshots = []
+
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def write(self, **kwargs: Any) -> None:
+        """Atomically set one or more fields."""
+        with self._lock:
+            for key, value in kwargs.items():
+                if not hasattr(self, key):
+                    raise AttributeError(f"Blackboard has no field '{key}'")
+                setattr(self, key, value)
+
+    def read(self, *fields: str) -> dict[str, Any]:
+        """Atomically read one or more fields. Returns a plain dict."""
+        with self._lock:
+            return {f: getattr(self, f) for f in fields}
+
+    def read_all(self) -> dict[str, Any]:
+        """Read every public field atomically (for debug / status)."""
+        with self._lock:
+            return {
+                k: getattr(self, k)
+                for k in vars(self.__class__)
+                if not k.startswith("_") and not callable(getattr(self.__class__, k))
+            }

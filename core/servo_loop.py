@@ -255,6 +255,30 @@ class ServoLoop:
         self._lss_active = False
         self._lss_start_ts = 0.0
         self._memory_reacquire_ts = 0.0
+        self._last_base_enc = None
+
+    # ── Base Compensation ──────────────────────────────────────────────────────
+    
+    def _apply_base_compensation(self) -> None:
+        """Feed-forward compensation: counter-rotate head when base moves."""
+        state = self.bb.read("base_encoder_deg")
+        enc = state.get("base_encoder_deg", 0.0)
+        
+        if self._last_base_enc is None or abs(enc - self._last_base_enc) > 40.0:
+            self._last_base_enc = enc
+            return
+            
+        delta = enc - self._last_base_enc
+        self._last_base_enc = enc
+        
+        if abs(delta) < 0.05:
+            return
+            
+        # Counter-rotate by subtracting the base delta from the pan
+        pan_shift = -delta
+        
+        self._pan = clamp(self._pan + pan_shift, self.pan_min, self.pan_max)
+        self._wander.pan_goal = clamp(self._wander.pan_goal + pan_shift, self.pan_min, self.pan_max)
 
     # ── IMU tilt compensation ──────────────────────────────────────────────────
 
@@ -439,6 +463,7 @@ class ServoLoop:
             prev_ts = now_pc
             now = time.time()
 
+            self._apply_base_compensation()
             effective_tilt_center = self._effective_tilt_center(dt)
 
             if self._mode == "track":

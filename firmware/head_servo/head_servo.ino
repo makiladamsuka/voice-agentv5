@@ -240,8 +240,10 @@ void writeAngles(float pan, float tilt, bool emitAck) {
     if (emitAck) Serial.println(F("ERR PCA9685"));
     return;
   }
-  setServoPulseUs(PAN_CH, mapAngleToUs(panAngle, PAN_MIN, PAN_MAX));
-  setServoPulseUs(TILT_CH, mapAngleToUs(tiltAngle, TILT_MIN, TILT_MAX));
+  // Map the clamped angles against the standard 0-180 degree servo range, NOT the clamped limits!
+  // This ensures 1 command degree = 1 physical servo degree.
+  setServoPulseUs(PAN_CH, mapAngleToUs(panAngle, 0.0f, 180.0f));
+  setServoPulseUs(TILT_CH, mapAngleToUs(tiltAngle, 0.0f, 180.0f));
   digitalWrite(LED_PIN, HIGH);
   digitalWrite(LED_PIN, LOW);
   if (emitAck) printServoAck();

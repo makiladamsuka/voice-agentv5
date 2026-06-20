@@ -115,9 +115,9 @@ base:
   trigger_norm_x: 0.35
   trigger_hold_sec: 1.0
   cooldown_sec: 1.8
-  min_step_deg: 1.0
-  max_step_deg: 5.0
-  single_shot_max_deg: 5.0
+  min_step_deg: 2.0
+  max_step_deg: 25.0
+  single_shot_max_deg: 25.0
   norm_to_deg_gain: 2.5
   pan_soft_limit_deg: 10.0
   pan_soft_limit_scale: 0.60   # fraction of max head pan mech travel for "near limit"
@@ -128,16 +128,16 @@ base:
   track_compensation_gain: 0.95   # counter-rotate neck ~1:1 with base during track
   body_base_enabled: true
   body_base_cooldown_sec: 1.0
-  body_base_min_step_deg: 1.0
-  body_base_max_step_deg: 2.5
+  body_base_min_step_deg: 3.0
+  body_base_max_step_deg: 15.0
   body_base_aim_to_step_gain: 2.8
   body_base_compensation_gain: 0.90
   limit_base_aim_to_step_gain: 2.2  # face/body when pan is stuck at min/max
   fast_face_enabled: false
   fast_face_velocity_norm_sec: 3.5
   fast_face_cooldown_sec: 1.4
-  fast_face_min_step_deg: 5.0
-  fast_face_max_step_deg: 10.0
+  fast_face_min_step_deg: 8.0
+  fast_face_max_step_deg: 25.0
   fast_face_velocity_to_deg_gain: 2.0
   fast_face_compensation_gain: 0.45
   wander_enabled: true
@@ -149,7 +149,7 @@ base:
   wander_compensation_gain: 0.20
   wander_random_turn_enabled: true
   wander_random_turn_deg: 90.0      # total turn target (delivered in chunks)
-  wander_random_turn_chunk_deg: 8.0
+  wander_random_turn_chunk_deg: 20.0
   wander_random_turn_min_sec: 30.0
   wander_random_turn_max_sec: 60.0
   max_total_auto_deg: 36.0

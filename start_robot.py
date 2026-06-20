@@ -50,7 +50,16 @@ def main():
     link = None
     try:
         link = ArduinoServoLink(port=port, baud=baud)
-        if not link.connect():
+        if link.connect():
+            base_cfg = cfg.get("base", {}) or {}
+            cpd = float(base_cfg.get("counts_per_degree", 31.1667))
+            esign = float(base_cfg.get("encoder_sign", -1.0))
+            scale = float(base_cfg.get("command_scale", 1.0))
+            link.set_counts_per_degree(cpd)
+            link.set_encoder_sign(esign)
+            link.base_command_scale = scale
+            print(f"Applied base cal: CPD={cpd:.2f}, sign={esign}, scale={scale:.2f}")
+        else:
             print("WARNING: ESP32 connect failed. Running in dry-run mode.")
             link.close(skip_home=True)
             link = None

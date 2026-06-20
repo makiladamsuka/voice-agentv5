@@ -139,10 +139,10 @@ base:
   fast_face_max_step_deg: 10.0
   fast_face_velocity_to_deg_gain: 2.0
   fast_face_compensation_gain: 0.45
-  wander_enabled: false
-  wander_step_deg: 3.0
-  wander_cooldown_sec: 8.0
-  wander_chance: 0.20
+  wander_enabled: true
+  wander_step_deg: 18.0
+  wander_cooldown_sec: 4.5
+  wander_chance: 0.65
   wander_min_pan_offset_deg: 10.0
   wander_min_head_step_deg: 6.0
   wander_compensation_gain: 0.20
@@ -200,14 +200,14 @@ servo:
   lost_search_min_norm_x: 0.22
   lost_search_base_step_deg: 2.0
   lost_search_base_cooldown_sec: 2.0
-  wander_pan_amp_deg: 10.0   # soft limit from center when picking direction
-  wander_step_min_deg: 1.0
-  wander_step_max_deg: 3.0   # small search steps so camera can settle
-  wander_jump_chance: 0.0    # no teleport jumps to far pan angles
+  wander_pan_amp_deg: 25.0   # soft limit from center when picking direction
+  wander_step_min_deg: 5.0
+  wander_step_max_deg: 15.0   # small search steps so camera can settle
+  wander_jump_chance: 0.05    # no teleport jumps to far pan angles
   wander_arrival_deg: 1.4
-  wander_tilt_step_max_deg: 0.15
-  wander_tilt_max_up_deg: 0.2
-  wander_tilt_max_down_deg: 0.2   # keep wander close to eye-level
+  wander_tilt_step_max_deg: 3.5
+  wander_tilt_max_up_deg: 4.0
+  wander_tilt_max_down_deg: 5.0   # keep wander close to eye-level
   wander_hold_min_sec: 1.2
   wander_hold_max_sec: 3.2
   wander_thinking_hold_chance: 0.22

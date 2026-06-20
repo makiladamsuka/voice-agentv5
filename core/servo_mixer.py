@@ -19,6 +19,8 @@ except ImportError:
     yaml = None
 
 from core.blackboard import Blackboard
+from core.base_controller import _pan_to_mech
+from base_safety import BaseMotionGate, BaseMoveWatchdog, BaseSafetyConfig
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
@@ -43,17 +45,43 @@ def _cfg(data, *keys, default=None):
 class ServoMixer:
     """Sends pan/tilt angles and base steps to the ESP32 via ArduinoServoLink."""
 
-    def __init__(self, bb: Blackboard, link, config_path: Path = DEFAULT_CONFIG_PATH) -> None:
+    def __init__(
+        self,
+        bb: Blackboard,
+        link,
+        config_path: Path = DEFAULT_CONFIG_PATH,
+        gate: BaseMotionGate | None = None,
+    ) -> None:
         self.bb = bb
         self._link = link
         cfg = _load_yaml(config_path)
         s = _cfg(cfg, "servo", default={}) or {}
+        b = _cfg(cfg, "base", default={}) or {}
+
+        self.pan_min = float(s.get("pan_min", 40.0))
+        self.pan_max = float(s.get("pan_max", 120.0))
+        self.pan_center = float(s.get("pan_center", (self.pan_min + self.pan_max) * 0.5))
+        self.mech_left = float(s.get("pan_mech_left_deg", -40.0))
+        self.mech_right = float(s.get("pan_mech_right_deg", 40.0))
 
         self.send_min_deg = float(s.get("servo_send_min_deg", 0.06))
         self.send_hz = float(s.get("servo_send_hz", 25.0))
         self.angle_quantum = float(s.get("servo_angle_quantum_deg", 0.2))
         self.loop_hz = float(s.get("loop_hz", 100.0))
         self.base_busy_check_hz = 5.0  # poll status 5x/sec when base is moving
+
+        self.use_imu_validation = bool(b.get("use_imu_move_validation", True))
+        self._gate = gate if gate is not None else BaseMotionGate(
+            backoff_sec=float(b.get("error_backoff_sec", 45.0))
+        )
+        self._watchdog: BaseMoveWatchdog | None = None
+        if self.use_imu_validation and link is not None:
+            self._watchdog = BaseMoveWatchdog(
+                link=link,
+                bb=bb,
+                gate=self._gate,
+                config=BaseSafetyConfig(error_backoff_sec=float(b.get("error_backoff_sec", 45.0))),
+            )
 
         self._prev_pan = None
         self._prev_tilt = None
@@ -62,6 +90,15 @@ class ServoMixer:
         self._encoder_deg = 0.0
 
     # ─────────────────────────────────────────────────────────────────────────
+
+    def _pan_mech(self, pan_cmd: float) -> float:
+        return _pan_to_mech(
+            pan_cmd, self.pan_center, self.pan_min, self.pan_max,
+            self.mech_left, self.mech_right,
+        )
+
+    def _world_yaw(self, encoder_deg: float, pan_cmd: float) -> float:
+        return encoder_deg + self._pan_mech(pan_cmd)
 
     def _quantize(self, v: float) -> float:
         if self.angle_quantum <= 0:
@@ -107,7 +144,7 @@ class ServoMixer:
             # ── Poll base busy state ───────────────────────────────────────
             if state["base_motion_busy"] and (now - self._last_busy_check_ts) > (1.0 / self.base_busy_check_hz):
                 self._last_busy_check_ts = now
-                self._poll_base_busy()
+                self._poll_base_busy(pan)
 
             # ── Send head angles ───────────────────────────────────────────
             if self._should_send(pan, tilt, now):
@@ -132,16 +169,31 @@ class ServoMixer:
         if self._link is None:
             return
         try:
-            ok = self._link.write_combined(pan, tilt, step)
-            if ok:
-                st = self._link.query_status()
-                busy = st.busy if st is not None else True
-                enc = st.degrees if st is not None else self._encoder_deg
+            enc = self._encoder_deg
+            pan_mech = self._pan_mech(pan)
+            if self._watchdog is not None:
+                self._watchdog.start_move(
+                    commanded_deg=step,
+                    encoder_deg=enc,
+                    pan_offset_deg=pan_mech,
+                )
+            ok = self._link.write_combined(pan, tilt, step, wait_base=True)
+            if not ok:
+                err = self._link.last_base_error or "no ack"
+                print(f"[ServoMixer] Base step {step:+.1f}° ({source}) rejected: {err}")
+                if self._watchdog is not None:
+                    self._watchdog.finish_move()
+                self.bb.write(base_motion_busy=False)
+                return
+            st = self._link.query_status()
+            if st is not None:
+                busy = st.busy
+                enc = st.degrees
                 self._encoder_deg = enc
                 self.bb.write(
                     base_motion_busy=busy,
                     base_encoder_deg=enc,
-                    base_world_yaw_deg=enc + (pan - 80.0),  # rough; BaseController refines
+                    base_world_yaw_deg=self._world_yaw(enc, pan),
                 )
                 self._last_busy_check_ts = now
                 print(f"[ServoMixer] Base step {step:+.1f}° ({source}) enc={enc:+.1f}°")
@@ -149,22 +201,33 @@ class ServoMixer:
                 self._send_angles(pan, tilt)
         except Exception as e:
             print(f"[ServoMixer] base step failed: {e}")
+            if self._watchdog is not None:
+                self._watchdog.finish_move()
             self.bb.write(base_motion_busy=False)
 
-    def _poll_base_busy(self) -> None:
+    def _poll_base_busy(self, pan: float) -> None:
         if self._link is None:
             self.bb.write(base_motion_busy=False)
             return
         try:
+            if self._watchdog is not None and self._watchdog.active:
+                reason = self._watchdog.tick(pan_offset_deg=self._pan_mech(pan))
+                if reason:
+                    print(f"[ServoMixer] base-watchdog: {reason}")
+                    self.bb.write(base_motion_busy=False)
+                    return
             st = self._link.query_status()
             if st is not None:
                 enc = st.degrees
                 self._encoder_deg = enc
+                busy = st.busy
                 self.bb.write(
-                    base_motion_busy=st.busy,
+                    base_motion_busy=busy,
                     base_encoder_deg=enc,
-                    base_world_yaw_deg=enc + (self.bb.read("servo_pan")["servo_pan"] - 80.0),
+                    base_world_yaw_deg=self._world_yaw(enc, pan),
                 )
+                if self._watchdog is not None and self._watchdog.active and not busy:
+                    self._watchdog.finish_move()
             else:
                 self.bb.write(base_motion_busy=False)
         except Exception:

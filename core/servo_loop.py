@@ -374,6 +374,10 @@ class ServoLoop:
             thinking_hold_max_sec=self.wander_thinking_max,
             long_stare_chance=self.wander_long_stare,
         )
+        self.bb.write(
+            wander_moving=self._wander.moving,
+            wander_last_step_deg=self._wander._last_step_deg,
+        )
 
         self._pan = smooth_toward(self._pan, pan_goal, dt, smooth_hz=self.wander_pan_smooth, lo=self.pan_min, hi=self.pan_max)
         
@@ -447,11 +451,15 @@ class ServoLoop:
             self._mode = next_mode
 
             # Publish
-            self.bb.write(
+            publish = dict(
                 servo_pan=self._pan,
                 servo_tilt=self._tilt,
                 servo_mode=self._mode,
             )
+            if self._mode != "wander":
+                publish["wander_moving"] = False
+                publish["wander_last_step_deg"] = 0.0
+            self.bb.write(**publish)
 
             time.sleep(loop_delay)
 

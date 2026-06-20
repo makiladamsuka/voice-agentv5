@@ -1,7 +1,7 @@
 """ImuService: wraps ImuReader + HorizonTiltBias as a Blackboard writer.
 
-Writes to BB: imu_pitch_deg, imu_roll_deg, imu_gyro_dps,
-              imu_accel_trusted, imu_horizon_ok, imu_available.
+Writes to BB: imu_pitch_deg, imu_roll_deg, imu_gyro_dps, imu_gyro_z_dps,
+              imu_yaw_integral_deg, imu_accel_trusted, imu_horizon_ok, imu_available.
 
 If the BMI160 hardware is absent, imu_available stays False and the
 service exits cleanly — no error propagation to other modules.
@@ -145,6 +145,10 @@ class ImuService:
 
         prev_ts = time.perf_counter()
         while self.bb.read("running")["running"]:
+            if self.bb.read("base_watchdog_reset")["base_watchdog_reset"]:
+                self._reader.filter.reset_yaw_integral()
+                self.bb.write(base_watchdog_reset=False)
+
             sample = self._reader.latest()
             if sample is None:
                 time.sleep(0.005)
@@ -159,6 +163,8 @@ class ImuService:
                 imu_pitch_deg=sample.pitch_deg,
                 imu_roll_deg=sample.roll_deg,
                 imu_gyro_dps=sample.gyro_mag_dps,
+                imu_gyro_z_dps=sample.gyro_z_dps,
+                imu_yaw_integral_deg=self._reader.filter.yaw_integral_deg() * self.yaw_sign,
                 imu_accel_trusted=sample.accel_trusted,
                 imu_horizon_ok=gyro_ok,
             )

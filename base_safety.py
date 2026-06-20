@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.blackboard import Blackboard
 
 
 @dataclass
@@ -50,13 +53,15 @@ class BaseMoveWatchdog:
         self,
         *,
         link,
-        imu_reader,
         gate: BaseMotionGate,
         config: BaseSafetyConfig,
+        imu_reader=None,
+        bb: "Blackboard | None" = None,
         on_fault: Optional[Callable[[str], None]] = None,
     ):
         self._link = link
         self._imu = imu_reader
+        self._bb = bb
         self._gate = gate
         self._cfg = config
         self._on_fault = on_fault
@@ -79,7 +84,10 @@ class BaseMoveWatchdog:
         self._encoder_start_deg = encoder_deg
         self._pan_start_deg = pan_offset_deg
         self._commanded_deg = abs(commanded_deg)
-        self._imu.filter.reset_yaw_integral()
+        if self._imu is not None:
+            self._imu.filter.reset_yaw_integral()
+        elif self._bb is not None:
+            self._bb.write(base_watchdog_reset=True)
         self._active = True
         self._status = "ARMED"
         self._last_poll = 0.0
@@ -88,6 +96,13 @@ class BaseMoveWatchdog:
         self._active = False
         if self._status == "ARMED":
             self._status = "OK"
+
+    def _gyro_integral(self) -> float:
+        if self._imu is not None:
+            return self._imu.filter.yaw_integral_deg() * getattr(self._imu, "yaw_sign", 1.0)
+        if self._bb is not None:
+            return self._bb.read("imu_yaw_integral_deg")["imu_yaw_integral_deg"]
+        return 0.0
 
     def tick(self, *, pan_offset_deg: float, now: Optional[float] = None) -> Optional[str]:
         if not self._active:
@@ -108,9 +123,7 @@ class BaseMoveWatchdog:
         encoder_delta = st.degrees - self._encoder_start_deg
         pan_delta = pan_offset_deg - self._pan_start_deg
         expected_total = encoder_delta + pan_delta
-        gyro_integral = self._imu.filter.yaw_integral_deg() * getattr(
-            self._imu, "yaw_sign", 1.0
-        )
+        gyro_integral = self._gyro_integral()
 
         commanded = max(0.1, self._commanded_deg)
         encoder_abs = abs(encoder_delta)
@@ -143,5 +156,7 @@ class BaseMoveWatchdog:
         self._status = "FAULT"
         self._link.write_base_stop()
         self._gate.record_fault(reason, now)
+        if self._bb is not None:
+            self._bb.write(base_motion_allowed=False, base_fault_reason=reason)
         if self._on_fault is not None:
             self._on_fault(reason)

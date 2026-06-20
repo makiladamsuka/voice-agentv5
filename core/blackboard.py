@@ -37,6 +37,8 @@ class Blackboard:
     servo_pan: float = 80.0        # servo command degrees
     servo_tilt: float = 110.0
     servo_mode: str = "wander"     # "track"|"wander"|"memory_track"|"last_seen"
+    wander_moving: bool = False    # head is gliding to a wander target (ServoLoop)
+    wander_last_step_deg: float = 0.0  # last head wander step size
 
     # ── Base rotation (written by BaseController / ServoMixer) ────────────────
     base_step_deg: float = 0.0
@@ -45,11 +47,16 @@ class Blackboard:
     base_world_yaw_deg: float = 0.0
     base_encoder_deg: float = 0.0
     base_motion_busy: bool = False
+    base_motion_allowed: bool = True
+    base_fault_reason: str | None = None
+    base_watchdog_reset: bool = False
 
     # ── IMU (written by ImuService) ───────────────────────────────────────────
     imu_pitch_deg: float = 0.0
     imu_roll_deg: float = 0.0
     imu_gyro_dps: float = 0.0
+    imu_gyro_z_dps: float = 0.0
+    imu_yaw_integral_deg: float = 0.0
     imu_accel_trusted: bool = True
     imu_horizon_ok: bool = True
     imu_available: bool = False    # False until ImuService confirms hardware

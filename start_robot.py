@@ -6,6 +6,7 @@ import threading
 import time
 from pathlib import Path
 
+from base_safety import BaseMotionGate
 from core.blackboard import Blackboard
 from core.face_tracking import FaceTracker
 from core.imu_service import ImuService
@@ -73,6 +74,9 @@ def main():
 
     # 3. Instantiate Core Services
     threads = []
+    base_cfg = cfg.get("base", {}) or {}
+    base_gate = BaseMotionGate(backoff_sec=float(base_cfg.get("error_backoff_sec", 45.0)))
+    bb.write(base_motion_allowed=True)
     
     # Vision Pipeline
     threads.append(threading.Thread(target=FaceTracker(bb).run, daemon=True, name="FaceTracker"))
@@ -84,10 +88,18 @@ def main():
     threads.append(threading.Thread(target=ServoLoop(bb).run, daemon=True, name="ServoLoop"))
     
     # Base Motion Decisions
-    threads.append(threading.Thread(target=BaseController(bb, link).run, daemon=True, name="BaseController"))
+    threads.append(threading.Thread(
+        target=BaseController(bb, link, gate=base_gate).run,
+        daemon=True,
+        name="BaseController",
+    ))
     
     # Hardware Mixer (ESP32 TX/RX)
-    threads.append(threading.Thread(target=ServoMixer(bb, link).run, daemon=True, name="ServoMixer"))
+    threads.append(threading.Thread(
+        target=ServoMixer(bb, link, gate=base_gate).run,
+        daemon=True,
+        name="ServoMixer",
+    ))
     
     # Emotion Engine
     threads.append(threading.Thread(target=EmotionEngine(bb).run, daemon=True, name="EmotionEngine"))

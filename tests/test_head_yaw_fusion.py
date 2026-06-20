@@ -27,3 +27,12 @@ def test_yaw_sign_flips_imu_integration():
     fusion.reset_reference(pan_mech_deg=0.0, base_encoder_deg=0.0)
     fusion.integrate_gyro(100.0, 0.1)
     assert fusion.imu_yaw_total_deg == -10.0
+
+
+def test_world_yaw_step_budget_at_limit():
+    from base_yaw_controller import BaseYawState
+
+    yaw = BaseYawState(max_yaw_deg=120.0)
+    yaw.update(118.0, 0.0)
+    assert yaw.allow_base_step(5.0, 0.0) is False
+    assert yaw.allow_base_step(-3.0, 0.0) is True

@@ -140,16 +140,16 @@ base:
   fast_face_velocity_to_deg_gain: 2.0
   fast_face_compensation_gain: 0.45
   wander_enabled: true
-  wander_step_deg: 18.0
-  wander_cooldown_sec: 4.5
-  wander_chance: 0.65
-  wander_min_pan_offset_deg: 10.0
-  wander_min_head_step_deg: 6.0
+  wander_step_deg: 5.0        # small base nudge after head finishes a glance
+  wander_cooldown_sec: 10.0   # pause between base moves — let it rest
+  wander_chance: 0.28         # not every head hold triggers base
+  wander_min_pan_offset_deg: 6.0
+  wander_min_head_step_deg: 2.0
   wander_compensation_gain: 0.20
   max_total_auto_deg: 36.0
   max_yaw_deg: 120.0
-  recenter_deadband_deg: 15.0
-  recenter_step_deg: 3.0
+  recenter_deadband_deg: 22.0
+  recenter_step_deg: 2.0
   heading_pid_kp: 0.22
   heading_pid_kd: 0.14
   use_imu_move_validation: true
@@ -200,22 +200,22 @@ servo:
   lost_search_min_norm_x: 0.22
   lost_search_base_step_deg: 2.0
   lost_search_base_cooldown_sec: 2.0
-  wander_pan_amp_deg: 25.0   # soft limit from center when picking direction
-  wander_step_min_deg: 5.0
-  wander_step_max_deg: 15.0   # small search steps so camera can settle
-  wander_jump_chance: 0.05    # no teleport jumps to far pan angles
-  wander_arrival_deg: 1.4
-  wander_tilt_step_max_deg: 3.5
-  wander_tilt_max_up_deg: 4.0
-  wander_tilt_max_down_deg: 5.0   # keep wander close to eye-level
-  wander_hold_min_sec: 1.2
-  wander_hold_max_sec: 3.2
-  wander_thinking_hold_chance: 0.22
-  wander_thinking_hold_min_sec: 1.2
-  wander_thinking_hold_max_sec: 3.0
-  wander_long_stare_chance: 0.06
-  wander_pan_smooth_hz: 4.8   # wander neck follow — between slow search and track
-  wander_tilt_smooth_hz: 4.2
+  wander_pan_amp_deg: 8.0    # soft envelope within narrow pan range
+  wander_step_min_deg: 1.0
+  wander_step_max_deg: 3.5    # small glances, then hold
+  wander_jump_chance: 0.0     # no sudden jumps
+  wander_arrival_deg: 1.2
+  wander_tilt_step_max_deg: 0.35
+  wander_tilt_max_up_deg: 0.6
+  wander_tilt_max_down_deg: 0.8   # stay near eye level
+  wander_hold_min_sec: 2.2
+  wander_hold_max_sec: 6.0
+  wander_thinking_hold_chance: 0.38
+  wander_thinking_hold_min_sec: 3.0
+  wander_thinking_hold_max_sec: 8.0
+  wander_long_stare_chance: 0.14
+  wander_pan_smooth_hz: 3.0   # slow, peaceful neck motion
+  wander_tilt_smooth_hz: 2.8
   motion_emotion_min_sec: 2.6
   attention_hold_min_sec: 3.2
   attention_hold_max_sec: 6.5

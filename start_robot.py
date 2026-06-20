@@ -35,8 +35,8 @@ def _load_yaml(path: Path) -> dict:
 def main():
     cfg = _load_yaml(DEFAULT_CONFIG_PATH)
     servo_cfg = cfg.get("servo", {}) or {}
-    port = servo_cfg.get("port", "/dev/ttyUSB0")
-    baud = servo_cfg.get("baud", 115200)
+    port = servo_cfg.get("port") or ""
+    baud = int(servo_cfg.get("baud", 115200))
 
     print("=== Voice Agent V5 (Modular) ===")
     
@@ -44,9 +44,15 @@ def main():
     bb = Blackboard()
 
     # 2. Initialize Hardware Link
-    print(f"Connecting to ESP32 on {port}@{baud}...")
+    port_label = port if port else "auto"
+    print(f"Connecting to ESP32 on {port_label}@{baud}...")
+    link = None
     try:
-        link = ArduinoServoLink(port, baudrate=baud)
+        link = ArduinoServoLink(port=port, baud=baud)
+        if not link.connect():
+            print("WARNING: ESP32 connect failed. Running in dry-run mode.")
+            link.close(skip_home=True)
+            link = None
     except Exception as e:
         print(f"WARNING: Serial connection failed: {e}. Running in dry-run mode.")
         link = None

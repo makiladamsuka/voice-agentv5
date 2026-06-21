@@ -415,8 +415,15 @@ class ServoLoop:
         comp_pan = state["base_comp_pan_deg"]
         if comp_pan == 0.0 or self._proactive_comp_applied:
             return
-        self._pan = clamp(comp_pan, self.pan_min, self.pan_max)
-        self._wander.pan_goal = clamp(comp_pan, self.pan_min, self.pan_max)
+        if self._mode == "track":
+            # During face track, ramp compensation — never snap pan away from the PID aim.
+            delta = comp_pan - self._pan
+            delta = clamp(delta, -self.pan_max_step_deg, self.pan_max_step_deg)
+            if abs(delta) > 0.01:
+                self._pan = clamp(self._pan + delta, self.pan_min, self.pan_max)
+        else:
+            self._pan = clamp(comp_pan, self.pan_min, self.pan_max)
+            self._wander.pan_goal = clamp(comp_pan, self.pan_min, self.pan_max)
         self._pan_pid.soften(0.45)
         self._target_glide.soften()
         self._proactive_comp_applied = True
@@ -575,7 +582,7 @@ class ServoLoop:
             self._pan_pid.soften(0.15)
         self._prev_pan_err_x = pan_err_x
 
-        if self._pan_center_band_active(norm_x):
+        if self._pan_center_band_active(self._pan_track_norm):
             # Face near frame center — hold pan (do not snap to pan_center).
             self._pan_pid.reset()
             pan_target = self._pan
@@ -586,9 +593,10 @@ class ServoLoop:
                 self.pan_error_full_scale,
                 self.pan_track_min_gain,
             )
-            # Absolute pan aim (monolith-style): center + correction * range * sign.
+            # Absolute pan aim: center + correction * range * track sign.
             pan_target = clamp(
-                self.pan_center + pan_corr * self.pan_track_range * self.pan_sign * pan_gain,
+                self.pan_center
+                + pan_corr * self.pan_track_range * self.pan_track_sign * pan_gain,
                 self.pan_min,
                 self.pan_max,
             )

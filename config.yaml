@@ -130,9 +130,9 @@ base:
   trigger_norm_x: 0.50       # face must be farther off-center before base helps
   trigger_hold_sec: 2.0      # wait longer before first base nudge
   cooldown_sec: 4.0          # pause between base moves
-  min_step_deg: 2.0
-  max_step_deg: 10.0         # wander/track nudges — no full spins
-  single_shot_max_deg: 10.0
+  min_step_deg: 5.0
+  max_step_deg: 15.0         # wander/track nudges — no full spins
+  single_shot_max_deg: 15.0
   norm_to_deg_gain: 1.8
   pan_soft_limit_deg: 12.0
   pan_soft_limit_scale: 0.60   # fraction of max head pan mech travel for "near limit"
@@ -145,7 +145,7 @@ base:
   body_trigger_norm_x: 0.08    # body bbox offset from frame center before base turns
   body_base_cooldown_sec: 2.0
   body_base_min_step_deg: 2.0
-  body_base_max_step_deg: 6.0
+  body_base_max_step_deg: 11.0
   body_base_aim_to_step_gain: 5.5
   body_base_compensation_gain: 0.90
   limit_base_aim_to_step_gain: 1.5  # face/body when pan is stuck at min/max
@@ -157,7 +157,7 @@ base:
   fast_face_velocity_to_deg_gain: 2.0
   fast_face_compensation_gain: 0.45
   wander_enabled: true
-  wander_step_deg: 10.0      # base follows head with ~10° plate steps
+  wander_step_deg: 15.0      # base follows head with ~15° plate steps
   wander_cooldown_sec: 12.0
   wander_chance: 0.15
   wander_min_pan_offset_deg: 12.0

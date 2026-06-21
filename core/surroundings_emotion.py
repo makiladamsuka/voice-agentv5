@@ -25,6 +25,7 @@ class SurroundingsEmotionConfig:
     near_exit_ratio: float = 0.041
     far_exit_ratio: float = 0.0225
     emotion_history_len: int = 3
+    no_face_sad_min_sec: float = 150.0
 
 
 @dataclass
@@ -35,7 +36,7 @@ class SurroundingsEmotionController:
     next_emotion_change_time: float = field(default_factory=lambda: time.time() + random.uniform(1.6, 3.0))
     direction_cooldown_until: float = 0.0
     emotion_history: list[str] = field(default_factory=list)
-    last_seen_face_time: float = 0.0
+    last_seen_face_time: float = field(default_factory=time.time)
     current_emotion: str = "idle"
 
     def classify_distance_zone(self, face_area_ratio: float) -> str:
@@ -50,11 +51,11 @@ class SurroundingsEmotionController:
             return "far"
         return "mid"
 
-    def choose_no_person_emotion(self) -> str:
+    def choose_no_person_emotion(self, no_face_elapsed_sec: float) -> str:
         base = self.no_person_next_emotion
         self.no_person_next_emotion = "idle" if self.no_person_next_emotion == "sleepy" else "sleepy"
         r = random.random()
-        if r < 0.08:
+        if no_face_elapsed_sec >= self.cfg.no_face_sad_min_sec and r < 0.08:
             return "sad"
         if r < 0.14:
             return "calm"
@@ -144,8 +145,9 @@ class SurroundingsEmotionController:
         if now < self.next_emotion_change_time:
             return None
 
+        no_face_elapsed = max(0.0, now - self.last_seen_face_time)
         if not person_present:
-            raw = self.choose_no_person_emotion()
+            raw = self.choose_no_person_emotion(no_face_elapsed)
             hold_sec = random.uniform(
                 self.cfg.no_person_hold_min_sec,
                 self.cfg.no_person_hold_max_sec,

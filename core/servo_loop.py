@@ -129,6 +129,22 @@ def _track_error_gain(norm: float, full_scale: float, min_gain: float = 0.35) ->
     return clamp(abs(norm) / max(full_scale, 0.05), min_gain, 1.0)
 
 
+def _smooth_toward_stepped(
+    pos: float,
+    target: float,
+    dt: float,
+    *,
+    smooth_hz: float,
+    lo: float,
+    hi: float,
+    max_step: float,
+) -> float:
+    """Exponential smooth with per-tick step cap — prevents pan overshoot on fast motion."""
+    next_pos = smooth_toward(pos, target, dt, smooth_hz=smooth_hz, lo=lo, hi=hi)
+    step = clamp(next_pos - pos, -max_step, max_step)
+    return clamp(pos + step, lo, hi)
+
+
 def _looking_emotion_for_pan_goal(pan_goal: float, pan_center: float) -> str:
     offset = pan_goal - pan_center
     if offset < -6.0:
@@ -243,6 +259,9 @@ class ServoLoop:
         self.wander_long_stare = float(s.get("wander_long_stare_chance", 0.12))
         self.wander_pan_smooth = float(s.get("wander_pan_smooth_hz", 4.8))
         self.wander_tilt_smooth = float(s.get("wander_tilt_smooth_hz", 4.2))
+        self.wander_track_loss_hold_min = float(s.get("wander_track_loss_hold_min_sec", 1.2))
+        self.wander_track_loss_hold_max = float(s.get("wander_track_loss_hold_max_sec", 2.8))
+        self.wander_imu_tilt_blend = float(s.get("wander_imu_tilt_blend", 0.18))
 
         # ── IMU horizon compensation ──────────────────────────────────────────
         self.imu_horizon_gain = float(imu.get("horizon_tilt_gain", 1.0))
@@ -381,6 +400,21 @@ class ServoLoop:
         )
         return "wander"
 
+    def _enter_wander_from_current_pose(self, now: float) -> None:
+        """Switch to wander without snapping — hold track pose, then glance from here."""
+        self._wander.seed_from_pose(
+            self._pan,
+            self._tilt,
+            now,
+            hold_min_sec=self.wander_track_loss_hold_min,
+            hold_max_sec=self.wander_track_loss_hold_max,
+        )
+
+    def _wander_tilt_ref(self, effective_tilt_center: float) -> float:
+        """Mechanical center + light IMU bias — wander glances stay visible."""
+        blend = max(0.0, min(1.0, self.wander_imu_tilt_blend))
+        return self.tilt_center + (effective_tilt_center - self.tilt_center) * blend
+
     def _apply_debug_head_cmd(self, cmd: str, step: float) -> bool:
         """Browser WASD when manual_control_enabled. Returns True if cmd consumed."""
         if cmd == "tilt_up":
@@ -517,7 +551,9 @@ class ServoLoop:
             self._prev_face_raw_x = 0.0
             self._prev_face_raw_y = 0.0
             self._pan_in_center_band = True
-        if new_mode == "wander":
+        if new_mode == "wander" and old_mode in ("track", "last_seen"):
+            self._enter_wander_from_current_pose(time.time())
+        elif new_mode == "wander":
             self._wander.tilt_goal = self._tilt
             self._wander.pan_goal = self._pan
         if old_mode == "track" and new_mode != "track":
@@ -574,8 +610,13 @@ class ServoLoop:
         self._prev_face_x = self._filtered_norm_x
         self._prev_face_y = self._filtered_norm_y
 
-        # Pan error: lightly filtered bearing reduces bbox jitter; still follows motion.
-        self._pan_track_norm += (norm_x - self._pan_track_norm) * self.pan_track_alpha
+        # Pan error: lightly filtered bearing reduces bbox jitter; follow faster when face moves quickly.
+        vel_x = abs(self._face_vel_x)
+        pan_alpha = self.pan_track_alpha
+        if vel_x > 2.0:
+            pan_alpha = min(0.58, pan_alpha + (vel_x - 2.0) * 0.05)
+            self._pan_pid.soften(0.55)
+        self._pan_track_norm += (norm_x - self._pan_track_norm) * pan_alpha
         pan_err_x = _apply_deadzone(self._pan_track_norm, self.deadzone_x)
 
         if self._prev_pan_err_x * pan_err_x < 0.0 and abs(pan_err_x) < 0.30:
@@ -601,9 +642,11 @@ class ServoLoop:
                 self.pan_max,
             )
 
-        self._pan = smooth_toward(
+        pan_max_step = min(self.pan_max_step_deg, self.pan_track_slew_dps * max(dt, 0.001))
+        self._pan = _smooth_toward_stepped(
             self._pan, pan_target, dt,
             smooth_hz=self.pan_track_smooth_hz, lo=self.pan_min, hi=self.pan_max,
+            max_step=pan_max_step,
         )
 
         # Tilt: face-relative on fixed center (IMU horizon applies in wander/idle only).
@@ -657,7 +700,7 @@ class ServoLoop:
         pan_goal, tilt_goal = self._wander.tick(
             now,
             pan_center=self.pan_center,
-            tilt_center=effective_tilt_center,
+            tilt_center=self._wander_tilt_ref(effective_tilt_center),
             pan_current=self._pan,
             tilt_current=self._tilt,
             pan_min=self.pan_min,
@@ -684,10 +727,24 @@ class ServoLoop:
             wander_last_step_deg=self._wander._last_step_deg,
         )
 
-        self._pan = smooth_toward(self._pan, pan_goal, dt, smooth_hz=self.wander_pan_smooth, lo=self.pan_min, hi=self.pan_max)
+        holding_track_pose = (not self._wander.moving) and (now < self._wander.hold_until)
+        if holding_track_pose:
+            pan_target = self._wander.pan_goal
+            tilt_target = self._wander.tilt_goal
+            pan_hz = self.wander_pan_smooth * 0.12
+            tilt_hz = self.wander_tilt_smooth * 0.12
+        else:
+            pan_target = pan_goal
+            tilt_target = tilt_goal
+            pan_hz = self.wander_pan_smooth
+            tilt_hz = self.wander_tilt_smooth * (0.9 if self._wander.moving else 0.65)
 
-        tilt_hz = self.wander_tilt_smooth * 0.28
-        self._tilt = smooth_toward(self._tilt, tilt_goal, dt, smooth_hz=tilt_hz, lo=self.tilt_min, hi=self.tilt_max)
+        self._pan = smooth_toward(
+            self._pan, pan_target, dt, smooth_hz=pan_hz, lo=self.pan_min, hi=self.pan_max,
+        )
+        self._tilt = smooth_toward(
+            self._tilt, tilt_target, dt, smooth_hz=tilt_hz, lo=self.tilt_min, hi=self.tilt_max,
+        )
         return "wander"
 
     # ── Last-seen mode ─────────────────────────────────────────────────────────
@@ -706,7 +763,6 @@ class ServoLoop:
         last_yaw = state["last_seen_world_yaw"]
         if last_yaw is None or (now - self._lss_start_ts) > self.lss_timeout:
             self._lss_active = False
-            self._wander.reset(self.pan_center, effective_tilt_center, now)
             return "wander"
 
         # Aim pan toward last-seen world yaw
@@ -779,9 +835,6 @@ class ServoLoop:
                 body_gone = (now - self._last_body_ts) > self.no_face_home_sec
                 if face_gone and body_gone:
                     next_mode = "wander"
-                    self._wander.reset(self.pan_center, effective_tilt_center, now)
-                    self._wander.tilt_goal = self._tilt
-                    self._wander.pan_goal = self._pan
             elif old_mode == "last_seen":
                 next_mode = self._tick_last_seen(now, dt, effective_tilt_center)
             else:

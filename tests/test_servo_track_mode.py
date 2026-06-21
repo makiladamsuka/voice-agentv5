@@ -295,3 +295,53 @@ def test_forward_return_timer_resets_while_tracking_face():
     loop._off_forward_since = 100.0
     loop._update_off_forward_timer(105.0, tracking_face=True)
     assert loop._off_forward_since is None
+
+
+def test_track_pan_step_capped_per_tick():
+    """Fast face offset must not jump pan more than pan_max_step per tick."""
+    bb = Blackboard()
+    bb.write(
+        running=True,
+        face_detected=True,
+        body_detected=False,
+        face_norm_x=0.9,
+        face_norm_y=0.0,
+        face_count=1,
+        track_kind="face",
+        face_candidates=[],
+    )
+    loop = ServoLoop(bb)
+    loop._mode = "track"
+    loop._pan = loop.pan_center
+    loop.pan_max_step_deg = 0.75
+    loop.pan_track_slew_dps = 38.0
+    loop._pan_in_center_band = False
+
+    before = loop._pan
+    loop._tick_track(now=100.0, dt=0.05, effective_tilt_center=loop.tilt_center)
+    assert abs(loop._pan - before) <= loop.pan_max_step_deg + 0.01
+
+
+def test_track_to_wander_seeds_from_current_pose():
+    bb = Blackboard()
+    loop = ServoLoop(bb)
+    loop._pan = loop.pan_center + 22.0
+    loop._tilt = loop.tilt_center + 5.0
+    loop._enter_wander_from_current_pose(100.0)
+    assert loop._wander.pan_goal == loop.pan_center + 22.0
+    assert loop._wander.tilt_goal == loop.tilt_center + 5.0
+    assert loop._wander.hold_until > 100.0
+
+
+def test_wander_holds_track_pose_after_loss():
+    bb = Blackboard()
+    bb.write(running=True, face_detected=False, body_detected=False, last_seen_world_yaw=None)
+    loop = ServoLoop(bb)
+    loop._mode = "wander"
+    track_pan = loop.pan_center + 18.0
+    loop._pan = track_pan
+    loop._tilt = loop.tilt_center + 4.0
+    loop._enter_wander_from_current_pose(100.0)
+    loop._tick_wander(now=100.05, dt=0.05, effective_tilt_center=loop.tilt_center - 8.0)
+    assert abs(loop._pan - track_pan) < 2.0
+    assert abs(loop._tilt - (loop.tilt_center + 4.0)) < 2.0

@@ -239,9 +239,9 @@ servo:
   wander_step_max_deg: 18.0
   wander_jump_chance: 0.0     # no sudden jumps
   wander_arrival_deg: 1.2
-  wander_tilt_step_max_deg: 6.0
-  wander_tilt_max_up_deg: 5.0      # limit upward glances — was 15°
-  wander_tilt_max_down_deg: 10.0
+  wander_tilt_step_max_deg: 10.0
+  wander_tilt_max_up_deg: 10.0
+  wander_tilt_max_down_deg: 16.0
   wander_hold_min_sec: 1.0
   wander_hold_max_sec: 3.0
   wander_thinking_hold_chance: 0.38
@@ -249,7 +249,10 @@ servo:
   wander_thinking_hold_max_sec: 8.0
   wander_long_stare_chance: 0.14
   wander_pan_smooth_hz: 5.5
-  wander_tilt_smooth_hz: 3.5
+  wander_tilt_smooth_hz: 6.0
+  wander_track_loss_hold_min_sec: 1.2   # hold last track pose before first wander glance
+  wander_track_loss_hold_max_sec: 2.8
+  wander_imu_tilt_blend: 0.18          # light IMU bias; wander owns most tilt motion
   motion_emotion_min_sec: 2.6
   attention_hold_min_sec: 3.2
   attention_hold_max_sec: 6.5
@@ -294,3 +297,4 @@ surroundings_emotion:
   near_exit_ratio: 0.041
   far_exit_ratio: 0.0225
   emotion_history_len: 3
+  no_face_sad_min_sec: 150.0   # ~2.5 min without a face before sad can appear

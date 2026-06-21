@@ -145,6 +145,20 @@ class OrganicWanderSearch:
         self._last_step_deg = 0.0
         self._next_hold_sec = 3.0
 
+    def seed_from_pose(self, pan: float, tilt: float, now: float, *, hold_min_sec: float = 1.2, hold_max_sec: float = 2.8) -> None:
+        """Hold current head pose, then pick wander targets stepping from here (e.g. after track loss)."""
+        self.pan_goal = pan
+        self.tilt_goal = tilt
+        self.hold_until = now + random.uniform(hold_min_sec, hold_max_sec)
+        self.moving = False
+        self.drift_vel = 0.0
+        self.move_speed_scale = 1.0
+        self.arrival_deg = 2.0
+        self.pause_kind = "look"
+        self.hold_emotion_hint = "attentive"
+        self._last_step_deg = 0.0
+        self._next_hold_sec = random.uniform(1.0, 2.5)
+
     def tick(
         self,
         now: float,
@@ -271,12 +285,12 @@ class OrganicWanderSearch:
         tilt_lo = clamp(tilt_center - max(0.0, tilt_max_down_deg), tilt_min, tilt_max)
         tilt_hi = clamp(tilt_center + max(0.0, tilt_max_up_deg), tilt_min, tilt_max)
         tilt_span = max(0.0, min(tilt_step_max_deg, tilt_hi - tilt_lo))
-        if tilt_span <= 0.001 or random.random() < 0.75:
-            self.tilt_goal = clamp(tilt_current, tilt_lo, tilt_hi)
+        if tilt_span <= 0.001:
+            self.tilt_goal = clamp(tilt_center, tilt_lo, tilt_hi)
         else:
-            # Small nudge from current tilt — avoids snapping back toward center.
-            offset = random.triangular(-tilt_span, tilt_span, 0.0)
-            self.tilt_goal = clamp(tilt_current + offset, tilt_lo, tilt_hi)
+            # Step from current tilt so glances are visibly different each hold.
+            peek = random.triangular(-tilt_span, tilt_span, random.choice([-1.0, 1.0]) * tilt_span * 0.45)
+            self.tilt_goal = clamp(tilt_current + peek, tilt_lo, tilt_hi)
 
     def _assign_pause_kind(
         self,

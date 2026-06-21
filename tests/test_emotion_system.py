@@ -91,6 +91,33 @@ class TestSurroundingsEmotion(unittest.TestCase):
                 picks.add(pick)
         self.assertIn("squint", picks)
 
+    def test_sad_blocked_until_no_face_sad_min(self):
+        ctrl = SurroundingsEmotionController(
+            cfg=SurroundingsEmotionConfig(
+                no_face_sad_min_sec=120.0,
+                no_person_hold_min_sec=0.01,
+                no_person_hold_max_sec=0.02,
+            ),
+        )
+        ctrl.next_emotion_change_time = 0.0
+        now = time.time()
+        ctrl.last_seen_face_time = now - 30.0
+        picks = []
+        for _ in range(50):
+            ctrl.next_emotion_change_time = 0.0
+            pick = ctrl.tick(
+                now=now,
+                face_detected=False,
+                face_area_ratio=0.0,
+                face_norm_x=0.0,
+                squint_hint=0.0,
+                activity=0.0,
+                wander_mode=False,
+            )
+            if pick:
+                picks.append(pick)
+        self.assertNotIn("sad", picks)
+
 
 if __name__ == "__main__":
     unittest.main()

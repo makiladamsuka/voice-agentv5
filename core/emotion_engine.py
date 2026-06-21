@@ -70,6 +70,7 @@ class EmotionEngine:
                 near_exit_ratio=float(se.get("near_exit_ratio", 0.041)),
                 far_exit_ratio=float(se.get("far_exit_ratio", 0.0225)),
                 emotion_history_len=int(se.get("emotion_history_len", 3)),
+                no_face_sad_min_sec=float(se.get("no_face_sad_min_sec", 150.0)),
             ),
         )
         self._face_track_default = str(ft.get("face_track_default", "attentive"))

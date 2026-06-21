@@ -181,6 +181,7 @@ class OrganicWanderSearch:
         tilt_max_up_deg: float,
         tilt_max_down_deg: float,
         tilt_step_max_deg: float,
+        world_yaw_deg: float = 0.0,
         thinking_hold_chance: float = 0.35,
         thinking_hold_min_sec: float = 3.5,
         thinking_hold_max_sec: float = 8.0,
@@ -207,6 +208,7 @@ class OrganicWanderSearch:
                     tilt_max_up_deg=tilt_max_up_deg,
                     tilt_max_down_deg=tilt_max_down_deg,
                     tilt_step_max_deg=tilt_step_max_deg,
+                    world_yaw_deg=world_yaw_deg,
                 )
                 self.moving = True
             self.drift_vel = 0.0
@@ -250,6 +252,7 @@ class OrganicWanderSearch:
         tilt_max_up_deg: float,
         tilt_max_down_deg: float,
         tilt_step_max_deg: float,
+        world_yaw_deg: float = 0.0,
     ) -> None:
         step, speed_scale = self._dynamic_step_and_speed(
             step_min_deg, step_max_deg, amp_deg, jump_chance
@@ -258,7 +261,11 @@ class OrganicWanderSearch:
         self.arrival_deg = arrival_deg * random.uniform(0.85, 1.15)
 
         margin = 3.0
-        direction = random.choice([-1.0, 1.0])
+        # Bias direction toward global 0. If world_yaw is positive (right), prefer negative (left) steps.
+        bias = max(-1.0, min(1.0, world_yaw_deg / 45.0))
+        prob_negative = 0.5 + 0.35 * bias
+        direction = -1.0 if random.random() < prob_negative else 1.0
+
         self.pan_goal = clamp(pan_current + direction * step, pan_min, pan_max)
         self._last_step_deg = min(step, abs(self.pan_goal - pan_current))
         if self.pan_goal >= pan_max - margin:

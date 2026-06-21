@@ -338,17 +338,17 @@ class ServoLoop:
     def _tilt_mech_offset(self) -> float:
         return signed_tilt_mech_deg(self._tilt, self._servo_cfg)
 
-    def _is_off_forward(self) -> bool:
+    def _is_off_forward(self, camera_world_yaw_deg: float) -> bool:
         return (
-            abs(self._pan_mech_offset()) >= self.forward_return_min_pan_deg
+            abs(camera_world_yaw_deg) >= self.forward_return_min_pan_deg
             or abs(self._tilt_mech_offset()) >= self.forward_return_min_tilt_deg
         )
 
-    def _update_off_forward_timer(self, now: float, *, tracking_face: bool) -> None:
+    def _update_off_forward_timer(self, now: float, camera_world_yaw_deg: float, *, tracking_face: bool) -> None:
         if tracking_face or self._forward_return_active:
             self._off_forward_since = None
             return
-        if self._is_off_forward():
+        if self._is_off_forward(camera_world_yaw_deg):
             if self._off_forward_since is None:
                 self._off_forward_since = now
         else:
@@ -359,7 +359,7 @@ class ServoLoop:
             return False
         return (now - self._off_forward_since) >= self.forward_return_timeout_sec
 
-    def _maybe_start_forward_return(self, now: float, *, tracking_face: bool) -> None:
+    def _maybe_start_forward_return(self, now: float, camera_world_yaw_deg: float, *, tracking_face: bool) -> None:
         if self.sustained_head_follow_enabled:
             return
         if tracking_face or self._forward_return_active:
@@ -673,7 +673,7 @@ class ServoLoop:
 
     # ── Wander mode ────────────────────────────────────────────────────────────
 
-    def _tick_wander(self, now: float, dt: float, effective_tilt_center: float) -> str:
+    def _tick_wander(self, now: float, dt: float, effective_tilt_center: float, camera_world_yaw_deg: float) -> str:
         if self._forward_return_active:
             return self._tick_forward_return(now, dt, effective_tilt_center)
 
@@ -720,6 +720,7 @@ class ServoLoop:
             tilt_max_up_deg=self.wander_tilt_max_up,
             tilt_max_down_deg=self.wander_tilt_max_down,
             tilt_step_max_deg=self.wander_tilt_step_max,
+            world_yaw_deg=camera_world_yaw_deg,
             thinking_hold_chance=self.wander_thinking_chance,
             thinking_hold_min_sec=self.wander_thinking_min,
             thinking_hold_max_sec=self.wander_thinking_max,
@@ -826,10 +827,13 @@ class ServoLoop:
             self._apply_base_compensation()
             effective_tilt_center = self._effective_tilt_center(dt)
 
-            vision = self.bb.read("face_detected", "body_detected")
+            vision = self.bb.read("face_detected", "body_detected", "base_world_yaw_deg")
             tracking_face = vision["face_detected"] or vision["body_detected"]
-            self._update_off_forward_timer(now, tracking_face=tracking_face)
-            self._maybe_start_forward_return(now, tracking_face=tracking_face)
+            base_world = vision.get("base_world_yaw_deg", 0.0)
+            camera_world_yaw = base_world + self._pan_mech_offset()
+
+            self._update_off_forward_timer(now, camera_world_yaw, tracking_face=tracking_face)
+            self._maybe_start_forward_return(now, camera_world_yaw, tracking_face=tracking_face)
 
             old_mode = self._mode
             if old_mode == "track":
@@ -841,7 +845,7 @@ class ServoLoop:
             elif old_mode == "last_seen":
                 next_mode = self._tick_last_seen(now, dt, effective_tilt_center)
             else:
-                next_mode = self._tick_wander(now, dt, effective_tilt_center)
+                next_mode = self._tick_wander(now, dt, effective_tilt_center, camera_world_yaw)
 
             if next_mode != old_mode:
                 self._on_mode_change(old_mode, next_mode)

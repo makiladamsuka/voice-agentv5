@@ -35,19 +35,67 @@ def _load_yaml(path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def _wait_imu_ready(bb: Blackboard, timeout_sec: float = 12.0) -> None:
+    """Block until ImuService finishes startup calibration (or IMU disabled)."""
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        state = bb.read("imu_calibrated")
+        if state["imu_calibrated"]:
+            return
+        time.sleep(0.05)
+    print("[Bootstrap] WARNING: IMU calibration wait timed out.")
+
+
+def _lock_yaw_reference(bb: Blackboard, link, base_cfg: dict) -> None:
+    """Zero encoder + IMU yaw reference at current forward pose."""
+    if link is not None and link.connected:
+        if base_cfg.get("zero_on_start", False):
+            link.zero_base()
+            print("[Bootstrap] Base encoder zeroed at startup forward pose.")
+            time.sleep(0.2)
+        try:
+            st = link.query_status()
+            if st is not None:
+                bb.write(
+                    base_encoder_deg=st.degrees,
+                    base_encoder_synced=True,
+                    base_motion_busy=st.busy,
+                )
+                print(
+                    f"[Bootstrap] Encoder synced: {st.degrees:+.1f}° "
+                    f"(CPD={st.counts_per_degree:.2f}, counts={st.encoder_count})"
+                )
+                if abs(st.counts_per_degree - 1.0) < 0.1:
+                    print(
+                        "[Bootstrap] WARNING: firmware CPD≈1 — base cal (C/E) may not be applied. "
+                        "Moves will not stop correctly."
+                    )
+        except Exception as exc:
+            print(f"[Bootstrap] WARNING: encoder sync failed: {exc}")
+
+    bb.write(base_watchdog_reset=True)
+    time.sleep(0.15)
+    bb.write(yaw_reference_locked=True)
+    print("[Bootstrap] Yaw reference locked (world yaw = 0 at startup pose).")
+
+
 def main():
     cfg = _load_yaml(DEFAULT_CONFIG_PATH)
     servo_cfg = cfg.get("servo", {}) or {}
     base_cfg = cfg.get("base", {}) or {}
+    imu_cfg = cfg.get("imu", {}) or {}
     port = servo_cfg.get("port") or ""
     baud = int(servo_cfg.get("baud", 115200))
 
     print("=== Voice Agent V5 (Modular) ===")
-    
-    # 1. Initialize Blackboard (the shared memory hub)
-    bb = Blackboard()
 
-    # 2. Initialize Hardware Link
+    bb = Blackboard()
+    bb.write(
+        yaw_reference_locked=False,
+        imu_calibrated=False,
+        base_encoder_synced=False,
+    )
+
     port_label = port if port else "auto"
     print(f"Connecting to ESP32 on {port_label}@{baud}...")
     link = None
@@ -64,10 +112,6 @@ def main():
                 link.set_encoder_sign(esign)
                 link.base_command_scale = scale
                 print(f"Applied base cal: CPD={cpd:.2f}, sign={esign}, scale={scale:.2f}")
-            
-            if base_cfg.get("zero_on_start", False):
-                link.zero_base()
-                print("Zeroed base encoder (assumed current position is forward center).")
         else:
             print("WARNING: ESP32 connect failed. Running in dry-run mode.")
             link.close(skip_home=True)
@@ -76,48 +120,45 @@ def main():
         print(f"WARNING: Serial connection failed: {e}. Running in dry-run mode.")
         link = None
 
-    # 3. Instantiate Core Services
-    threads = []
     base_gate = BaseMotionGate(backoff_sec=float(base_cfg.get("error_backoff_sec", 45.0)))
-    bb.write(base_motion_allowed=True, base_encoder_synced=False)
-    
-    # Vision Pipeline
-    threads.append(threading.Thread(target=FaceTracker(bb).run, daemon=True, name="FaceTracker"))
-    
-    # IMU / Attitude
-    threads.append(threading.Thread(target=ImuService(bb).run, daemon=True, name="ImuService"))
-    
-    # Head Motion / PID
-    threads.append(threading.Thread(target=ServoLoop(bb).run, daemon=True, name="ServoLoop"))
-    
-    # Base Motion Decisions
-    threads.append(threading.Thread(
-        target=BaseController(bb, link, gate=base_gate).run,
-        daemon=True,
-        name="BaseController",
-    ))
-    
-    # Hardware Mixer (ESP32 TX/RX)
-    threads.append(threading.Thread(
-        target=ServoMixer(bb, link, gate=base_gate).run,
-        daemon=True,
-        name="ServoMixer",
-    ))
-    
-    # Emotion Engine
-    threads.append(threading.Thread(target=EmotionEngine(bb).run, daemon=True, name="EmotionEngine"))
-    
-    # Screen Rendering
-    threads.append(threading.Thread(target=EyeRenderer(bb).run, daemon=True, name="EyeRenderer"))
+    bb.write(base_motion_allowed=True)
 
-    # Unified Debug Dashboard (Camera Stream + 3D Viz)
-    threads.append(threading.Thread(target=DebugDashboard(bb).run, daemon=True, name="DebugDashboard"))
+    # ── Phase 1: IMU startup (yaw reference needs still samples) ─────────────
+    imu_thread = threading.Thread(target=ImuService(bb).run, daemon=True, name="ImuService")
+    imu_thread.start()
+    if imu_cfg.get("enabled", False):
+        settle = float(imu_cfg.get("auto_level_sec", 2.0)) + float(
+            imu_cfg.get("auto_level_warmup_sec", 0.3)
+        )
+        print(f"[Bootstrap] Waiting {settle:.1f}s for IMU level calibration…")
+        _wait_imu_ready(bb, timeout_sec=settle + 5.0)
+    else:
+        _wait_imu_ready(bb, timeout_sec=2.0)
 
-    # 4. Start all services
+    _lock_yaw_reference(bb, link, base_cfg)
+
+    # ── Phase 2: remaining services ───────────────────────────────────────────
+    threads = [
+        threading.Thread(target=FaceTracker(bb).run, daemon=True, name="FaceTracker"),
+        threading.Thread(target=ServoLoop(bb).run, daemon=True, name="ServoLoop"),
+        threading.Thread(
+            target=BaseController(bb, link, gate=base_gate).run,
+            daemon=True,
+            name="BaseController",
+        ),
+        threading.Thread(
+            target=ServoMixer(bb, link, gate=base_gate).run,
+            daemon=True,
+            name="ServoMixer",
+        ),
+        threading.Thread(target=EmotionEngine(bb).run, daemon=True, name="EmotionEngine"),
+        threading.Thread(target=EyeRenderer(bb).run, daemon=True, name="EyeRenderer"),
+        threading.Thread(target=DebugDashboard(bb).run, daemon=True, name="DebugDashboard"),
+    ]
+
     for t in threads:
         t.start()
 
-    # 5. Handle graceful shutdown
     def signal_handler(sig, frame):
         print("\nShutting down...")
         bb.write(running=False)
@@ -133,8 +174,7 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     print("Robot running. Press Ctrl+C to exit.")
-    
-    # Keep main thread alive
+
     while True:
         time.sleep(1.0)
 

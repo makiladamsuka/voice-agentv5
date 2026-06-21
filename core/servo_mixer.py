@@ -69,12 +69,14 @@ class ServoMixer:
         self.send_hz = float(s.get("servo_send_hz", 25.0))
         self.angle_quantum = float(s.get("servo_angle_quantum_deg", 0.2))
         self.tilt_send_smooth_hz = float(s.get("tilt_send_smooth_hz", 2.5))
+        self.pan_send_smooth_hz = float(s.get("pan_send_smooth_hz", 2.5))
         self.loop_hz = float(s.get("loop_hz", 100.0))
-        self.base_busy_check_hz = 5.0  # poll status 5x/sec when base is moving
+        self.base_busy_check_hz = 5.0
 
-        self.use_imu_validation = bool(b.get("use_imu_move_validation", True))
+        self.use_imu_validation = bool(b.get("use_imu_move_validation", False))
         self.spin_tolerance_deg = float(b.get("spin_stop_tolerance_deg", 1.5))
         self.spin_timeout_sec = float(b.get("spin_timeout_sec", 12.0))
+        self.spin_stall_sec = float(b.get("spin_stall_sec", 0.35))
         self.spin_positive_uses_left = bool(b.get("spin_positive_uses_left", False))
         self._gate = gate if gate is not None else BaseMotionGate(
             backoff_sec=float(b.get("error_backoff_sec", 45.0))
@@ -90,6 +92,7 @@ class ServoMixer:
 
         self._prev_pan = None
         self._prev_tilt = None
+        self._send_pan = None
         self._send_tilt = None
         self._last_send_ts = 0.0
         self._last_busy_check_ts = 0.0
@@ -118,8 +121,6 @@ class ServoMixer:
             return True
         except Exception:
             return False
-
-    # ─────────────────────────────────────────────────────────────────────────
 
     def _pan_mech(self, pan_cmd: float) -> float:
         return _pan_to_mech(
@@ -167,17 +168,14 @@ class ServoMixer:
             pan = self._quantize(state["servo_pan"])
             tilt = self._quantize(state["servo_tilt"])
 
-            # ── Execute base step if flagged ───────────────────────────────
             if state["base_step_ready"] and not state["base_motion_busy"]:
                 step = state["base_step_deg"]
                 source = state["base_step_source"]
-                # Clear the ready flag immediately to prevent double-execution
                 self.bb.write(base_step_ready=False)
                 self._execute_base_step(pan, tilt, step, source, now)
                 time.sleep(loop_delay)
                 continue
 
-            # ── Poll base busy state ───────────────────────────────────────
             if state["base_motion_busy"] and (now - self._last_busy_check_ts) > (1.0 / self.base_busy_check_hz):
                 self._last_busy_check_ts = now
                 self._poll_base_busy(pan)
@@ -189,7 +187,6 @@ class ServoMixer:
                 self._last_encoder_poll_ts = now
                 self._sync_encoder(pan)
 
-            # ── Send head angles ───────────────────────────────────────────
             if self._should_send(pan, tilt, now):
                 self._send_angles(pan, tilt)
                 self._last_send_ts = now
@@ -205,22 +202,35 @@ class ServoMixer:
         if self._send_tilt is None:
             self._send_tilt = tilt
         self._send_tilt = smooth_toward(
-            self._send_tilt,
-            tilt,
-            dt,
-            smooth_hz=self.tilt_send_smooth_hz,
-            lo=-360.0,
-            hi=360.0,
+            self._send_tilt, tilt, dt,
+            smooth_hz=self.tilt_send_smooth_hz, lo=-360.0, hi=360.0,
         )
         return self._send_tilt
+
+    def _pan_for_send(self, pan: float) -> float:
+        dt = 1.0 / max(1.0, self.loop_hz)
+        if self._send_pan is None:
+            self._send_pan = pan
+        self._send_pan = smooth_toward(
+            self._send_pan, pan, dt,
+            smooth_hz=self.pan_send_smooth_hz, lo=-360.0, hi=360.0,
+        )
+        return self._send_pan
 
     def _send_angles(self, pan: float, tilt: float) -> None:
         if self._link is None:
             return
         try:
-            self._link.write_angles(pan, self._tilt_for_send(tilt))
+            self._link.write_angles(self._pan_for_send(pan), self._tilt_for_send(tilt))
         except Exception as e:
             print(f"[ServoMixer] write_angles failed: {e}")
+
+    def _refresh_head_during_spin(self) -> None:
+        """Keep head tracking while base L/R spin is in progress."""
+        state = self.bb.read("servo_pan", "servo_tilt")
+        pan = self._quantize(state["servo_pan"])
+        tilt = self._quantize(state["servo_tilt"])
+        self._send_angles(pan, tilt)
 
     def _execute_base_step(self, pan: float, tilt: float, step: float, source: str, now: float) -> None:
         if self._link is None:
@@ -234,28 +244,43 @@ class ServoMixer:
                     encoder_deg=enc,
                     pan_offset_deg=pan_mech,
                 )
-            self._send_angles(pan, self._tilt_for_send(tilt))
+            self._send_angles(pan, tilt)
             self.bb.write(base_motion_busy=True)
-            ok = self._link.write_base_step_spin(
+            from base_spin_motion import write_base_step_spin
+
+            ok, moved_deg, stop_reason = write_base_step_spin(
+                self._link,
                 step,
                 tolerance_deg=self.spin_tolerance_deg,
                 timeout_sec=self.spin_timeout_sec,
                 positive_uses_left=self.spin_positive_uses_left,
+                stall_sec=self.spin_stall_sec,
+                on_poll=self._refresh_head_during_spin,
             )
             if self._watchdog is not None:
                 self._watchdog.finish_move()
+            pan = self._quantize(self.bb.read("servo_pan")["servo_pan"])
             st = self._link.query_status()
             if st is not None:
                 self._publish_encoder(st.degrees, pan, False)
                 self._last_busy_check_ts = now
-                if ok:
-                    print(f"[ServoMixer] Base spin {step:+.1f}° ({source}) enc={st.degrees:+.1f}°")
-                else:
-                    print(f"[ServoMixer] Base spin {step:+.1f}° ({source}) incomplete enc={st.degrees:+.1f}°")
+                tag = "OK" if ok else "FAIL"
+                print(
+                    f"[ServoMixer] Base spin {step:+.1f}° ({source}) "
+                    f"{tag} moved={moved_deg:+.1f}° enc={st.degrees:+.1f}° ({stop_reason})"
+                )
+                self.bb.write(
+                    base_fusion_resync_request=True,
+                    base_last_spin_moved_deg=moved_deg,
+                    base_last_spin_reason=stop_reason,
+                )
             else:
                 self.bb.write(base_motion_busy=False)
-            if not ok:
-                self._gate.record_fault(f"spin move incomplete ({source})", now)
+            if not ok and abs(moved_deg) < max(0.5, abs(step) * 0.2):
+                self._gate.record_fault(
+                    f"spin {stop_reason} moved {moved_deg:+.1f}° vs cmd {step:+.1f}° ({source})",
+                    now,
+                )
         except Exception as e:
             print(f"[ServoMixer] base step failed: {e}")
             if self._watchdog is not None:

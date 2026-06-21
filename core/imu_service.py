@@ -100,7 +100,7 @@ class ImuService:
         """Main service loop. Exits if IMU is disabled or unavailable."""
         if not self.enabled or not _IMU_SENSOR_AVAILABLE:
             print("[ImuService] IMU disabled or imu_sensor not installed — skipping.")
-            self.bb.write(imu_available=False)
+            self.bb.write(imu_available=False, imu_calibrated=True)
             return
 
         try:
@@ -117,8 +117,11 @@ class ImuService:
             self._reader.start()
         except Exception as exc:
             print(f"[ImuService] Hardware init failed: {exc}")
-            self.bb.write(imu_available=False)
+            self.bb.write(imu_available=False, imu_calibrated=True)
             return
+
+        # Reset yaw integral at boot — world yaw reference starts at 0.
+        self._reader.filter.reset_yaw_integral()
 
         # Optional startup level calibration
         if self.auto_level and startup_level_calibrate is not None:
@@ -137,6 +140,8 @@ class ImuService:
                 )
             except Exception as exc:
                 print(f"[ImuService] Level calibration failed (non-fatal): {exc}")
+
+        self.bb.write(imu_calibrated=True)
 
         self._horizon = HorizonTiltBias(
             gain=self.horizon_gain,

@@ -56,14 +56,14 @@ const int COARSE_ERR_COUNTS = 48;
 const int COARSE_PWM = 150;
 const int FINE_MIN_PWM = 82;
 const int PWM_MAX = 150;
-const int SPIN_PWM = 120;
+const int SPIN_PWM = 75;  // lower = gentler open-loop L/R spins from Pi
 const unsigned long STALL_MS = 4000;
 const int MOTOR_DIR_SIGN = -1;
 const int STALL_MIN_PROGRESS = 1;
 const unsigned long MOVE_TIMEOUT_MS = 12000;
 const float FINE_KP = 1.8f;
 const float FINE_PWM_PER_COUNT = 4.0f;
-const float MAX_ABS_BASE_DEG = 140.0f;   // Hard safety envelope from startup zero.
+const float MAX_ABS_BASE_DEG = 124.0f;   // Hard safety envelope from startup zero (120 + margin).
 const float ABS_LIMIT_MARGIN_DEG = 4.0f; // Allow tiny transient/noise before fault.
 const float OVERSHOOT_ALLOW_RATIO = 0.35f;
 const long OVERSHOOT_ALLOW_MIN_COUNTS = 140;

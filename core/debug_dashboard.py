@@ -78,6 +78,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 "imu_roll_deg": state.get("imu_roll_deg", 0.0),
                 "imu_gyro_dps": state.get("imu_gyro_dps", 0.0),
                 "imu_yaw_integral_deg": state.get("imu_yaw_integral_deg", 0.0),
+                "imu_inferred_base_deg": state.get("imu_inferred_base_deg", 0.0),
+                "yaw_reference_locked": state.get("yaw_reference_locked", False),
                 "imu_effective_tilt_center": state.get("imu_effective_tilt_center", 114.0),
                 "imu_enabled": state.get("imu_available", False),
                 "imu_horizon_ok": state.get("imu_horizon_ok", True),

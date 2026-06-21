@@ -48,11 +48,11 @@ person_memory:
   face_confidence: 1.0
   body_confidence: 0.65
   base_enabled: true
-  base_min_yaw_error_deg: 6.0
+  base_min_yaw_error_deg: 10.0
   base_min_step_deg: 1.5
-  base_max_step_deg: 3.0
-  base_yaw_to_step_gain: 0.12
-  base_cooldown_sec: 1.6
+  base_max_step_deg: 2.5
+  base_yaw_to_step_gain: 0.08
+  base_cooldown_sec: 3.0
   base_compensation_gain: 0.55
 
 last_seen_search:
@@ -62,11 +62,11 @@ last_seen_search:
   track_gain: 0.65
   max_pan_step_deg: 8.0
   base_enabled: true
-  base_min_yaw_error_deg: 5.0
+  base_min_yaw_error_deg: 8.0
   base_min_step_deg: 1.5
   base_max_step_deg: 2.5
-  base_yaw_to_step_gain: 0.14
-  base_cooldown_sec: 1.5
+  base_yaw_to_step_gain: 0.08
+  base_cooldown_sec: 2.5
   base_compensation_gain: 0.50
   edge_track_base: true        # only when pan is stuck at limit
 
@@ -106,36 +106,37 @@ base:
   encoder_sign: -1  # set by --calibrate-manual (+deg → encoder counts decrease)
   command_scale: 0.1714  # legacy; spin control uses encoder DEG directly (see spin_*)
   spin_stop_tolerance_deg: 1.5
-  spin_timeout_sec: 12.0
+  spin_timeout_sec: 4.0       # hard cap; small steps use shorter internal deadline
+  spin_stall_sec: 0.28       # stop if encoder counts stop advancing
   spin_positive_uses_left: false  # +step = R spin; -step = L spin (encoder DEG axis)
   # --- behavior (safe to tune) ---
   error_backoff_sec: 45.0
   require_calibrated_cpd: true
-  zero_on_start: false
+  zero_on_start: true
   sign: -1.0          # plate rotation sign vs B command; flip if base opposes head
-  head_lead_min_deg: 5.0   # neck must turn this far before base may follow
+  head_lead_min_deg: 12.0  # neck must turn this far before base may follow
   follow_head_direction: true
-  trigger_norm_x: 0.35
-  trigger_hold_sec: 1.0
-  cooldown_sec: 1.8
+  trigger_norm_x: 0.50       # face must be farther off-center before base helps
+  trigger_hold_sec: 2.0      # wait longer before first base nudge
+  cooldown_sec: 4.0          # pause between base moves
   min_step_deg: 2.0
-  max_step_deg: 25.0
-  single_shot_max_deg: 25.0
-  norm_to_deg_gain: 2.5
-  pan_soft_limit_deg: 10.0
+  max_step_deg: 10.0         # wander/track nudges — no full spins
+  single_shot_max_deg: 10.0
+  norm_to_deg_gain: 1.8
+  pan_soft_limit_deg: 12.0
   pan_soft_limit_scale: 0.60   # fraction of max head pan mech travel for "near limit"
   pan_limit_margin: 0.35      # servo cmd units — head at hardware stop
   pan_recenter_bias: 0.50
-  pan_offset_to_step_gain: 0.18   # base step scales with head pan offset (mech deg)
-  trigger_hold_at_limit_sec: 0.55 # slower base follow when head near pan limit
+  pan_offset_to_step_gain: 0.10   # base step scales with head pan offset (mech deg)
+  trigger_hold_at_limit_sec: 1.0  # slower base follow when head near pan limit
   track_compensation_gain: 0.95   # counter-rotate neck ~1:1 with base during track
   body_base_enabled: true
-  body_base_cooldown_sec: 1.0
-  body_base_min_step_deg: 3.0
-  body_base_max_step_deg: 15.0
-  body_base_aim_to_step_gain: 2.8
+  body_base_cooldown_sec: 2.5
+  body_base_min_step_deg: 2.0
+  body_base_max_step_deg: 5.0
+  body_base_aim_to_step_gain: 1.8
   body_base_compensation_gain: 0.90
-  limit_base_aim_to_step_gain: 2.2  # face/body when pan is stuck at min/max
+  limit_base_aim_to_step_gain: 1.5  # face/body when pan is stuck at min/max
   fast_face_enabled: false
   fast_face_velocity_norm_sec: 3.5
   fast_face_cooldown_sec: 1.4
@@ -144,24 +145,25 @@ base:
   fast_face_velocity_to_deg_gain: 2.0
   fast_face_compensation_gain: 0.45
   wander_enabled: true
-  wander_step_deg: 12.0        # small base nudge after head finishes a glance
-  wander_cooldown_sec: 4.0     # pause between base moves — let it rest
-  wander_chance: 0.75          # not every head hold triggers base
-  wander_min_pan_offset_deg: 6.0
-  wander_min_head_step_deg: 2.0
+  wander_step_deg: 10.0      # base follows head with ~10° plate steps
+  wander_cooldown_sec: 12.0
+  wander_chance: 0.15
+  wander_min_pan_offset_deg: 12.0
+  wander_min_head_step_deg: 10.0
   wander_compensation_gain: 0.20
-  wander_random_turn_enabled: true
-  wander_random_turn_deg: 90.0      # total turn target (delivered in chunks)
-  wander_random_turn_chunk_deg: 20.0
-  wander_random_turn_min_sec: 30.0
-  wander_random_turn_max_sec: 60.0
-  max_total_auto_deg: 36.0
+  wander_random_turn_enabled: false  # disable large idle spins
+  wander_random_turn_deg: 30.0
+  wander_random_turn_chunk_deg: 3.0
+  wander_random_turn_min_sec: 120.0
+  wander_random_turn_max_sec: 300.0
+  max_total_auto_deg: 24.0
   max_yaw_deg: 120.0
-  recenter_deadband_deg: 22.0
-  recenter_step_deg: 2.0
+  imu_fusion_max_error_deg: 15.0   # stationary encoder vs IMU-inferred base fault threshold
+  recenter_deadband_deg: 30.0
+  recenter_step_deg: 1.5
   heading_pid_kp: 0.22
   heading_pid_kd: 0.14
-  use_imu_move_validation: true
+  use_imu_move_validation: false  # spin stop uses encoder only; IMU fusion is debug/resync
   allow_multi_face: false
   wait_for_ack: false
 
@@ -192,15 +194,15 @@ servo:
   loop_hz: 80.0
   no_face_home_sec: 1.2
   debug_hz: 2.0
-  face_alpha_x: 0.10
-  face_alpha_y: 0.08
-  pan_pid_kp: 0.38
-  pan_pid_ki: 0.002
-  pan_pid_kd: 0.04
-  tilt_pid_kp: 0.28
+  face_alpha_x: 0.18
+  face_alpha_y: 0.10
+  pan_pid_kp: 0.58
+  pan_pid_ki: 0.004
+  pan_pid_kd: 0.08
+  tilt_pid_kp: 0.32
   tilt_pid_ki: 0.0
-  tilt_pid_kd: 0.015
-  pid_integral_limit: 0.40
+  tilt_pid_kd: 0.025
+  pid_integral_limit: 0.50
   predict_hold_sec: 1.0
   predict_edge_norm: 0.55
   predict_gain: 0.72
@@ -209,9 +211,9 @@ servo:
   lost_search_min_norm_x: 0.22
   lost_search_base_step_deg: 2.0
   lost_search_base_cooldown_sec: 2.0
-  wander_pan_amp_deg: 60.0    # soft envelope within narrow pan range
-  wander_step_min_deg: 12.0
-  wander_step_max_deg: 35.0    # small glances, then hold
+  wander_pan_amp_deg: 28.0    # smaller head glances — less base follow trigger
+  wander_step_min_deg: 8.0
+  wander_step_max_deg: 18.0
   wander_jump_chance: 0.0     # no sudden jumps
   wander_arrival_deg: 1.2
   wander_tilt_step_max_deg: 8.0
@@ -223,8 +225,8 @@ servo:
   wander_thinking_hold_min_sec: 3.0
   wander_thinking_hold_max_sec: 8.0
   wander_long_stare_chance: 0.14
-  wander_pan_smooth_hz: 3.0   # slow, peaceful neck motion
-  wander_tilt_smooth_hz: 1.5
+  wander_pan_smooth_hz: 5.5
+  wander_tilt_smooth_hz: 3.5
   motion_emotion_min_sec: 2.6
   attention_hold_min_sec: 3.2
   attention_hold_max_sec: 6.5
@@ -234,12 +236,13 @@ servo:
   multi_face_track_servo_alpha: 0.34
   multi_face_track_gain: 0.62
   social_multi_grace_sec: 2.4
-  target_smooth_hz: 3.0   # face aim smoothing (replaces spring glide)
-  pan_smooth_hz: 3.2    # neck pan follow — lower = less jitter when locked on face
-  tilt_smooth_hz: 2.0   # neck tilt follow — lower = softer vertical motion
+  target_smooth_hz: 5.0
+  pan_smooth_hz: 7.0
+  tilt_smooth_hz: 4.5
   servo_send_min_deg: 0.04
-  servo_send_hz: 45.0
+  servo_send_hz: 50.0
   servo_angle_quantum_deg: 0.05
-  tilt_send_smooth_hz: 2.5   # final softening before ESP32 — reduces serial jerk
+  pan_send_smooth_hz: 10.0   # light final smoothing — was default 2.5 (too laggy)
+  tilt_send_smooth_hz: 5.0
   home_smooth_sec: 0.9
   home_smooth_hz: 30.0

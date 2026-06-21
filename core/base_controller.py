@@ -9,12 +9,14 @@ Reads from BB:
     body_detected, track_kind,
     servo_pan, servo_tilt, servo_mode,
     base_encoder_deg, base_world_yaw_deg, base_motion_busy,
-    imu_available, imu_gyro_dps,
+    imu_available, imu_gyro_dps, imu_gyro_z_dps, imu_yaw_integral_deg,
     person_snapshots, last_seen_world_yaw,
+    yaw_reference_locked,
     running
 
 Writes to BB:
-    base_step_deg, base_step_source, base_step_ready
+    base_step_deg, base_step_source, base_step_ready, base_comp_pan_deg,
+    imu_inferred_base_deg
 """
 
 from __future__ import annotations
@@ -33,6 +35,13 @@ except ImportError:
 from core.blackboard import Blackboard
 from lib.elastic_head_motion import clamp
 from lib.person_memory import angular_error_deg
+from lib.base_head_lead import (
+    aim_agrees_with_head,
+    head_lead_sign,
+    proactive_comp_pan_cmd,
+    step_agrees_with_head,
+    yaw_error_agrees_with_head,
+)
 from base_safety import BaseMotionGate
 from base_yaw_controller import BaseYawState, HeadYawFusion
 
@@ -86,7 +95,9 @@ class BaseController:
 
         # ── Enable / disable ──────────────────────────────────────────────────
         self.enabled = bool(b.get("enabled", False))
-        self.use_imu_validation = bool(b.get("use_imu_move_validation", True))
+        self.use_imu_validation = bool(b.get("use_imu_move_validation", False))
+        self.imu_fusion_max_error = float(b.get("imu_fusion_max_error_deg", 15.0))
+        self.imu_stationary_gyro = float(imu.get("auto_level_gyro_max_dps", 8.0))
 
         # ── Geometry ──────────────────────────────────────────────────────────
         self.pan_min = float(s.get("pan_min", 40.0))
@@ -114,8 +125,6 @@ class BaseController:
         self.pan_offset_to_step = float(b.get("pan_offset_to_step_gain", 0.30))
         self.track_comp_gain = float(b.get("track_compensation_gain", 0.45))
         self.max_yaw_deg = float(b.get("max_yaw_deg", 120.0))
-        self.recenter_deadband = float(b.get("recenter_deadband_deg", 15.0))
-        self.recenter_step = float(b.get("recenter_step_deg", 5.0))
 
         # ── Fast-face step ────────────────────────────────────────────────────
         self.fast_face_enabled = bool(b.get("fast_face_enabled", True))
@@ -181,6 +190,9 @@ class BaseController:
         self._random_turn_remaining = 0.0
         self._random_turn_sign = 0.0
         self._trigger_since = 0.0
+        self._fusion_initialized = False
+        self._fusion_last_ts = 0.0
+        self._fusion_resync_cooldown_ts = 0.0
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -195,6 +207,28 @@ class BaseController:
         mech = abs(self._pan_mech(pan_cmd))
         soft = min(self.pan_soft_limit, abs(self.mech_left), abs(self.mech_right))
         return mech >= soft * (1.0 - self.pan_limit_margin)
+
+    def _comp_pan_for_step(self, step: float, pan_cmd: float, gain: float) -> float:
+        return proactive_comp_pan_cmd(
+            step,
+            pan_cmd,
+            compensation_gain=gain,
+            pan_center=self.pan_center,
+            pan_min=self.pan_min,
+            pan_max=self.pan_max,
+            mech_left=self.mech_left,
+            mech_right=self.mech_right,
+        )
+
+    def _reject_head_lead(self, step: float, pan_cmd: float) -> bool:
+        """Return True if step violates head-lead-only policy."""
+        pan_mech = self._pan_mech(pan_cmd)
+        plate_step = step / self.base_sign if abs(self.base_sign) > 1e-6 else step
+        return not step_agrees_with_head(
+            plate_step,
+            pan_mech,
+            head_lead_min_deg=self.head_lead_min,
+        )
 
     def _cap_for_aim(self, step: float, aim_norm_x: float, hfov: float = 62.0) -> float:
         """Prevent base overshoot by capping step to the remaining aim angle."""
@@ -217,7 +251,9 @@ class BaseController:
         pan_offset = self._head_pan_offset(pan_cmd)
         if abs(pan_offset) < self.head_lead_min:
             return None
-        head_sign = 1.0 if pan_offset > 0.0 else -1.0
+        head_sign = head_lead_sign(pan_offset)
+        if head_sign == 0.0:
+            return None
         mag = clamp(abs(magnitude_deg), self.min_step, self.max_step)
         direction = head_sign if self.follow_head_direction else head_sign
         return direction * mag
@@ -240,7 +276,11 @@ class BaseController:
         if self._random_turn_remaining <= 0.0:
             if now < self._next_random_turn_ts:
                 return None, ""
-            self._random_turn_sign = random.choice([-1.0, 1.0])
+            pan_mech = self._pan_mech(pan)
+            head_sign = head_lead_sign(pan_mech)
+            if head_sign == 0.0:
+                return None, ""
+            self._random_turn_sign = head_sign
             self._random_turn_remaining = self.wander_random_turn_deg * random.uniform(0.9, 1.1)
             self._schedule_next_random_turn(now)
 
@@ -265,6 +305,8 @@ class BaseController:
     def _apply_gate(self, step: float, pan_cmd: float, encoder_deg: float, state: dict) -> float:
         """Return 0 if base not allowed; apply encoder and world-yaw limits."""
         if not self._gate.allowed() or not state.get("base_motion_allowed", True):
+            return 0.0
+        if self._reject_head_lead(step, pan_cmd):
             return 0.0
         hard_max = min(self.max_step, self.single_shot_max)
         if abs(step) > hard_max:
@@ -291,51 +333,85 @@ class BaseController:
                 step = math.copysign(min(abs(step), budget * 0.95), step)
         return step
 
+    def _update_fusion(self, now: float, state: dict, pan_offset: float) -> None:
+        if not state.get("yaw_reference_locked"):
+            return
+
+        if state.get("base_fusion_resync_request"):
+            self._yaw_fusion.reset_reference(
+                pan_mech_deg=pan_offset,
+                base_encoder_deg=state["base_encoder_deg"],
+                imu_yaw_total_deg=state.get("imu_yaw_integral_deg", 0.0),
+                now=now,
+            )
+            self._fusion_resync_cooldown_ts = now
+            self.bb.write(base_fusion_resync_request=False)
+            return
+
+        if not self._fusion_initialized:
+            self._yaw_fusion.reset_reference(
+                pan_mech_deg=pan_offset,
+                base_encoder_deg=state["base_encoder_deg"],
+                imu_yaw_total_deg=state.get("imu_yaw_integral_deg", 0.0),
+                now=now,
+            )
+            self._fusion_initialized = True
+            self._fusion_last_ts = now
+
+        if not state.get("imu_available"):
+            return
+
+        self._yaw_fusion.imu_yaw_total_deg = state.get("imu_yaw_integral_deg", 0.0)
+        inferred = self._yaw_fusion.inferred_base_encoder_deg(pan_offset)
+        self.bb.write(imu_inferred_base_deg=inferred)
+
     # ── Per-mode planning ──────────────────────────────────────────────────────
 
-    def _plan_track_step(self, now: float, state: dict) -> tuple[Optional[float], str]:
+    def _plan_track_step(self, now: float, state: dict) -> tuple[Optional[float], str, float]:
         pan = state["servo_pan"]
         norm_x = state["face_norm_x"]
+        pan_mech = self._pan_mech(pan)
+
         if not self._pan_at_limit(pan) and abs(norm_x) < self.trigger_norm_x:
             self._trigger_since = 0.0
-            return None, ""
+            return None, "", 0.0
+
+        if not aim_agrees_with_head(norm_x, pan_mech):
+            return None, "", 0.0
 
         if self._trigger_since <= 0.0:
             self._trigger_since = now
         hold_req = self.trigger_hold_at_limit_sec if self._pan_at_limit(pan) else self.trigger_hold_sec
         if (now - self._trigger_since) < hold_req:
-            return None, ""
+            return None, "", 0.0
         if (now - self._last_nudge_ts) < self.cooldown_sec:
-            return None, ""
+            return None, "", 0.0
 
-        pan_mech = self._pan_mech(pan)
         sign = math.copysign(1.0, pan_mech)
         step = clamp(abs(pan_mech) * self.pan_offset_to_step, self.min_step, self.max_step) * sign * self.base_sign
         step = self._cap_for_aim(step, norm_x)
         step = self._apply_gate(step, pan, state["base_encoder_deg"], state)
         if step == 0.0:
-            return None, ""
-        # Compensation: head will move back slightly after base moves
-        comp = -norm_x * self.track_comp_gain
-        return step, f"track|comp={comp:+.2f}"
+            return None, "", 0.0
+        comp_pan = self._comp_pan_for_step(step, pan, self.track_comp_gain)
+        return step, "track", comp_pan
 
-    def _plan_wander_recenter(self, now: float, state: dict) -> tuple[Optional[float], str]:
-        """Peaceful wander: base nudges only after the head finishes a look and holds."""
+    def _plan_wander_follow(self, now: float, state: dict) -> tuple[Optional[float], str, float]:
+        """Wander: base nudges only after the head finishes a look and holds."""
         enc = state["base_encoder_deg"]
         pan = state["servo_pan"]
         wander_moving = state.get("wander_moving", False)
 
         if (now - self._last_nudge_ts) < self.cooldown_sec:
             self._was_wander_moving = wander_moving
-            return None, ""
+            return None, "", 0.0
 
         step: Optional[float] = None
         source = ""
+        comp_pan = 0.0
 
-        # Rare full-body turn — left or right, on a long random timer.
         step, source = self._plan_random_wander_turn(now, pan, enc, wander_moving, state)
 
-        # Base follows head only when a wander glance finishes (moving → holding).
         head_settled = self._was_wander_moving and not wander_moving
         self._was_wander_moving = wander_moving
         if step is None and (
@@ -350,62 +426,69 @@ class BaseController:
                 and head_step >= self.wander_min_head_step
                 and random.random() < self.wander_base_chance
             ):
-                step = self._plan_base_follow_step(self.wander_base_step, pan)
-                if step is not None:
-                    step = step * self.base_sign
+                raw = self._plan_base_follow_step(self.wander_base_step, pan)
+                if raw is not None:
+                    step = raw * self.base_sign
                     step = self._apply_gate(step, pan, enc, state)
                     if abs(step) >= self.min_step:
                         self._last_wander_ts = now
                         source = "wander_follow"
-
-        # Gentle recenter when idle — slow drift back toward center.
-        if step is None and abs(enc) > self.recenter_deadband:
-            mag = min(abs(enc) * 0.18, self.recenter_step)
-            step = -math.copysign(mag, enc)
-            step = self._apply_gate(step, pan, enc, state)
-            if abs(step) >= self.min_step:
-                source = "recenter"
+                        comp_pan = self._comp_pan_for_step(step, pan, self.track_comp_gain)
 
         if step is None or abs(step) < self.min_step:
-            return None, ""
-        return step, source
+            return None, "", 0.0
+        return step, source, comp_pan
 
-    def _plan_memory_step(self, now: float, state: dict) -> tuple[Optional[float], str]:
+    def _plan_memory_step(self, now: float, state: dict) -> tuple[Optional[float], str, float]:
         if not self.pm_base_enabled:
-            return None, ""
+            return None, "", 0.0
         if (now - self._last_pm_ts) < self.pm_base_cooldown:
-            return None, ""
+            return None, "", 0.0
         snapshots = state["person_snapshots"]
         if not snapshots:
-            return None, ""
+            return None, "", 0.0
+        pan = state["servo_pan"]
+        pan_mech = self._pan_mech(pan)
         world_yaw = state["base_world_yaw_deg"]
         best = min(snapshots, key=lambda s: abs(angular_error_deg(s["world_yaw_deg"], world_yaw)))
         err = angular_error_deg(best["world_yaw_deg"], world_yaw)
         if abs(err) < self.pm_base_min_yaw_err:
-            return None, ""
+            return None, "", 0.0
+        if not yaw_error_agrees_with_head(err, pan_mech, head_lead_min_deg=self.head_lead_min):
+            return None, "", 0.0
         step = clamp(err * self.pm_base_gain, -self.pm_base_max, self.pm_base_max)
         if abs(step) < self.pm_base_min:
-            return None, ""
-        step = self._apply_gate(step * self.base_sign, state["servo_pan"], state["base_encoder_deg"], state)
-        return step, "memory"
+            return None, "", 0.0
+        step = self._apply_gate(step * self.base_sign, pan, state["base_encoder_deg"], state)
+        if step == 0.0:
+            return None, "", 0.0
+        comp_pan = self._comp_pan_for_step(step, pan, self.pm_base_comp)
+        return step, "memory", comp_pan
 
-    def _plan_last_seen_step(self, now: float, state: dict) -> tuple[Optional[float], str]:
+    def _plan_last_seen_step(self, now: float, state: dict) -> tuple[Optional[float], str, float]:
         if not self.lss_base_enabled:
-            return None, ""
+            return None, "", 0.0
         if (now - self._last_lss_ts) < self.lss_base_cooldown:
-            return None, ""
+            return None, "", 0.0
         last_yaw = state["last_seen_world_yaw"]
         if last_yaw is None:
-            return None, ""
+            return None, "", 0.0
+        pan = state["servo_pan"]
+        pan_mech = self._pan_mech(pan)
         world_yaw = state["base_world_yaw_deg"]
         err = angular_error_deg(last_yaw, world_yaw)
         if abs(err) < self.lss_base_min_yaw_err:
-            return None, ""
+            return None, "", 0.0
+        if not yaw_error_agrees_with_head(err, pan_mech, head_lead_min_deg=self.head_lead_min):
+            return None, "", 0.0
         step = clamp(err * self.lss_base_gain, -self.lss_base_max, self.lss_base_max)
         if abs(step) < self.lss_base_min:
-            return None, ""
-        step = self._apply_gate(step * self.base_sign, state["servo_pan"], state["base_encoder_deg"], state)
-        return step, "last_seen"
+            return None, "", 0.0
+        step = self._apply_gate(step * self.base_sign, pan, state["base_encoder_deg"], state)
+        if step == 0.0:
+            return None, "", 0.0
+        comp_pan = self._comp_pan_for_step(step, pan, self.lss_base_comp)
+        return step, "last_seen", comp_pan
 
     # ── Main loop ──────────────────────────────────────────────────────────────
 
@@ -420,7 +503,6 @@ class BaseController:
         while self.bb.read("running")["running"]:
             now = time.time()
 
-            # Sync yaw state from ServoMixer's latest encoder reading
             state = self.bb.read(
                 "face_detected", "face_norm_x", "face_area_ratio",
                 "body_detected", "track_kind",
@@ -430,16 +512,24 @@ class BaseController:
                 "base_encoder_synced",
                 "base_motion_allowed",
                 "person_snapshots", "last_seen_world_yaw",
-                "imu_available",
+                "imu_available", "imu_gyro_dps", "imu_gyro_z_dps",
+                "imu_yaw_integral_deg",
+                "yaw_reference_locked",
+                "base_fusion_resync_request",
             )
 
             pan_offset = self._head_pan_offset(state["servo_pan"])
             self._yaw_state.update(state["base_encoder_deg"], pan_offset)
+            self._update_fusion(now, state, pan_offset)
 
             self._gate.clear_backoff(now)
             if self._gate.allowed(now):
                 self.bb.write(base_motion_allowed=True)
             self.bb.write(base_fault_reason=self._gate.last_reason)
+
+            if not state["yaw_reference_locked"]:
+                time.sleep(loop_delay)
+                continue
 
             if not state["base_encoder_synced"]:
                 time.sleep(loop_delay)
@@ -452,15 +542,16 @@ class BaseController:
             mode = state["servo_mode"]
             step: Optional[float] = None
             source = ""
+            comp_pan = 0.0
 
             if mode == "track" and state["face_detected"]:
-                step, source = self._plan_track_step(now, state)
+                step, source, comp_pan = self._plan_track_step(now, state)
             elif mode == "last_seen":
-                step, source = self._plan_last_seen_step(now, state)
+                step, source, comp_pan = self._plan_last_seen_step(now, state)
                 if step is None:
-                    step, source = self._plan_memory_step(now, state)
+                    step, source, comp_pan = self._plan_memory_step(now, state)
             elif mode == "wander":
-                step, source = self._plan_wander_recenter(now, state)
+                step, source, comp_pan = self._plan_wander_follow(now, state)
 
             if step is not None and abs(step) >= self.min_step:
                 self._last_nudge_ts = now
@@ -473,11 +564,11 @@ class BaseController:
                     base_step_deg=step,
                     base_step_source=source,
                     base_step_ready=True,
+                    base_comp_pan_deg=comp_pan,
                 )
             else:
-                # Clear ready flag so ServoMixer doesn't re-execute stale step
                 if self.bb.read("base_step_ready")["base_step_ready"]:
-                    self.bb.write(base_step_ready=False)
+                    self.bb.write(base_step_ready=False, base_comp_pan_deg=0.0)
 
             time.sleep(loop_delay)
 

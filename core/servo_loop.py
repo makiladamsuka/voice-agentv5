@@ -157,6 +157,8 @@ class ServoLoop:
         self.pan_max = float(s.get("pan_max", 120.0))
         self.tilt_min = float(s.get("tilt_min", 100.0))
         self.tilt_max = float(s.get("tilt_max", 120.0))
+        self.mech_left = float(s.get("pan_mech_left_deg", -40.0))
+        self.mech_right = float(s.get("pan_mech_right_deg", 40.0))
         self.pan_center = float(s.get("pan_center", (self.pan_min + self.pan_max) * 0.5))
         self.tilt_center = float(s.get("tilt_center", (self.tilt_min + self.tilt_max) * 0.5))
         self.pan_sign = float(s.get("pan_sign", 1.0))
@@ -261,8 +263,24 @@ class ServoLoop:
         self._lss_start_ts = 0.0
         self._memory_reacquire_ts = 0.0
         self._last_base_enc = None
+        self._proactive_comp_applied = False
 
     # ── Base Compensation ──────────────────────────────────────────────────────
+
+    def _apply_proactive_base_comp(self) -> None:
+        """Apply planned neck counter-rotation when BaseController flags a base step."""
+        state = self.bb.read("base_step_ready", "base_comp_pan_deg", "base_motion_busy")
+        if not state["base_step_ready"] or state["base_motion_busy"]:
+            self._proactive_comp_applied = False
+            return
+        comp_pan = state["base_comp_pan_deg"]
+        if comp_pan == 0.0 or self._proactive_comp_applied:
+            return
+        self._pan = clamp(comp_pan, self.pan_min, self.pan_max)
+        self._wander.pan_goal = clamp(comp_pan, self.pan_min, self.pan_max)
+        self._pan_pid.soften(0.45)
+        self._target_glide.soften()
+        self._proactive_comp_applied = True
     
     def _apply_base_compensation(self) -> None:
         """Feed-forward compensation: counter-rotate head when base moves."""
@@ -468,6 +486,7 @@ class ServoLoop:
             prev_ts = now_pc
             now = time.time()
 
+            self._apply_proactive_base_comp()
             self._apply_base_compensation()
             effective_tilt_center = self._effective_tilt_center(dt)
 

@@ -51,8 +51,15 @@ class Blackboard:
     base_motion_allowed: bool = True
     base_fault_reason: str | None = None
     base_watchdog_reset: bool = False
+    base_comp_pan_deg: float = 0.0   # proactive neck counter-rotation (servo pan cmd)
+    base_last_spin_moved_deg: float = 0.0
+    base_last_spin_reason: str = ""
+    base_fusion_resync_request: bool = False
 
-    # ── IMU (written by ImuService) ───────────────────────────────────────────
+    # ── Yaw reference (startup lock) ─────────────────────────────────────────
+    yaw_reference_locked: bool = False
+    imu_calibrated: bool = False
+    imu_inferred_base_deg: float = 0.0
     imu_pitch_deg: float = 0.0
     imu_roll_deg: float = 0.0
     imu_gyro_dps: float = 0.0

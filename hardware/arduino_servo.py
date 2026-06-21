@@ -326,7 +326,7 @@ class ArduinoServoLink:
 
         if timeout_sec is None:
             timeout_sec = self.base_move_timeout_sec
-        ok, _delta = write_base_step_spin(
+        ok, _delta, _reason = write_base_step_spin(
             self,
             plate_deg,
             tolerance_deg=tolerance_deg,

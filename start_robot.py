@@ -46,6 +46,60 @@ def _wait_imu_ready(bb: Blackboard, timeout_sec: float = 12.0) -> None:
     print("[Bootstrap] WARNING: IMU calibration wait timed out.")
 
 
+def _wait_fusion_ready(bb: Blackboard, timeout_sec: float = 3.0) -> None:
+    """Block until ImuService finishes startup fusion resync."""
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        if not bb.read("base_fusion_resync_request")["base_fusion_resync_request"]:
+            return
+        time.sleep(0.05)
+    print("[Bootstrap] WARNING: fusion resync wait timed out.")
+
+
+def _print_yaw_decomposition(bb: Blackboard) -> None:
+    """Log the three-layer yaw model locked at startup."""
+    state = bb.read(
+        "base_encoder_deg",
+        "body_yaw_deg",
+        "head_yaw_on_body_deg",
+        "imu_yaw_rel_deg",
+        "base_world_yaw_deg",
+        "head_imu_vs_servo_delta_deg",
+        "imu_available",
+    )
+    print("[Bootstrap] Yaw model (true north = 0° fixed at startup):")
+    print(f"  encoder raw     {state['base_encoder_deg']:+.1f}°")
+    if state["imu_available"]:
+        print(
+            f"  body (encoder)  {state['body_yaw_deg']:+.1f}°"
+            f"  |  head-on-body (IMU) {state['head_yaw_on_body_deg']:+.1f}°"
+        )
+        print(
+            f"  world aim       {state['base_world_yaw_deg']:+.1f}°"
+            f"  |  imu rel {state['imu_yaw_rel_deg']:+.1f}°"
+        )
+        delta = state["head_imu_vs_servo_delta_deg"]
+        if abs(delta) > 3.0:
+            print(f"  WARNING: head IMU vs servo pan Δ {delta:+.1f}°")
+    else:
+        print("  IMU off — world yaw = encoder + servo pan (from ServoMixer)")
+
+
+def _print_debug_viz_banner(debug_viz_cfg: dict) -> None:
+    if not debug_viz_cfg.get("enabled", True):
+        return
+    host = str(debug_viz_cfg.get("host", "0.0.0.0"))
+    port = int(debug_viz_cfg.get("port", 8082))
+    display = "localhost" if host in ("0.0.0.0", "") else host
+    url = f"http://{display}:{port}/"
+    manual = bool(debug_viz_cfg.get("manual_control_enabled", False))
+    print(f"[Bootstrap] Debug viz: {url}")
+    if manual:
+        print("[Bootstrap]   Manual WASD/Z/R enabled in browser when page is focused.")
+    else:
+        print("[Bootstrap]   3D yaw lines: orange=body, pink=head-on-body, yellow=world aim.")
+
+
 def _lock_yaw_reference(bb: Blackboard, link, base_cfg: dict) -> None:
     """Zero encoder + IMU yaw reference at current forward pose."""
     if link is not None and link.connected:
@@ -142,7 +196,22 @@ def main():
         _wait_imu_ready(bb, timeout_sec=2.0)
 
     _lock_yaw_reference(bb, link, base_cfg)
-    bb.write(base_fusion_resync_request=True)
+    if imu_cfg.get("enabled", False):
+        bb.write(base_fusion_resync_request=True)
+        _wait_fusion_ready(bb)
+        if bb.read("imu_available")["imu_available"]:
+            _print_yaw_decomposition(bb)
+        else:
+            print("[Bootstrap] IMU unavailable — world yaw falls back to encoder + servo pan.")
+    else:
+        enc = bb.read("base_encoder_deg")["base_encoder_deg"]
+        bb.write(
+            body_yaw_deg=enc,
+            head_yaw_on_body_deg=0.0,
+            base_world_yaw_deg=enc,
+        )
+
+    _print_debug_viz_banner(debug_viz_cfg)
 
     # ── Phase 2: remaining services ───────────────────────────────────────────
     threads = [

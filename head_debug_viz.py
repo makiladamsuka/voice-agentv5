@@ -132,6 +132,11 @@ class HeadDebugSnapshot:
     imu_yaw_total_deg: float = 0.0
     imu_pan_delta_deg: float = 0.0
     imu_inferred_base_deg: float = 0.0
+    body_yaw_deg: float = 0.0
+    head_yaw_on_body_deg: float = 0.0
+    imu_yaw_rel_deg: float = 0.0
+    world_head_yaw_deg: float = 0.0
+    head_imu_vs_servo_delta_deg: float = 0.0
     viz_base_yaw_sign: float = 1.0
     base_max_yaw_deg: float = 120.0
     base_busy: bool = False
@@ -174,9 +179,24 @@ _DEBUG_HTML = """<!DOCTYPE html>
   <title>Head Debug 3D</title>
   <style>
     html, body { margin: 0; height: 100%; background: #0f1117; color: #d8dee9; font: 13px/1.4 ui-monospace, monospace; }
-    #wrap { display: grid; grid-template-columns: 1fr 320px; height: 100%; }
-    #view { position: relative; min-height: 320px; height: 100%; overflow: hidden; }
+    #wrap {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      height: 100%;
+      min-height: 100vh;
+    }
+    #view {
+      position: relative;
+      min-height: 320px;
+      min-width: 0;
+      height: 100%;
+      overflow: hidden;
+    }
     #view canvas { display: block; width: 100% !important; height: 100% !important; }
+    #viz-loading {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      color: #88c0d0; font-size: 12px; pointer-events: none; z-index: 1;
+    }
     #ground-hud {
       position: absolute; top: 10px; left: 10px; right: 10px; max-width: 420px;
       background: rgba(15,17,23,0.82); border: 1px solid #334155; border-radius: 8px;
@@ -211,21 +231,39 @@ _DEBUG_HTML = """<!DOCTYPE html>
     .hint { color: #6b7280; font-size: 11px; margin-top: 6px; }
     #debug-panel { margin-top: 10px; padding-top: 8px; border-top: 1px solid #2a3142; }
     #debug-panel h2 { font-size: 12px; margin: 0 0 6px; color: #88c0d0; font-weight: 600; }
+    #mode-banner {
+      margin: 0 0 10px; padding: 10px 12px; border-radius: 8px;
+      border: 1px solid #2a3142; background: #11151d;
+    }
+    #mode-banner .mode-line {
+      font-size: 15px; font-weight: 700; letter-spacing: 0.06em; margin-bottom: 6px;
+    }
+    #mode-banner .mode-track { color: #a3be8c; }
+    #mode-banner .mode-wander { color: #88c0d0; }
+    #mode-banner .mode-return { color: #ebcb8b; }
+    #mode-banner .mode-lastseen { color: #d08770; }
+    #mode-banner .mode-manual { color: #b48ead; }
+    @media (max-width: 900px) {
+      #wrap { grid-template-columns: 1fr; grid-template-rows: minmax(240px, 42vh) auto; }
+      #hud { border-left: none; border-top: 1px solid #2a3142; max-height: 58vh; }
+    }
   </style>
 </head>
 <body>
 <div id="wrap">
   <div id="view">
+    <div id="viz-loading">Loading 3D view…</div>
     <div id="ground-hud">
       <div class="title">ANGLES vs GROUND / FORWARD (+Z at startup)</div>
       <div id="ground-hud-body"></div>
     </div>
     <div id="legend">
-      <div><span style="background:#38bdf8"></span>enc base (blue arrow)</div>
-      <div><span style="background:#fb923c"></span>imu inferred base</div>
-      <div><span style="background:#fbbf24"></span>world aim (yellow)</div>
-      <div><span style="background:#f472b6"></span>head local (pink)</div>
+      <div><span style="background:#e879f9"></span>true north (+Z fixed)</div>
+      <div><span style="background:#fb923c"></span>body (encoder, on base)</div>
+      <div><span style="background:#f472b6"></span>head on body (IMU − body)</div>
+      <div><span style="background:#fbbf24"></span>world aim (body + head)</div>
       <div><span style="background:#4ade80"></span>head mesh</div>
+      <div style="margin-top:4px;color:#8899aa">servo pan cross-check: HUD only</div>
     </div>
   </div>
   <div id="hud">
@@ -236,9 +274,9 @@ _DEBUG_HTML = """<!DOCTYPE html>
         <button type="button" data-cmd="tilt_up">W tilt+</button>
         <button type="button" data-cmd="center">C center</button>
         <button type="button" data-cmd="tilt_down">S tilt−</button>
-        <button type="button" data-cmd="pan_left">A pan−</button>
+        <button type="button" data-cmd="pan_right">A pan−</button>
         <button type="button" data-cmd="zero_base">Z zero</button>
-        <button type="button" data-cmd="pan_right">D pan+</button>
+        <button type="button" data-cmd="pan_left">D pan+</button>
       </div>
       <div class="btn-row">
         <button type="button" data-cmd="fusion_reset">R fusion reset</button>
@@ -246,6 +284,7 @@ _DEBUG_HTML = """<!DOCTYPE html>
       </div>
       <div class="hint">WASD keys work when this page is focused. Rotate base by hand.</div>
     </div>
+    <div id="mode-banner"></div>
     <div id="debug-panel">
       <h2>Fusion debug</h2>
       <div id="fusion-stats"></div>
@@ -264,15 +303,17 @@ _DEBUG_HTML = """<!DOCTYPE html>
 <script>
 window.addEventListener('error', (ev) => {
   const view = document.getElementById('view');
+  const stats = document.getElementById('stats');
   if (!view || view.dataset.vizErr) return;
+  view.dataset.vizErr = '1';
   const msg = ev.message || 'unknown error';
-  if (msg.includes('three') || msg.includes('OrbitControls') || ev.filename && ev.filename.includes('static/vendor')) {
-    view.dataset.vizErr = '1';
-    const box = document.createElement('div');
-    box.className = 'bad';
-    box.style.cssText = 'position:absolute;inset:12px;padding:12px;background:rgba(15,17,23,.92);border:1px solid #bf616a;border-radius:8px;z-index:5';
-    box.textContent = '3D view failed to load: ' + msg;
-    view.appendChild(box);
+  const box = document.createElement('div');
+  box.className = 'bad';
+  box.style.cssText = 'position:absolute;inset:12px;padding:12px;background:rgba(15,17,23,.92);border:1px solid #bf616a;border-radius:8px;z-index:5;white-space:pre-wrap';
+  box.textContent = 'Debug UI failed to load:\\n' + msg;
+  view.appendChild(box);
+  if (stats) {
+    stats.innerHTML = '<div class="bad">Debug UI failed: ' + msg + '</div>';
   }
 });
 </script>
@@ -282,6 +323,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const view = document.getElementById('view');
 const stats = document.getElementById('stats');
+const vizLoading = document.getElementById('viz-loading');
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0f1117);
 
@@ -291,6 +333,7 @@ camera.position.set(0.9, 0.55, 1.35);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 view.appendChild(renderer.domElement);
+if (vizLoading) vizLoading.style.display = 'none';
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0.35, 0);
@@ -319,17 +362,22 @@ const base = box(0.55, 0.08, 0.55, 0x475569);
 base.position.y = 0.04;
 root.add(base);
 
-const baseArrow = new THREE.Mesh(
-  new THREE.ConeGeometry(0.07, 0.20, 12),
-  new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0c4a6e, emissiveIntensity: 0.35 })
+const bodyDirGeom = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(0, 0.05, 0.08),
+  new THREE.Vector3(0, 0.05, 0.95),
+]);
+const bodyDirLine = new THREE.Line(
+  bodyDirGeom,
+  new THREE.LineBasicMaterial({ color: 0xfb923c, linewidth: 2 })
 );
-baseArrow.rotation.x = -Math.PI / 2;
-baseArrow.position.set(0, 0.05, 0.24);
-base.add(baseArrow);
-
-const baseStripe = box(0.08, 0.02, 0.55, 0x38bdf8);
-baseStripe.position.set(0, 0.05, 0);
-base.add(baseStripe);
+base.add(bodyDirLine);
+const bodyDirTip = new THREE.Mesh(
+  new THREE.ConeGeometry(0.045, 0.12, 10),
+  new THREE.MeshBasicMaterial({ color: 0xfb923c })
+);
+bodyDirTip.rotation.x = -Math.PI / 2;
+bodyDirTip.position.set(0, 0.05, 0.95);
+base.add(bodyDirTip);
 
 const neck = box(0.12, 0.16, 0.12, 0x64748b);
 neck.position.y = 0.16;
@@ -350,13 +398,6 @@ const camLens = box(0.08, 0.08, 0.06, 0x111827);
 camLens.position.set(0, 0.11, 0.12);
 tiltNode.add(camLens);
 
-const targetGroup = new THREE.Group();
-panNode.add(targetGroup);
-const targetMesh = box(0.28, 0.16, 0.14, 0xfb923c, 0.45);
-targetMesh.position.y = 0.11;
-targetGroup.add(targetMesh);
-targetGroup.visible = false;
-
 const imuGroup = new THREE.Group();
 headMesh.add(imuGroup);
 const imuMesh = box(0.08, 0.04, 0.06, 0x60a5fa, 0.85);
@@ -373,12 +414,30 @@ const lookLine = new THREE.Line(
 );
 tiltNode.add(lookLine);
 
+const trueNorthGroup = new THREE.Group();
+scene.add(trueNorthGroup);
+const trueNorthGeom = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(0, 0.022, 0),
+  new THREE.Vector3(0, 0.022, 0.95),
+]);
+const trueNorthLine = new THREE.Line(
+  trueNorthGeom,
+  new THREE.LineBasicMaterial({ color: 0xe879f9, linewidth: 2 })
+);
+trueNorthGroup.add(trueNorthLine);
+const trueNorthTip = new THREE.Mesh(
+  new THREE.ConeGeometry(0.045, 0.11, 10),
+  new THREE.MeshBasicMaterial({ color: 0xe879f9 })
+);
+trueNorthTip.rotation.x = -Math.PI / 2;
+trueNorthTip.position.set(0, 0.022, 0.95);
+trueNorthGroup.add(trueNorthTip);
+
 const worldAimGroup = new THREE.Group();
-worldAimGroup.position.y = 0.11;
 scene.add(worldAimGroup);
 const worldAimGeom = new THREE.BufferGeometry().setFromPoints([
-  new THREE.Vector3(0, 0, 0),
-  new THREE.Vector3(0, 0, 1.05),
+  new THREE.Vector3(0, 0.022, 0),
+  new THREE.Vector3(0, 0.022, 1.05),
 ]);
 const worldAimLine = new THREE.Line(
   worldAimGeom,
@@ -390,26 +449,8 @@ const worldAimTip = new THREE.Mesh(
   new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
 );
 worldAimTip.rotation.x = -Math.PI / 2;
-worldAimTip.position.set(0, 0, 1.05);
+worldAimTip.position.set(0, 0.022, 1.05);
 worldAimGroup.add(worldAimTip);
-
-const inferredBaseGroup = new THREE.Group();
-scene.add(inferredBaseGroup);
-const inferredTickGeom = new THREE.BufferGeometry().setFromPoints([
-  new THREE.Vector3(0, 0.018, 0.36),
-  new THREE.Vector3(0, 0.018, 0.58),
-]);
-const inferredTick = new THREE.Line(
-  inferredTickGeom,
-  new THREE.LineBasicMaterial({ color: 0xfb923c, linewidth: 2 })
-);
-inferredBaseGroup.add(inferredTick);
-const inferredDot = new THREE.Mesh(
-  new THREE.SphereGeometry(0.035, 12, 12),
-  new THREE.MeshStandardMaterial({ color: 0xfb923c, emissive: 0x7c2d12, emissiveIntensity: 0.4 })
-);
-inferredDot.position.set(0, 0.018, 0.58);
-inferredBaseGroup.add(inferredDot);
 
 const limitPan = new THREE.Group();
 base.add(limitPan);
@@ -470,16 +511,20 @@ function servoToRot(pan, tilt, panCenter, tiltCenter, s) {
 function updateGroundHud(s) {
   const el = document.getElementById('ground-hud-body');
   if (!el) return;
-  const baseG = s.base_ground_yaw_deg ?? s.base_fwd_deg ?? s.base_yaw_deg ?? 0;
-  const neckP = s.neck_pan_rel_base_deg ?? s.pan_rel_base_deg ?? s.pan_mech_deg ?? 0;
-  const headYawG = s.head_yaw_ground_deg ?? s.pan_ground_yaw_deg ?? s.world_fwd_deg ?? s.base_world_yaw_deg ?? 0;
+  const bodyG = s.body_yaw_deg ?? s.base_ground_yaw_deg ?? s.base_fwd_deg ?? s.base_yaw_deg ?? 0;
+  const headOnBodyG = s.head_yaw_on_body_deg ?? s.neck_pan_rel_base_deg ?? 0;
+  const servoPanG = s.pan_rel_base_deg ?? s.pan_mech_deg ?? 0;
+  const trueNorthG = s.true_north_deg ?? 0;
+  const worldHeadG = s.world_head_yaw_deg ?? s.head_yaw_ground_deg ?? s.world_fwd_deg ?? 0;
   const headTiltG = s.tilt_ground_deg ?? s.tilt_rel_fwd_deg ?? s.tilt_mech_deg ?? 0;
   const vizYaw = s.viz_world_applied_deg ?? 0;
   const vizTilt = s.viz_tilt_applied_deg ?? 0;
   el.innerHTML = `
-    <div class="grow"><span class="gk">base (motor)</span><span>${fmtDir(baseG)}</span></div>
-    <div class="grow"><span class="gk">neck pan (on base)</span><span>${fmtDir(neckP)}</span></div>
-    <div class="grow"><span class="gk">head yaw (ground)</span><span>${fmtDir(headYawG)} <span class="gk">= base+neck</span></span></div>
+    <div class="grow"><span class="gk">true north (+Z)</span><span>${fmtDir(trueNorthG)} <span class="gk">fixed</span></span></div>
+    <div class="grow"><span class="gk">body (encoder)</span><span>${fmtDir(bodyG)}</span></div>
+    <div class="grow"><span class="gk">head on body (IMU)</span><span>${fmtDir(headOnBodyG)}</span></div>
+    <div class="grow"><span class="gk">servo pan</span><span>${fmtDir(servoPanG)} <span class="gk">cross-check</span></span></div>
+    <div class="grow"><span class="gk">world aim</span><span>${fmtDir(worldHeadG)} <span class="gk">body+head</span></span></div>
     <div class="grow"><span class="gk">head tilt (ground)</span><span>${fmtTilt(headTiltG)}</span></div>
     <div class="grow"><span class="gk">3D viz yaw</span><span>${fmtDir(vizYaw)}</span></div>
     <div class="grow"><span class="gk">3D viz tilt</span><span>${fmtTilt(vizTilt)}</span></div>
@@ -494,31 +539,59 @@ function setFusionStats(s) {
   const showControls = !!s.manual_control_enabled || s.mode === 'manual_test';
   if (controlsEl) controlsEl.style.display = showControls ? 'block' : 'none';
 
-  const fusionDelta = (s.fusion_delta_deg !== undefined)
-    ? s.fusion_delta_deg
-    : ((s.base_yaw_deg || 0) - (s.imu_inferred_base_deg || 0));
+  const fusionDelta = (s.head_imu_vs_servo_delta_deg !== undefined)
+    ? s.head_imu_vs_servo_delta_deg
+    : ((s.fusion_delta_deg !== undefined)
+      ? s.fusion_delta_deg
+      : ((s.head_yaw_on_body_deg || 0) - (s.pan_mech_deg || 0)));
   const drift = s.imu_drift_correction_deg || 0;
   const stationary = s.fusion_stationary ? 'yes' : 'no';
   const cls = (ok) => ok ? 'ok' : 'warn';
+  const bodyYaw = s.body_yaw_deg ?? s.base_fwd_deg ?? s.base_yaw_deg ?? 0;
+  const headOnBody = s.head_yaw_on_body_deg ?? 0;
+  const worldHead = s.world_head_yaw_deg ?? s.world_fwd_deg ?? s.base_world_yaw_deg ?? 0;
 
   fusionEl.innerHTML = `
     <div class="row" style="margin-top:4px;color:#88c0d0"><span>vs forward (0° = startup facing +Z)</span></div>
-    <div class="row"><span class="k">base encoder</span><span>${fmtDir(s.base_fwd_deg ?? s.base_yaw_deg)}</span></div>
-    <div class="row"><span class="k">head pan</span><span>${fmtDir(s.pan_rel_base_deg ?? s.pan_mech_deg)} <span class="k">on base</span></span></div>
+    <div class="row"><span class="k">true north</span><span>${fmtDir(s.true_north_deg ?? 0)} <span class="k">fixed</span></span></div>
+    <div class="row"><span class="k">body (encoder)</span><span>${fmtDir(bodyYaw)}</span></div>
+    <div class="row"><span class="k">head on body (IMU)</span><span>${fmtDir(headOnBody)} <span class="k">imu−body</span></span></div>
+    <div class="row"><span class="k">servo pan</span><span>${fmtDir(s.pan_rel_base_deg ?? s.pan_mech_deg)} <span class="k">cross-check</span></span></div>
+    <div class="row"><span class="k">world aim</span><span>${fmtDir(worldHead)} <span class="k">body+head</span></span></div>
     <div class="row"><span class="k">head tilt</span><span>${fmtTilt(s.tilt_rel_fwd_deg ?? s.tilt_mech_deg)} <span class="k">mech on neck</span></span></div>
-    <div class="row"><span class="k">world camera</span><span>${fmtDir(s.world_fwd_deg ?? s.base_world_yaw_deg)} <span class="k">yaw only</span></span></div>
-    <div class="row"><span class="k">3D viz yaw</span><span>${fmtDir(s.viz_world_applied_deg)} <span class="k">(base×${fmt(s.viz_base_yaw_sign,0)} pan×${fmt(s.viz_pan_yaw_sign,0)})</span></span></div>
-    <div class="row"><span class="k">3D viz tilt</span><span>${fmtTilt(s.viz_tilt_applied_deg ?? (Number(s.tilt_rel_fwd_deg ?? s.tilt_mech_deg||0) * Number(s.viz_tilt_sign??1)))} <span class="k">(tilt×${fmt(s.viz_tilt_sign,0)})</span></span></div>
+    <div class="row"><span class="k">3D viz yaw</span><span>${fmtDir(s.viz_world_applied_deg)} <span class="k">(×${fmt(s.viz_base_yaw_sign,0)} body+head)</span></span></div>
+    <div class="row"><span class="k">3D viz tilt</span><span>${fmtTilt(vizTiltApplied(s))} <span class="k">(tilt×${fmt(s.viz_tilt_sign,0)})</span></span></div>
     <div class="row"><span class="k">IMU pitch</span><span>${fmtTilt(s.viz_imu_pitch_applied_deg ?? s.imu_pitch_deg)} raw ${fmt(s.imu_pitch_deg)}° <span class="k">(×${fmt(s.viz_imu_pitch_sign,0)})</span></span></div>
     <div class="row"><span class="k">stationary</span><span class="${cls(s.fusion_stationary)}">${stationary}</span></div>
-    <div class="row"><span class="k">enc base</span><span>${fmt(s.base_yaw_deg)}° raw</span></div>
-    <div class="row"><span class="k">imu base</span><span>${fmtDir(s.imu_inferred_base_deg)}</span></div>
-    <div class="row"><span class="k">fusion Δ</span><span class="${Math.abs(fusionDelta) > 8 ? 'warn' : 'ok'}">${fmt(fusionDelta)}° (enc−imu)</span></div>
+    <div class="row"><span class="k">enc raw</span><span>${fmt(s.base_yaw_deg)}°</span></div>
+    <div class="row"><span class="k">imu rel</span><span>${fmtDir(s.imu_yaw_rel_deg ?? s.imu_yaw_total_deg)}</span></div>
+    <div class="row"><span class="k">head vs servo</span><span class="${Math.abs(fusionDelta) > 8 ? 'warn' : 'ok'}">${fmt(fusionDelta)}° (imu−servo)</span></div>
     <div class="row"><span class="k">imu total</span><span>${fmtDir(s.imu_yaw_total_deg)}</span></div>
     <div class="row"><span class="k">imu raw</span><span>${fmt(s.imu_yaw_raw_deg)}°</span></div>
     <div class="row"><span class="k">drift fix</span><span class="${Math.abs(drift) > 0.05 ? 'ok' : ''}">${fmt(drift)}°</span></div>
     <div class="row"><span class="k">gyro</span><span>${fmt(s.imu_gyro_dps)} dps</span></div>
     <div class="row"><span class="k">servo cmd</span><span>P ${fmt(s.pan)} T ${fmt(s.tilt)}</span></div>
+  `;
+}
+
+function setModeBanner(s) {
+  const el = document.getElementById('mode-banner');
+  if (!el) return;
+  const label = s.mode_label || s.mode || 'Unknown';
+  const mode = s.mode || '';
+  let cls = 'mode-wander';
+  if (s.forward_return_active) cls = 'mode-return';
+  else if (mode === 'track') cls = 'mode-track';
+  else if (mode === 'last_seen') cls = 'mode-lastseen';
+  else if (mode === 'manual' || mode === 'manual_test') cls = 'mode-manual';
+  const temp = (s.cpu_temp_c !== undefined && s.cpu_temp_c !== null)
+    ? `${Number(s.cpu_temp_c).toFixed(1)}°C` : '-';
+  const t = Number(s.cpu_temp_c);
+  const tempCls = (t >= 80) ? 'bad' : ((t >= 70) ? 'warn' : 'ok');
+  el.innerHTML = `
+    <div class="mode-line ${cls}">${label}</div>
+    <div class="row"><span class="k">servo mode</span><span>${mode || '-'} / ${s.track_kind || '-'}</span></div>
+    <div class="row"><span class="k">CPU temp</span><span class="${tempCls}">${temp}</span></div>
   `;
 }
 
@@ -531,22 +604,24 @@ function setStats(s) {
     ? mems.map(m => `P${m.id}:${m.kind} ${fmt(m.age_sec,0)}s`).join(' ')
     : 'none';
   stats.innerHTML = `
+    <div class="row"><span class="k">behavior</span><span class="${s.mode === 'track' ? 'ok' : ''}">${s.mode_label || s.mode || '-'}</span></div>
     <div class="row"><span class="k">mode</span><span>${s.mode || '-'} / ${s.track_kind || '-'}</span></div>
     <div class="row"><span class="k">pan</span><span>${fmt(s.pan)} cmd (${fmt(s.pan_mech_deg)}° mech) → ${fmt(s.pan_target)}</span></div>
     <div class="row"><span class="k">tilt</span><span>${fmt(s.tilt)} cmd (${fmt(s.tilt_mech_deg)}° mech) → ${fmt(s.tilt_target)}</span></div>
     <div class="row"><span class="k">tilt ctr</span><span>${fmt(s.tilt_effective_center)} cmd (0° mech @ ${fmt(s.tilt_center)})</span></div>
     <div class="row"><span class="k">mech cal</span><span>up ${fmt(s.tilt_mech_up_deg,0)}° / down ${fmt(s.tilt_mech_down_deg,0)}°</span></div>
     <div class="row"><span class="k">limits</span><span>P ${fmt(s.pan_min)}..${fmt(s.pan_max)} T ${fmt(s.tilt_min)}..${fmt(s.tilt_max)}</span></div>
-    <div class="row"><span class="k">face</span><span>${s.face_seen ? 'yes' : 'no'} x=${fmt(s.face_norm_x,2)} y=${fmt(s.face_norm_y,2)} n=${s.face_count||0}</span></div>
+    <div class="row"><span class="k">face</span><span>${s.face_seen ? 'yes' : 'no'} x=${fmt(s.face_norm_x,2)} y=${fmt(s.face_norm_y,2)} n=${s.face_count||0}${s.pan_hold ? ' <span class="warn">pan hold</span>' : ''}</span></div>
     <div class="row"><span class="k">memory</span><span>${mems.length} active ${s.active_memory_id ? '#'+s.active_memory_id : '-'}</span></div>
     <div class="row"><span class="k">mem list</span><span>${memText}</span></div>
-    <div class="row"><span class="k">base</span><span>enc ${fmt(s.base_yaw_deg)} world ${fmt(s.base_world_yaw_deg)} busy ${s.base_busy ? 'yes' : 'no'}</span></div>
-    <div class="row"><span class="k">yaw split</span><span>imu ${fmt(s.imu_yaw_total_deg)} panΔ ${fmt(s.imu_pan_delta_deg)} base≈${fmt(s.imu_inferred_base_deg)}</span></div>
+    <div class="row"><span class="k">base</span><span>body ${fmt(s.body_yaw_deg ?? s.base_yaw_deg)} enc ${fmt(s.base_yaw_deg)} world ${fmt(s.world_head_yaw_deg ?? s.base_world_yaw_deg)} busy ${s.base_busy ? 'yes' : 'no'}</span></div>
+    <div class="row"><span class="k">yaw split</span><span>body ${fmt(s.body_yaw_deg ?? s.base_yaw_deg)} head ${fmt(s.head_yaw_on_body_deg ?? s.imu_pan_delta_deg)} imu ${fmt(s.imu_yaw_rel_deg ?? s.imu_yaw_total_deg)}</span></div>
     <div class="row"><span class="k">IMU pitch</span><span class="${Math.abs(s.imu_pitch_deg||0) > 8 ? 'warn' : 'ok'}">${fmt(s.imu_pitch_deg)}° (vs mech ${fmt(s.tilt_mech_deg)}°)</span></div>
     <div class="row"><span class="k">IMU roll</span><span>${fmt(s.imu_roll_deg)}</span></div>
     <div class="row"><span class="k">IMU gyro</span><span class="${(s.imu_gyro_dps||0) > 35 ? 'warn' : ''}">${fmt(s.imu_gyro_dps)} dps</span></div>
     <div class="row"><span class="k">horizon</span><span class="${cls(s.imu_horizon_ok)}">${s.imu_horizon_ok ? 'updating' : 'held'}</span></div>
     <div class="row"><span class="k">servo link</span><span class="${cls(s.servo_connected)}">${s.servo_connected ? 'connected' : 'off'}</span></div>
+    <div class="row"><span class="k">CPU temp</span><span class="${(Number(s.cpu_temp_c) >= 80) ? 'bad' : ((Number(s.cpu_temp_c) >= 70) ? 'warn' : '')}">${(s.cpu_temp_c !== undefined && s.cpu_temp_c !== null) ? Number(s.cpu_temp_c).toFixed(1) + '°C' : '-'}</span></div>
   `;
 }
 
@@ -637,29 +712,41 @@ function tiltMechDeg(s) {
   return Number(s.tilt) - Number(s.tilt_center);
 }
 
+function vizTiltApplied(s) {
+  if (s.viz_tilt_applied_deg !== undefined && s.viz_tilt_applied_deg !== null) {
+    return Number(s.viz_tilt_applied_deg);
+  }
+  const tilt = (s.tilt_rel_fwd_deg !== undefined && s.tilt_rel_fwd_deg !== null)
+    ? Number(s.tilt_rel_fwd_deg)
+    : Number(s.tilt_mech_deg || 0);
+  const sign = (s.viz_tilt_sign !== undefined && s.viz_tilt_sign !== null) ? Number(s.viz_tilt_sign) : 1;
+  return tilt * sign;
+}
+
 async function poll() {
   try {
     const res = await fetch('/api/state', { cache: 'no-store' });
     latest = await res.json();
+    setModeBanner(latest);
     setStats(latest);
     setFusionStats(latest);
     updateGroundHud(latest);
     const panMech = panMechDeg(latest);
     const tiltMech = tiltMechDeg(latest);
     const baseSign = Number(latest.viz_base_yaw_sign ?? 1);
-    const panSign = Number(latest.viz_pan_yaw_sign ?? 1);
     const tiltSign = Number(latest.viz_tilt_sign ?? 1);
     const imuPitchSign = Number(latest.viz_imu_pitch_sign ?? -1);
-    const baseRad = deg(latest.base_yaw_deg || 0) * baseSign;
-    const panRad = deg(panMech) * panSign;
+    const bodyYaw = Number(latest.body_yaw_deg ?? latest.base_yaw_deg ?? 0);
+    const headOnBody = Number(latest.head_yaw_on_body_deg ?? 0);
+    const baseRad = deg(bodyYaw) * baseSign;
+    // Head-on-body is in the body frame — use baseSign (not panSign) so neck
+    // rotation matches the chassis convention and rides the base correctly.
+    const headRad = deg(headOnBody) * baseSign;
     const tiltRad = deg(tiltMech) * tiltSign;
-    // World aim must match scene graph: baseRad + panRad (not (base+pan)*sign).
     root.rotation.y = baseRad;
-    panNode.rotation.y = panRad;
+    panNode.rotation.y = headRad;
     tiltNode.rotation.x = tiltRad;
-    targetGroup.rotation.x = tiltRad;
-    worldAimGroup.rotation.y = baseRad + panRad;
-    inferredBaseGroup.rotation.y = deg(latest.imu_inferred_base_deg || 0) * baseSign;
+    worldAimGroup.rotation.y = deg(bodyYaw + headOnBody) * baseSign;
     updateBaseLimitArc(latest.base_max_yaw_deg);
     imuGroup.rotation.z = deg(latest.imu_roll_deg || 0);
     imuGroup.rotation.x = deg(latest.imu_pitch_deg || 0) * imuPitchSign;
@@ -704,7 +791,7 @@ document.querySelectorAll('#controls [data-cmd]').forEach((btn) => {
 });
 
 const keyToCmd = {
-  w: 'tilt_up', s: 'tilt_down', a: 'pan_left', d: 'pan_right',
+  w: 'tilt_up', s: 'tilt_down', a: 'pan_right', d: 'pan_left',
   c: 'center', z: 'zero_base', r: 'fusion_reset', q: 'quit',
 };
 window.addEventListener('keydown', (ev) => {

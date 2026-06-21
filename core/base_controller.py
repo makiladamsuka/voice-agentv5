@@ -38,6 +38,7 @@ from lib.person_memory import angular_error_deg
 from lib.base_head_lead import (
     aim_agrees_with_head,
     head_lead_sign,
+    plan_aim_base_step,
     proactive_comp_pan_cmd,
     step_agrees_with_head,
     yaw_error_agrees_with_head,
@@ -163,6 +164,15 @@ class BaseController:
         self.wander_random_turn_min_sec = float(b.get("wander_random_turn_min_sec", 120.0))
         self.wander_random_turn_max_sec = float(b.get("wander_random_turn_max_sec", 300.0))
 
+        # ── Body-only base follow ─────────────────────────────────────────────
+        self.body_base_enabled = bool(b.get("body_base_enabled", True))
+        self.body_base_cooldown = float(b.get("body_base_cooldown_sec", 2.5))
+        self.body_base_min = float(b.get("body_base_min_step_deg", 2.0))
+        self.body_base_max = float(b.get("body_base_max_step_deg", 5.0))
+        self.body_base_aim_gain = float(b.get("body_base_aim_to_step_gain", 1.8))
+        self.body_base_comp = float(b.get("body_base_compensation_gain", 0.90))
+        self.body_trigger_norm_x = float(b.get("body_trigger_norm_x", 0.08))
+
         # ── Safety gate ──────────────────────────────────────────────────────
         self._gate = gate if gate is not None else BaseMotionGate(
             backoff_sec=float(b.get("error_backoff_sec", 45.0))
@@ -175,6 +185,7 @@ class BaseController:
         self._last_pm_ts = 0.0
         self._last_lss_ts = 0.0
         self._last_wander_ts = 0.0
+        self._last_body_ts = 0.0
         self._was_wander_moving = False
         self._next_random_turn_ts = time.time() + random.uniform(
             self.wander_random_turn_min_sec,
@@ -291,11 +302,19 @@ class BaseController:
         self._last_wander_ts = now
         return step, "wander_random_turn"
 
-    def _apply_gate(self, step: float, pan_cmd: float, encoder_deg: float, state: dict) -> float:
+    def _apply_gate(
+        self,
+        step: float,
+        pan_cmd: float,
+        encoder_deg: float,
+        state: dict,
+        *,
+        require_head_lead: bool = True,
+    ) -> float:
         """Return 0 if base not allowed; apply encoder and world-yaw limits."""
         if not self._gate.allowed() or not state.get("base_motion_allowed", True):
             return 0.0
-        if self._reject_head_lead(step, pan_cmd):
+        if require_head_lead and self._reject_head_lead(step, pan_cmd):
             return 0.0
         hard_max = min(self.max_step, self.single_shot_max)
         if abs(step) > hard_max:
@@ -352,6 +371,46 @@ class BaseController:
             return None, "", 0.0
         comp_pan = self._comp_pan_for_step(step, pan, self.track_comp_gain)
         return step, "track", comp_pan
+
+    def _plan_body_step(self, now: float, state: dict) -> tuple[Optional[float], str, float]:
+        """Body-only track: rotate base toward person using frame-center aim error."""
+        if not self.body_base_enabled:
+            return None, "", 0.0
+        if not state["body_detected"] or state["track_kind"] != "body":
+            return None, "", 0.0
+        if state["face_detected"]:
+            return None, "", 0.0
+
+        norm_x = state["face_norm_x"]
+        if abs(norm_x) < self.body_trigger_norm_x:
+            return None, "", 0.0
+        if (now - self._last_body_ts) < self.body_base_cooldown:
+            return None, "", 0.0
+        if (now - self._last_nudge_ts) < self.body_base_cooldown:
+            return None, "", 0.0
+
+        pan = state["servo_pan"]
+        pan_mech = self._pan_mech(pan)
+        raw_step = plan_aim_base_step(
+            pan_mech,
+            norm_x,
+            min_step_deg=self.body_base_min,
+            max_step_deg=self.body_base_max,
+            aim_gain=self.body_base_aim_gain,
+            pan_offset_to_step_gain=self.pan_offset_to_step,
+        )
+        if raw_step is None:
+            return None, "", 0.0
+
+        step = raw_step * self.base_sign
+        step = self._cap_for_aim(step, norm_x, hfov=self.pm_hfov)
+        step = self._apply_gate(
+            step, pan, state["base_encoder_deg"], state, require_head_lead=False,
+        )
+        if step == 0.0:
+            return None, "", 0.0
+        comp_pan = self._comp_pan_for_step(step, pan, self.body_base_comp)
+        return step, "body", comp_pan
 
     def _plan_wander_follow(self, now: float, state: dict) -> tuple[Optional[float], str, float]:
         """Wander: base nudges only after the head finishes a look and holds."""
@@ -501,6 +560,8 @@ class BaseController:
 
             if mode == "track" and state["face_detected"]:
                 step, source, comp_pan = self._plan_track_step(now, state)
+            elif mode == "track":
+                step, source, comp_pan = self._plan_body_step(now, state)
             elif mode == "last_seen":
                 step, source, comp_pan = self._plan_last_seen_step(now, state)
                 if step is None:
@@ -514,6 +575,8 @@ class BaseController:
                     self._last_pm_ts = now
                 if "last_seen" in source:
                     self._last_lss_ts = now
+                if source == "body":
+                    self._last_body_ts = now
                 self._trigger_since = 0.0
                 self.bb.write(
                     base_step_deg=step,

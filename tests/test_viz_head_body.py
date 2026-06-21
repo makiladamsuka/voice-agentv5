@@ -36,7 +36,13 @@ import _bootstrap  # noqa: F401
 
 from arduino_servo import ArduinoServoLink
 from base_motor_utils import apply_base_calibration_to_nano
-from base_yaw_controller import EncoderImuDriftCorrector, HeadYawFusion
+from base_yaw_controller import (
+    EncoderImuDriftCorrector,
+    HeadYawFusion,
+    angular_delta_deg,
+    decompose_yaw,
+    resolve_fusion_yaw,
+)
 from core.blackboard import Blackboard
 from core.debug_dashboard import DebugDashboard
 from head_debug_viz import servo_pan_to_mechanical, servo_tilt_to_mechanical
@@ -95,12 +101,14 @@ def _fusion_resync(
     base_enc: float,
     imu_yaw: float,
     now: float | None = None,
+    lock_startup: bool = True,
 ) -> None:
     fusion.reset_reference(
         pan_mech_deg=pan_mech,
         base_encoder_deg=base_enc,
         imu_yaw_total_deg=imu_yaw,
         now=now,
+        lock_startup=lock_startup,
     )
     corrector.reset_motion_tracking()
 
@@ -152,6 +160,92 @@ def _read_imu_raw(reader, yaw_sign: float) -> tuple[float, float, float, float, 
     return imu_yaw, sample.pitch_deg, sample.roll_deg, gyro, True
 
 
+def _query_base_enc(link: ArduinoServoLink, fallback: float = 0.0) -> tuple[float, bool]:
+    """Read base encoder; tolerate transient serial glitches."""
+    try:
+        st = link.query_status()
+        if st is not None:
+            enc = float(st.degrees)
+            # Reject single-frame spikes (serial noise / limit bounce).
+            if abs(angular_delta_deg(enc, fallback)) > 45.0:
+                print(f"WARNING: ignoring encoder spike {enc:+.1f}° (prev {fallback:+.1f}°)")
+                return fallback, bool(st.busy)
+            return enc, bool(st.busy)
+    except Exception as exc:
+        print(f"WARNING: base status read failed: {exc}")
+    return fallback, False
+
+
+def _publish_blackboard(
+    bb: Blackboard,
+    *,
+    cfg: dict,
+    pan: float,
+    tilt: float,
+    base_enc: float,
+    base_busy: bool,
+    decomp,
+    imu_yaw: float,
+    imu_yaw_raw: float,
+    imu_inferred: float,
+    drift_correction: float,
+    stationary: bool,
+    imu_pitch: float,
+    imu_roll: float,
+    imu_gyro: float,
+    imu_ok: bool,
+    step: float,
+) -> None:
+    """Write the same blackboard fields start_robot services use for /api/state."""
+    servo_cfg = cfg.get("servo", {}) or {}
+    tilt_center = float(servo_cfg.get("tilt_center", 110.0))
+    bb.write(
+        servo_pan=pan,
+        servo_tilt=tilt,
+        servo_mode="manual_test",
+        servo_forward_return_active=False,
+        servo_pan_hold=False,
+        track_kind="none",
+        face_detected=False,
+        face_norm_x=0.0,
+        face_norm_y=0.0,
+        face_count=0,
+        body_detected=False,
+        manual_control_enabled=True,
+        debug_head_step_deg=step,
+        base_encoder_deg=base_enc,
+        base_world_yaw_deg=decomp.world_head_yaw_deg,
+        base_motion_busy=base_busy,
+        imu_yaw_integral_deg=imu_yaw,
+        imu_yaw_raw_deg=imu_yaw_raw,
+        imu_drift_correction_deg=drift_correction,
+        fusion_stationary=stationary,
+        imu_inferred_base_deg=imu_inferred,
+        body_yaw_deg=decomp.body_yaw_deg,
+        head_yaw_on_body_deg=decomp.head_yaw_on_body_deg,
+        imu_yaw_rel_deg=decomp.imu_yaw_rel_deg,
+        head_imu_vs_servo_delta_deg=decomp.head_imu_vs_servo_delta_deg,
+        imu_pitch_deg=imu_pitch,
+        imu_roll_deg=imu_roll,
+        imu_gyro_dps=imu_gyro,
+        imu_horizon_ok=True,
+        imu_available=imu_ok,
+        imu_effective_tilt_center=tilt_center,
+        person_snapshots=[],
+        last_seen_world_yaw=None,
+    )
+
+
+def _print_viz_banner(viz_url: str, *, include_camera: bool) -> None:
+    print(f"\nManual head+body viz running.")
+    print(f"Open {viz_url}")
+    print("  LEFT  = 3D head model (drag to orbit). Stats panel on the right.")
+    if include_camera:
+        print("  Camera stream appears above stats when face tracking is active.")
+    print("  WASD buttons / keys when the page is focused.")
+    print("  Hand-turn the base to test encoder + IMU fusion.\n")
+
+
 def _apply_head_cmd(
     cmd: str,
     *,
@@ -175,10 +269,10 @@ def _apply_head_cmd(
         tilt = clamp(tilt - tilt_sign * head_step, tilt_min, tilt_max)
         link.write_angles(pan, tilt)
     elif cmd == "pan_left":
-        pan = clamp(pan - pan_sign * head_step, pan_min, pan_max)
+        pan = clamp(pan + pan_sign * head_step, pan_min, pan_max)
         link.write_angles(pan, tilt)
     elif cmd == "pan_right":
-        pan = clamp(pan + pan_sign * head_step, pan_min, pan_max)
+        pan = clamp(pan - pan_sign * head_step, pan_min, pan_max)
         link.write_angles(pan, tilt)
     elif cmd == "center":
         pan = pan_center
@@ -231,6 +325,7 @@ def run_test(*, port: str, baud: int, head_step: float, no_config_cpd: bool) -> 
         servo_cfg=servo_cfg,
         debug_viz_cfg=debug_viz_cfg,
         base_cfg=base_cfg,
+        include_camera_stream=False,
     )
     threading.Thread(target=dashboard.run, daemon=True, name="DebugDashboard").start()
     time.sleep(0.3)
@@ -241,6 +336,7 @@ def run_test(*, port: str, baud: int, head_step: float, no_config_cpd: bool) -> 
     pan = pan_center
     tilt = tilt_center
     last_cmd_seq = 0
+    prev_base_enc: float | None = None
 
     try:
         if not no_config_cpd:
@@ -251,6 +347,7 @@ def run_test(*, port: str, baud: int, head_step: float, no_config_cpd: bool) -> 
 
         st = link.query_status()
         base_enc = st.degrees if st is not None else 0.0
+        base_busy = bool(st.busy) if st is not None else False
         imu_yaw_raw, _, _, _, imu_ok = _read_imu_raw(imu_reader, yaw_sign)
         pan_mech = _pan_mech(pan, pan_kw, pan_sign)
         _fusion_resync(
@@ -263,9 +360,7 @@ def run_test(*, port: str, baud: int, head_step: float, no_config_cpd: bool) -> 
             imu_available=imu_ok,
         )
 
-        print(f"\nManual head+body viz running.")
-        print(f"Open {viz_url} — use WASD buttons or keys (page focused).")
-        print("Hand-turn the base to test encoder + IMU fusion.\n")
+        _print_viz_banner(viz_url, include_camera=False)
 
         while bb.read("running")["running"]:
             now = time.time()
@@ -282,23 +377,23 @@ def run_test(*, port: str, baud: int, head_step: float, no_config_cpd: bool) -> 
                 if cmd == "zero_base":
                     link.zero_base()
                     time.sleep(0.15)
-                    st = link.query_status()
-                    base_enc = st.degrees if st is not None else 0.0
+                    base_enc, base_busy = _query_base_enc(link, base_enc)
                     imu_yaw_raw, _, _, _, _ = _read_imu_raw(imu_reader, yaw_sign)
                     pan_mech = _pan_mech(pan, pan_kw, pan_sign)
                     _fusion_resync(
                         fusion, corrector,
                         pan_mech=pan_mech, base_enc=base_enc, imu_yaw=imu_yaw_raw, now=now,
                     )
+                    prev_base_enc = base_enc
                 elif cmd == "fusion_reset":
-                    st = link.query_status()
-                    base_enc = st.degrees if st is not None else base_enc
+                    base_enc, base_busy = _query_base_enc(link, base_enc)
                     imu_yaw_raw, _, _, _, _ = _read_imu_raw(imu_reader, yaw_sign)
                     pan_mech = _pan_mech(pan, pan_kw, pan_sign)
                     _fusion_resync(
                         fusion, corrector,
                         pan_mech=pan_mech, base_enc=base_enc, imu_yaw=imu_yaw_raw, now=now,
                     )
+                    prev_base_enc = base_enc
                 elif cmd in ("tilt_up", "tilt_down", "pan_left", "pan_right", "center"):
                     pan, tilt = _apply_head_cmd(
                         cmd,
@@ -318,12 +413,7 @@ def run_test(*, port: str, baud: int, head_step: float, no_config_cpd: bool) -> 
                     corrector.reset_motion_tracking()
                 bb.write(debug_control_cmd="")
 
-            st = link.query_status()
-            if st is not None:
-                base_enc = st.degrees
-                base_busy = bool(st.busy)
-            else:
-                base_busy = False
+            base_enc, base_busy = _query_base_enc(link, base_enc)
 
             imu_yaw_raw, imu_pitch, imu_roll, imu_gyro, imu_ok = _read_imu_raw(
                 imu_reader, yaw_sign
@@ -341,31 +431,40 @@ def run_test(*, port: str, baud: int, head_step: float, no_config_cpd: bool) -> 
             if stationary and imu_reader is not None and abs(drift_correction) > 0.01:
                 imu_reader.filter.set_yaw_integral_deg(imu_yaw / yaw_sign)
 
-            fusion.imu_yaw_total_deg = imu_yaw
-            imu_inferred = fusion.inferred_base_encoder_deg(pan_mech)
-            world_yaw = base_enc + pan_mech
-
-            bb.write(
-                servo_pan=pan,
-                servo_tilt=tilt,
-                servo_mode="manual_test",
-                track_kind="none",
-                manual_control_enabled=True,
-                debug_head_step_deg=step,
+            imu_yaw, imu_inferred = resolve_fusion_yaw(
+                fusion,
+                imu_yaw_corrected=imu_yaw,
                 base_encoder_deg=base_enc,
-                base_world_yaw_deg=world_yaw,
-                base_motion_busy=base_busy,
-                imu_yaw_integral_deg=imu_yaw,
-                imu_yaw_raw_deg=imu_yaw_raw,
-                imu_drift_correction_deg=drift_correction,
-                fusion_stationary=stationary,
-                imu_inferred_base_deg=imu_inferred,
-                imu_pitch_deg=imu_pitch,
-                imu_roll_deg=imu_roll,
-                imu_gyro_dps=imu_gyro,
-                imu_horizon_ok=True,
-                imu_available=imu_ok,
-                imu_effective_tilt_center=tilt_center,
+                pan_mech_deg=pan_mech,
+                prev_base_encoder_deg=prev_base_enc,
+            )
+            fusion.imu_yaw_total_deg = imu_yaw
+            decomp = decompose_yaw(
+                fusion,
+                imu_yaw_total=imu_yaw,
+                base_encoder_deg=base_enc,
+                pan_mech_deg=pan_mech,
+            )
+            prev_base_enc = base_enc
+
+            _publish_blackboard(
+                bb,
+                cfg=cfg,
+                pan=pan,
+                tilt=tilt,
+                base_enc=base_enc,
+                base_busy=base_busy,
+                decomp=decomp,
+                imu_yaw=imu_yaw,
+                imu_yaw_raw=imu_yaw_raw,
+                imu_inferred=imu_inferred,
+                drift_correction=drift_correction,
+                stationary=stationary,
+                imu_pitch=imu_pitch,
+                imu_roll=imu_roll,
+                imu_gyro=imu_gyro,
+                imu_ok=imu_ok,
+                step=step,
             )
 
             time.sleep(POLL_SEC)

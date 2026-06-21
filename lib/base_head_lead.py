@@ -46,6 +46,33 @@ def aim_agrees_with_head(aim_norm_x: float, pan_mech_deg: float, *, deadzone: fl
     return aim_sign * head_sign > 0.0
 
 
+def plan_aim_base_step(
+    pan_mech_deg: float,
+    aim_norm_x: float,
+    *,
+    min_step_deg: float,
+    max_step_deg: float,
+    aim_gain: float,
+    pan_offset_to_step_gain: float = 0.0,
+    deadzone: float = 0.04,
+) -> float | None:
+    """Turn base toward an off-center aim (face/body bbox vs frame center)."""
+    if abs(aim_norm_x) <= deadzone:
+        return None
+    aim_sign = 1.0 if aim_norm_x >= 0.0 else -1.0
+    head_sign = head_lead_sign(pan_mech_deg) or aim_sign
+    if aim_sign * head_sign < 0.0:
+        return None
+    mag = max(
+        min_step_deg,
+        min(
+            max_step_deg,
+            abs(aim_norm_x) * aim_gain + abs(pan_mech_deg) * pan_offset_to_step_gain,
+        ),
+    )
+    return head_sign * mag
+
+
 def yaw_error_agrees_with_head(
     yaw_error_deg: float,
     pan_mech_deg: float,

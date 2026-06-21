@@ -5,6 +5,13 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from lib.person_memory import wrap_degrees
+
+
+def angular_delta_deg(current: float, previous: float) -> float:
+    """Signed shortest delta from previous → current."""
+    return wrap_degrees(current - previous)
+
 
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
@@ -39,6 +46,8 @@ class HeadYawFusion:
     ref_pan_mech_deg: float = 0.0
     ref_base_encoder_deg: float = 0.0
     ref_imu_yaw_total_deg: float = 0.0
+    startup_base_encoder_deg: float = 0.0
+    startup_imu_yaw_total_deg: float = 0.0
     imu_yaw_total_deg: float = 0.0
     _last_ts: float | None = None
 
@@ -49,12 +58,16 @@ class HeadYawFusion:
         base_encoder_deg: float,
         imu_yaw_total_deg: float = 0.0,
         now: float | None = None,
+        lock_startup: bool = False,
     ) -> None:
         self.ref_pan_mech_deg = pan_mech_deg
         self.ref_base_encoder_deg = base_encoder_deg
         self.ref_imu_yaw_total_deg = imu_yaw_total_deg
         self.imu_yaw_total_deg = imu_yaw_total_deg
         self._last_ts = now
+        if lock_startup:
+            self.startup_base_encoder_deg = base_encoder_deg
+            self.startup_imu_yaw_total_deg = imu_yaw_total_deg
 
     def expected_imu_total_deg(self, pan_mech_deg: float, base_encoder_deg: float) -> float:
         """IMU total yaw consistent with encoder base + known pan (ground truth when still)."""
@@ -74,7 +87,7 @@ class HeadYawFusion:
         return pan_mech_deg - self.ref_pan_mech_deg
 
     def encoder_base_delta_deg(self, base_encoder_deg: float) -> float:
-        return base_encoder_deg - self.ref_base_encoder_deg
+        return angular_delta_deg(base_encoder_deg, self.ref_base_encoder_deg)
 
     def inferred_base_delta_deg(self, pan_mech_deg: float) -> float:
         """Base rotation ≈ total IMU yaw minus neck pan change."""
@@ -83,8 +96,87 @@ class HeadYawFusion:
     def inferred_base_encoder_deg(self, pan_mech_deg: float) -> float:
         return self.ref_base_encoder_deg + self.inferred_base_delta_deg(pan_mech_deg)
 
+    def resolved_inferred_base_encoder_deg(
+        self,
+        base_encoder_deg: float,
+        pan_mech_deg: float,
+        *,
+        prev_base_encoder_deg: float | None,
+        enc_stable_deg: float = 0.2,
+    ) -> float:
+        """Encoder is ground truth when the base has not moved."""
+        if prev_base_encoder_deg is not None:
+            if abs(angular_delta_deg(base_encoder_deg, prev_base_encoder_deg)) <= enc_stable_deg:
+                return base_encoder_deg
+        return self.inferred_base_encoder_deg(pan_mech_deg)
+
     def world_yaw_deg(self, *, base_encoder_deg: float, pan_mech_deg: float) -> float:
         return base_encoder_deg + pan_mech_deg
+
+
+@dataclass
+class YawDecomposition:
+    """Three-layer yaw: fixed true north, encoder body, IMU head-on-body."""
+
+    true_north_deg: float = 0.0
+    body_yaw_deg: float = 0.0
+    imu_yaw_rel_deg: float = 0.0
+    head_yaw_on_body_deg: float = 0.0
+    world_head_yaw_deg: float = 0.0
+    pan_mech_deg: float = 0.0
+    head_imu_vs_servo_delta_deg: float = 0.0
+    imu_inferred_base_deg: float = 0.0
+
+
+def decompose_yaw(
+    fusion: HeadYawFusion,
+    *,
+    imu_yaw_total: float,
+    base_encoder_deg: float,
+    pan_mech_deg: float,
+) -> YawDecomposition:
+    """Split yaw into fixed north, encoder body, and IMU head-on-body.
+
+    body = encoder delta from startup ref
+    head_on_body = imu_rel - body  (neck rotation relative to chassis)
+    world = body + head_on_body ≈ imu_rel
+    """
+    fusion.imu_yaw_total_deg = imu_yaw_total
+    body = angular_delta_deg(base_encoder_deg, fusion.startup_base_encoder_deg)
+    imu_rel = angular_delta_deg(imu_yaw_total, fusion.startup_imu_yaw_total_deg)
+    head_on_body = angular_delta_deg(imu_rel, body)
+    world = wrap_degrees(body + head_on_body)
+    vs_servo = angular_delta_deg(head_on_body, pan_mech_deg)
+    return YawDecomposition(
+        true_north_deg=0.0,
+        body_yaw_deg=body,
+        imu_yaw_rel_deg=imu_rel,
+        head_yaw_on_body_deg=head_on_body,
+        world_head_yaw_deg=world,
+        pan_mech_deg=pan_mech_deg,
+        head_imu_vs_servo_delta_deg=vs_servo,
+        imu_inferred_base_deg=base_encoder_deg,
+    )
+
+
+def resolve_fusion_yaw(
+    fusion: HeadYawFusion,
+    *,
+    imu_yaw_corrected: float,
+    base_encoder_deg: float,
+    pan_mech_deg: float,
+    prev_base_encoder_deg: float | None = None,
+    enc_stable_deg: float = 0.2,
+) -> tuple[float, float]:
+    """Return (imu_yaw_for_display, inferred_base_encoder) from decomposition."""
+    del prev_base_encoder_deg, enc_stable_deg
+    decomp = decompose_yaw(
+        fusion,
+        imu_yaw_total=imu_yaw_corrected,
+        base_encoder_deg=base_encoder_deg,
+        pan_mech_deg=pan_mech_deg,
+    )
+    return imu_yaw_corrected, decomp.imu_inferred_base_deg
 
 
 @dataclass
@@ -117,11 +209,11 @@ class EncoderImuDriftCorrector:
         """Returns (corrected_imu_yaw, drift_correction_deg, is_stationary)."""
         enc_stable = (
             self._last_enc is None
-            or abs(base_encoder_deg - self._last_enc) <= self.enc_stable_deg
+            or abs(angular_delta_deg(base_encoder_deg, self._last_enc)) <= self.enc_stable_deg
         )
         pan_stable = (
             self._last_pan_mech is None
-            or abs(pan_mech_deg - self._last_pan_mech) <= self.pan_stable_deg
+            or abs(angular_delta_deg(pan_mech_deg, self._last_pan_mech)) <= self.pan_stable_deg
         )
         gyro_stable = abs(gyro_dps) <= self.gyro_max_dps
         self._last_enc = base_encoder_deg
@@ -141,7 +233,16 @@ class EncoderImuDriftCorrector:
             return imu_yaw_raw, 0.0, False
 
         expected = fusion.expected_imu_total_deg(pan_mech_deg, base_encoder_deg)
-        correction = expected - imu_yaw_raw
+        correction = angular_delta_deg(expected, imu_yaw_raw)
+        # Large mismatch after a base move: re-anchor at the current pose instead
+        # of snapping IMU back to the old startup reference (which jumps true north).
+        if abs(correction) > 2.0:
+            fusion.reset_reference(
+                pan_mech_deg=pan_mech_deg,
+                base_encoder_deg=base_encoder_deg,
+                imu_yaw_total_deg=imu_yaw_raw,
+            )
+            return imu_yaw_raw, 0.0, True
         return expected, correction, True
 
 

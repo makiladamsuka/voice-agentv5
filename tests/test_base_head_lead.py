@@ -3,6 +3,7 @@
 from lib.base_head_lead import (
     aim_agrees_with_head,
     head_lead_sign,
+    plan_aim_base_step,
     proactive_comp_pan_cmd,
     step_agrees_with_head,
     yaw_error_agrees_with_head,
@@ -50,3 +51,26 @@ def test_proactive_comp_moves_pan_opposite_base():
         mech_right=mech_right,
     )
     assert compensated < current
+
+
+def test_plan_aim_base_step_uses_aim_when_head_centered():
+    step = plan_aim_base_step(
+        0.0,
+        0.4,
+        min_step_deg=2.0,
+        max_step_deg=5.0,
+        aim_gain=5.5,
+    )
+    assert step is not None
+    assert step > 0.0
+
+
+def test_plan_aim_base_step_rejects_opposing_head():
+    step = plan_aim_base_step(
+        15.0,
+        -0.4,
+        min_step_deg=2.0,
+        max_step_deg=5.0,
+        aim_gain=5.5,
+    )
+    assert step is None

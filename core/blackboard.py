@@ -23,7 +23,7 @@ class Blackboard:
 
     # ── Vision (written by FaceTracker) ──────────────────────────────────────
     face_detected: bool = False
-    face_norm_x: float = 0.0       # -1.0 (left) … +1.0 (right)
+    face_norm_x: float = 0.0       # +1.0 (right) … -1.0 (left) vs frame center
     face_norm_y: float = 0.0       # -1.0 (top)  … +1.0 (bottom)
     face_roll_deg: float = 0.0
     face_area_ratio: float = 0.0
@@ -37,6 +37,8 @@ class Blackboard:
     servo_pan: float = 80.0        # servo command degrees
     servo_tilt: float = 110.0
     servo_mode: str = "wander"     # "track"|"wander"|"memory_track"|"last_seen"
+    servo_forward_return_active: bool = False
+    servo_pan_hold: bool = False
     wander_moving: bool = False    # head is gliding to a wander target (ServoLoop)
     wander_last_step_deg: float = 0.0  # last head wander step size
 
@@ -60,6 +62,10 @@ class Blackboard:
     yaw_reference_locked: bool = False
     imu_calibrated: bool = False
     imu_inferred_base_deg: float = 0.0
+    body_yaw_deg: float = 0.0
+    head_yaw_on_body_deg: float = 0.0
+    imu_yaw_rel_deg: float = 0.0
+    head_imu_vs_servo_delta_deg: float = 0.0
     imu_pitch_deg: float = 0.0
     imu_roll_deg: float = 0.0
     imu_gyro_dps: float = 0.0

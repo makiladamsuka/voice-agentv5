@@ -18,7 +18,12 @@ except ImportError:
     yaml = None
 
 from core.blackboard import Blackboard
-from base_yaw_controller import EncoderImuDriftCorrector, HeadYawFusion
+from base_yaw_controller import (
+    EncoderImuDriftCorrector,
+    HeadYawFusion,
+    decompose_yaw,
+    resolve_fusion_yaw,
+)
 from lib.head_mech import signed_pan_mech_deg
 
 try:
@@ -88,10 +93,10 @@ class ImuService:
 
         servo = _cfg(cfg, "servo", default={}) or {}
         self._servo_cfg = servo
-        self._tilt_center = float(servo.get("tilt_center", 114.0))
-        self._tilt_min = float(servo.get("tilt_min", 112.0))
-        self._tilt_max = float(servo.get("tilt_max", 115.0))
-        self._tilt_mechanical_scale = float(servo.get("tilt_mechanical_scale", 3.0))
+        self._tilt_center = float(servo.get("tilt_center", 110.0))
+        self._tilt_min = float(servo.get("tilt_min", 100.0))
+        self._tilt_max = float(servo.get("tilt_max", 150.0))
+        self._tilt_mechanical_scale = float(servo.get("tilt_mechanical_scale", 1.0))
         self._held_tilt_center = self._tilt_center
 
         self.drift_correction_enabled = bool(imu.get("drift_correction_enabled", True))
@@ -103,6 +108,7 @@ class ImuService:
             gyro_max_dps=float(imu.get("drift_gyro_max_dps", 6.0)),
         )
         self._fusion_initialized = False
+        self._prev_base_enc: float | None = None
 
         self._reader = None
         self._horizon = None
@@ -113,7 +119,11 @@ class ImuService:
         """Main service loop. Exits if IMU is disabled or unavailable."""
         if not self.enabled or not _IMU_SENSOR_AVAILABLE:
             print("[ImuService] IMU disabled or imu_sensor not installed — skipping.")
-            self.bb.write(imu_available=False, imu_calibrated=True)
+            self.bb.write(
+                imu_available=False,
+                imu_calibrated=True,
+                base_fusion_resync_request=False,
+            )
             return
 
         try:
@@ -130,7 +140,11 @@ class ImuService:
             self._reader.start()
         except Exception as exc:
             print(f"[ImuService] Hardware init failed: {exc}")
-            self.bb.write(imu_available=False, imu_calibrated=True)
+            self.bb.write(
+                imu_available=False,
+                imu_calibrated=True,
+                base_fusion_resync_request=False,
+            )
             return
 
         # Reset yaw integral at boot — world yaw reference starts at 0.
@@ -166,6 +180,7 @@ class ImuService:
             max_down_from_center_deg=self.horizon_max_down,
             mechanical_scale=self._tilt_mechanical_scale,
         )
+        self._horizon_pitch_bias = self.horizon_bias
         self._horizon.reset()
 
         self.bb.write(
@@ -209,9 +224,11 @@ class ImuService:
                     base_encoder_deg=base_enc,
                     imu_yaw_total_deg=raw_yaw,
                     now=now,
+                    lock_startup=True,
                 )
                 self._drift.reset_motion_tracking()
                 self._fusion_initialized = True
+                self._prev_base_enc = base_enc
                 self.bb.write(base_fusion_resync_request=False)
 
             if bb_state.get("imu_drift_reset_request"):
@@ -224,6 +241,7 @@ class ImuService:
                     base_encoder_deg=base_enc,
                     imu_yaw_total_deg=raw_yaw,
                     now=now,
+                    lock_startup=True,
                 )
                 self._fusion_initialized = True
 
@@ -231,6 +249,7 @@ class ImuService:
             drift_correction = 0.0
             stationary = False
             inferred_base = base_enc
+            decomp = None
 
             if self.drift_correction_enabled and self._fusion_initialized:
                 self._fusion.imu_yaw_total_deg = raw_yaw
@@ -242,13 +261,36 @@ class ImuService:
                     gyro_dps=sample.gyro_mag_dps,
                     now=now,
                 )
-                yaw_out = corrected
+                yaw_out, inferred_base = resolve_fusion_yaw(
+                    self._fusion,
+                    imu_yaw_corrected=corrected,
+                    base_encoder_deg=base_enc,
+                    pan_mech_deg=pan_mech,
+                    prev_base_encoder_deg=self._prev_base_enc,
+                    enc_stable_deg=self._drift.enc_stable_deg,
+                )
                 if stationary and abs(drift_correction) > 0.01:
                     self._reader.filter.set_yaw_integral_deg(yaw_out / self.yaw_sign)
-                inferred_base = self._fusion.inferred_base_encoder_deg(pan_mech)
+                decomp = decompose_yaw(
+                    self._fusion,
+                    imu_yaw_total=yaw_out,
+                    base_encoder_deg=base_enc,
+                    pan_mech_deg=pan_mech,
+                )
+            elif self._fusion_initialized:
+                decomp = decompose_yaw(
+                    self._fusion,
+                    imu_yaw_total=raw_yaw,
+                    base_encoder_deg=base_enc,
+                    pan_mech_deg=pan_mech,
+                )
+
+            self._prev_base_enc = base_enc
+            self._fusion.imu_yaw_total_deg = yaw_out
 
             gyro_ok = sample.gyro_mag_dps < self.horizon_gyro_max
             pitch = sample.accel_pitch_deg if sample.accel_trusted else sample.pitch_deg
+            pitch -= self._horizon_pitch_bias
 
             if gyro_ok and self._horizon is not None:
                 self._held_tilt_center = self._horizon.effective_center(
@@ -268,6 +310,15 @@ class ImuService:
                 imu_drift_correction_deg=drift_correction,
                 fusion_stationary=stationary,
                 imu_inferred_base_deg=inferred_base,
+                body_yaw_deg=decomp.body_yaw_deg if decomp else base_enc,
+                head_yaw_on_body_deg=decomp.head_yaw_on_body_deg if decomp else 0.0,
+                imu_yaw_rel_deg=decomp.imu_yaw_rel_deg if decomp else yaw_out,
+                base_world_yaw_deg=(
+                    decomp.world_head_yaw_deg if decomp else base_enc + pan_mech
+                ),
+                head_imu_vs_servo_delta_deg=(
+                    decomp.head_imu_vs_servo_delta_deg if decomp else 0.0
+                ),
                 imu_accel_trusted=sample.accel_trusted,
                 imu_horizon_ok=gyro_ok,
                 imu_effective_tilt_center=self._held_tilt_center,

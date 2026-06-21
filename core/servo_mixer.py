@@ -107,12 +107,17 @@ class ServoMixer:
 
     def _publish_encoder(self, enc: float, pan: float, busy: bool, *, synced: bool = True) -> None:
         self._encoder_deg = enc
-        self.bb.write(
-            base_motion_busy=busy,
-            base_encoder_deg=enc,
-            base_encoder_synced=synced,
-            base_world_yaw_deg=self._world_yaw(enc, pan),
-        )
+        writes: dict = {
+            "base_motion_busy": busy,
+            "base_encoder_deg": enc,
+            "base_encoder_synced": synced,
+        }
+        # When IMU fusion is active, ImuService owns decomposed world yaw.
+        if not self.bb.read("imu_available")["imu_available"]:
+            writes["base_world_yaw_deg"] = self._world_yaw(enc, pan)
+            writes["body_yaw_deg"] = enc
+            writes["head_yaw_on_body_deg"] = self._pan_mech(pan)
+        self.bb.write(**writes)
 
     def _sync_encoder(self, pan: float) -> bool:
         if self._link is None:

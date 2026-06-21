@@ -163,6 +163,7 @@ class FaceTracker:
         self._body_norm_x = 0.0
         self._body_norm_y = 0.0
         self._body_last_ts = 0.0
+        self._body_box: tuple[float, float, float, float] | None = None
 
         self._person_memory: Optional[PersonMemory] = None
         if self.pm_enabled:
@@ -238,10 +239,14 @@ class FaceTracker:
         return [float(v) for v in face[0:4]]
 
     def _face_center_norm(self, face):
+        """Normalized offset of detection bbox center from camera frame center.
+
+        +norm_x = face right of center, -norm_x = face left (matches pan_right/pan_left).
+        """
         fx, fy, fw, fh = self._face_box(face)
         cx = (fx + fw * 0.5) / self.detect_res[0]
         cy = (fy + fh * 0.5) / self.detect_res[1]
-        return cx * 2.0 - 1.0, cy * 2.0 - 1.0  # [-1, 1]
+        return cx * 2.0 - 1.0, cy * 2.0 - 1.0
 
     @staticmethod
     def _face_area_ratio(face, detect_res):
@@ -326,6 +331,7 @@ class FaceTracker:
             face_candidates = []
             body_detected = False
             track_kind = "none"
+            active_face_index = -1
 
             # ── Body detection (lower frame rate) ──────────────────────────
             run_body = (
@@ -335,18 +341,18 @@ class FaceTracker:
             )
             if run_body:
                 try:
-                    bodies = body_detector.detect(frame)
-                    if bodies:
-                        best = max(bodies, key=lambda b: b[2] * b[3])
-                        bx, by, bw, bh = best[0], best[1], best[2], best[3]
+                    body_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    det = body_detector.detect_largest(body_bgr)
+                    if det is not None:
+                        bx, by, bw, bh = det.x, det.y, det.w, det.h
                         cx_raw = (bx + bw * 0.5) / self.detect_res[0]
                         cy_raw = (by + bh * self.body_aim_y) / self.detect_res[1]
                         new_bx = cx_raw * 2.0 - 1.0
                         new_by = cy_raw * 2.0 - 1.0
-                        # Smooth body tracking position
                         self._body_norm_x += (new_bx - self._body_norm_x) * self.body_alpha
                         self._body_norm_y += (new_by - self._body_norm_y) * self.body_alpha
                         self._body_last_ts = now
+                        self._body_box = (bx, by, bw, bh)
                 except Exception:
                     pass
 
@@ -357,22 +363,32 @@ class FaceTracker:
                 face_norm_y = self._body_norm_y
                 track_kind = "body"
                 self._update_memory(face_norm_x, face_norm_y, "body", now, confidence=0.65)
+            elif not body_fresh:
+                self._body_box = None
 
             # ── Face detection ──────────────────────────────────────────────
             if faces is not None and len(faces) > 0:
                 valid = [f for f in faces if float(f[2]) > 4 and float(f[3]) > 4]
                 if valid:
                     face_count = len(valid)
-                    face_candidates = [
-                        {
-                            "norm_x": self._face_center_norm(f)[0],
-                            "norm_y": self._face_center_norm(f)[1],
-                            "area_ratio": self._face_area_ratio(f, self.detect_res),
-                        }
-                        for f in valid
-                    ]
+                    ranked = sorted(valid, key=lambda f: float(f[2]) * float(f[3]), reverse=True)
+                    face_candidates = []
+                    for f in ranked:
+                        fx, fy, fw, fh = self._face_box(f)
+                        nx, ny = self._face_center_norm(f)
+                        face_candidates.append(
+                            {
+                                "norm_x": nx,
+                                "norm_y": ny,
+                                "area_ratio": self._face_area_ratio(f, self.detect_res),
+                                "x": fx,
+                                "y": fy,
+                                "w": fw,
+                                "h": fh,
+                            }
+                        )
 
-                    selected_face, kind, _ = self._attention.select(valid, now)
+                    selected_face, kind, active_face_index = self._attention.select(valid, now)
 
                     if kind == "center" and isinstance(selected_face, tuple):
                         f1, f2 = selected_face
@@ -428,9 +444,89 @@ class FaceTracker:
             # ── Publish stream frame ─────────────────────────────────────────
             if self.stream_enabled:
                 try:
-                    stream_frame = cv2.resize(frame_full, self.stream_res, interpolation=cv2.INTER_LINEAR)
+                    stream_frame = cv2.resize(frame, self.stream_res, interpolation=cv2.INTER_LINEAR)
                     if self.swap_rb:
-                        stream_frame = stream_frame[:, :, ::-1]
+                        stream_frame = cv2.cvtColor(stream_frame, cv2.COLOR_BGR2RGB)
+
+                    scale_x = self.stream_res[0] / self.detect_res[0]
+                    scale_y = self.stream_res[1] / self.detect_res[1]
+
+                    if face_count > 0:
+                        ranked = sorted(
+                            face_candidates,
+                            key=lambda c: c.get("area_ratio", 0.0),
+                            reverse=True,
+                        )
+                        for idx, cand in enumerate(ranked):
+                            bx_s = int(cand["x"] * scale_x)
+                            by_s = int(cand["y"] * scale_y)
+                            bw_s = int(cand["w"] * scale_x)
+                            bh_s = int(cand["h"] * scale_y)
+                            active = idx == active_face_index or (
+                                active_face_index < 0 and idx == 0
+                            )
+                            color = (0, 255, 255) if active else (0, 160, 0)
+                            cv2.rectangle(
+                                stream_frame,
+                                (bx_s, by_s),
+                                (bx_s + bw_s, by_s + bh_s),
+                                color,
+                                2,
+                            )
+                            cv2.putText(
+                                stream_frame,
+                                f"face{idx}",
+                                (bx_s, max(12, by_s - 4)),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.4,
+                                color,
+                                1,
+                            )
+
+                    if track_kind == "center" and face_detected:
+                        cx_s = int((face_norm_x + 1.0) * 0.5 * self.stream_res[0])
+                        cy_s = int((face_norm_y + 1.0) * 0.5 * self.stream_res[1])
+                        cv2.circle(stream_frame, (cx_s, cy_s), 7, (0, 255, 255), 2)
+                        cv2.putText(
+                            stream_frame,
+                            "center",
+                            (cx_s + 8, cy_s),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.4,
+                            (0, 255, 255),
+                            1,
+                        )
+                    elif face_detected:
+                        cx_s = int((face_norm_x + 1.0) * 0.5 * self.stream_res[0])
+                        cy_s = int((face_norm_y + 1.0) * 0.5 * self.stream_res[1])
+                        cv2.circle(stream_frame, (cx_s, cy_s), 6, (0, 255, 255), 2)
+
+                    if body_detected and self._body_box is not None:
+                        bx, by, bw, bh = self._body_box
+                        bx_s = int(bx * scale_x)
+                        by_s = int(by * scale_y)
+                        bw_s = int(bw * scale_x)
+                        bh_s = int(bh * scale_y)
+                        aim_x_s = int((face_norm_x + 1.0) * 0.5 * self.stream_res[0])
+                        aim_y_s = int((face_norm_y + 1.0) * 0.5 * self.stream_res[1])
+                        cv2.rectangle(
+                            stream_frame,
+                            (bx_s, by_s),
+                            (bx_s + bw_s, by_s + bh_s),
+                            (255, 120, 0),
+                            2,
+                        )
+                        cv2.circle(stream_frame, (aim_x_s, aim_y_s), 6, (255, 120, 0), 2)
+                        cv2.putText(
+                            stream_frame,
+                            "body",
+                            (bx_s, max(12, by_s - 4)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.4,
+                            (255, 120, 0),
+                            1,
+                        )
+
                     self.bb.write(stream_frame=stream_frame)
                 except Exception:
                     pass

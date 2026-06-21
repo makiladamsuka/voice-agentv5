@@ -230,6 +230,7 @@ class ServoLoop:
         # ── Base compensation ─────────────────────────────────────────────────
         self.base_sign = float(b.get("sign", 1.0))
         self.base_comp_gain = float(b.get("track_compensation_gain", 0.95))
+        self.sustained_head_follow_enabled = bool(b.get("sustained_head_follow_enabled", True))
 
         # ── Loop timing ───────────────────────────────────────────────────────
         self.loop_hz = float(s.get("loop_hz", 100.0))
@@ -359,6 +360,8 @@ class ServoLoop:
         return (now - self._off_forward_since) >= self.forward_return_timeout_sec
 
     def _maybe_start_forward_return(self, now: float, *, tracking_face: bool) -> None:
+        if self.sustained_head_follow_enabled:
+            return
         if tracking_face or self._forward_return_active:
             return
         if self._mode not in ("wander", "last_seen"):

@@ -54,6 +54,8 @@ class Blackboard:
     base_fault_reason: str | None = None
     base_watchdog_reset: bool = False
     base_comp_pan_deg: float = 0.0   # proactive neck counter-rotation (servo pan cmd)
+    base_sustained_hold_active: bool = False
+    base_sustained_hold_elapsed_sec: float = 0.0
     base_last_spin_moved_deg: float = 0.0
     base_last_spin_reason: str = ""
     base_fusion_resync_request: bool = False

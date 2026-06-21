@@ -164,6 +164,13 @@ class BaseController:
         self.wander_random_turn_min_sec = float(b.get("wander_random_turn_min_sec", 120.0))
         self.wander_random_turn_max_sec = float(b.get("wander_random_turn_max_sec", 300.0))
 
+        # ── Sustained head-on-base hold → base follows with neck lock ─────────
+        self.sustained_follow_enabled = bool(b.get("sustained_head_follow_enabled", True))
+        self.sustained_hold_sec = float(b.get("sustained_head_hold_sec", 30.0))
+        self.sustained_hold_min_mech = float(b.get("sustained_head_min_mech_deg", 12.0))
+        self.sustained_cooldown_sec = float(b.get("sustained_head_cooldown_sec", 4.0))
+        self.sustained_comp_gain = float(b.get("sustained_head_compensation_gain", 0.95))
+
         # ── Body-only base follow ─────────────────────────────────────────────
         self.body_base_enabled = bool(b.get("body_base_enabled", True))
         self.body_base_cooldown = float(b.get("body_base_cooldown_sec", 2.5))
@@ -194,6 +201,9 @@ class BaseController:
         self._random_turn_remaining = 0.0
         self._random_turn_sign = 0.0
         self._trigger_since = 0.0
+        self._sustained_since: Optional[float] = None
+        self._sustained_sign = 0.0
+        self._last_sustained_ts = 0.0
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -455,6 +465,48 @@ class BaseController:
             return None, "", 0.0
         return step, source, comp_pan
 
+    def _update_sustained_hold(self, now: float, pan_mech: float) -> None:
+        """Track how long the neck has held an offset from base-forward."""
+        if abs(pan_mech) < self.sustained_hold_min_mech:
+            self._sustained_since = None
+            self._sustained_sign = 0.0
+            return
+        sign = head_lead_sign(pan_mech)
+        if self._sustained_since is None or sign != self._sustained_sign:
+            self._sustained_since = now
+            self._sustained_sign = sign
+
+    def _plan_sustained_follow(self, now: float, state: dict) -> tuple[Optional[float], str, float]:
+        """After sustained neck offset, rotate base and counter-rotate neck to lock gaze."""
+        if not self.sustained_follow_enabled:
+            return None, "", 0.0
+        if self._sustained_since is None:
+            return None, "", 0.0
+        elapsed = now - self._sustained_since
+        if elapsed < self.sustained_hold_sec:
+            return None, "", 0.0
+        if (now - self._last_sustained_ts) < self.sustained_cooldown_sec:
+            return None, "", 0.0
+        if (now - self._last_nudge_ts) < self.cooldown_sec:
+            return None, "", 0.0
+
+        pan = state["servo_pan"]
+        pan_mech = self._pan_mech(pan)
+        raw = self._plan_base_follow_step(
+            clamp(abs(pan_mech) * self.pan_offset_to_step, self.min_step, self.max_step),
+            pan,
+        )
+        if raw is None:
+            return None, "", 0.0
+        step = raw * self.base_sign
+        step = self._apply_gate(step, pan, state["base_encoder_deg"], state)
+        if step == 0.0:
+            return None, "", 0.0
+        self._last_sustained_ts = now
+        self._sustained_since = now
+        comp_pan = self._comp_pan_for_step(step, pan, self.sustained_comp_gain)
+        return step, "sustained_head", comp_pan
+
     def _plan_memory_step(self, now: float, state: dict) -> tuple[Optional[float], str, float]:
         if not self.pm_base_enabled:
             return None, "", 0.0
@@ -535,6 +587,12 @@ class BaseController:
 
             pan_offset = self._head_pan_offset(state["servo_pan"])
             self._yaw_state.update(state["base_encoder_deg"], pan_offset)
+            self._update_sustained_hold(now, pan_offset)
+            elapsed = 0.0 if self._sustained_since is None else (now - self._sustained_since)
+            self.bb.write(
+                base_sustained_hold_active=self._sustained_since is not None,
+                base_sustained_hold_elapsed_sec=elapsed,
+            )
 
             self._gate.clear_backoff(now)
             if self._gate.allowed(now):
@@ -568,6 +626,9 @@ class BaseController:
                     step, source, comp_pan = self._plan_memory_step(now, state)
             elif mode == "wander":
                 step, source, comp_pan = self._plan_wander_follow(now, state)
+
+            if step is None and mode in ("wander", "track", "last_seen"):
+                step, source, comp_pan = self._plan_sustained_follow(now, state)
 
             if step is not None and abs(step) >= self.min_step:
                 self._last_nudge_ts = now

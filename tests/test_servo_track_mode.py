@@ -273,6 +273,20 @@ def test_pan_turns_left_when_face_moves_left_in_frame():
     assert loop._pan > loop.pan_center
 
 
+def test_forward_return_skipped_when_sustained_follow_enabled():
+    bb = Blackboard()
+    bb.write(running=True, face_detected=False, body_detected=False, last_seen_world_yaw=None)
+    loop = ServoLoop(bb)
+    loop._mode = "wander"
+    loop._pan = loop.pan_center + 30.0
+    loop._off_forward_since = 100.0
+    loop.forward_return_timeout_sec = 5.0
+    loop.sustained_head_follow_enabled = True
+
+    loop._maybe_start_forward_return(106.0, tracking_face=False)
+    assert loop._forward_return_active is False
+
+
 def test_forward_return_starts_after_off_forward_timeout():
     bb = Blackboard()
     bb.write(running=True, face_detected=False, body_detected=False, last_seen_world_yaw=None)
@@ -281,6 +295,7 @@ def test_forward_return_starts_after_off_forward_timeout():
     loop._pan = loop.pan_center + 30.0
     loop._off_forward_since = 100.0
     loop.forward_return_timeout_sec = 5.0
+    loop.sustained_head_follow_enabled = False
 
     loop._maybe_start_forward_return(106.0, tracking_face=False)
     assert loop._forward_return_active is True

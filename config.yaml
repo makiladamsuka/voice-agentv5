@@ -141,6 +141,11 @@ base:
   pan_offset_to_step_gain: 0.10   # base step scales with head pan offset (mech deg)
   trigger_hold_at_limit_sec: 1.0  # slower base follow when head near pan limit
   track_compensation_gain: 0.95   # counter-rotate neck ~1:1 with base during track
+  sustained_head_follow_enabled: true   # after ~30s neck offset, base turns and neck locks gaze
+  sustained_head_hold_sec: 30.0
+  sustained_head_min_mech_deg: 12.0
+  sustained_head_cooldown_sec: 4.0
+  sustained_head_compensation_gain: 0.95
   body_base_enabled: true
   body_trigger_norm_x: 0.08    # body bbox offset from frame center before base turns
   body_base_cooldown_sec: 2.0

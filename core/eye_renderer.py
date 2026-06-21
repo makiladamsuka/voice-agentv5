@@ -134,6 +134,9 @@ class BlockyEye:
             self.top_lid_vel=(self.top_lid_vel+(tl-self.top_lid)*k)*d; self.top_lid+=self.top_lid_vel
             self.bottom_lid_vel=(self.bottom_lid_vel+(bl-self.bottom_lid)*k)*d; self.bottom_lid+=self.bottom_lid_vel
             self.lid_angle_vel=(self.lid_angle_vel+(la-self.lid_angle)*k)*d; self.lid_angle+=self.lid_angle_vel
+            self.top_lid = max(0.0, min(0.90, self.top_lid))
+            self.bottom_lid = max(0.0, min(0.82, self.bottom_lid))
+            self.lid_angle = max(-22.0, min(22.0, self.lid_angle))
             self.target_w=self.base_w*self.scale_w+bw; self.target_h=self.base_h*self.scale_h+bh
         elif self.blink_state=="DROPPING":
             self.vy+=10*self.blink_speed_mult; self.current_pos[1]+=self.vy
@@ -162,28 +165,65 @@ class BlockyEye:
         self.current_pos[0]=max(hw,min(SCREEN_WIDTH-hw,self.current_pos[0]))
         self.current_pos[1]=max(hh,min(SCREEN_HEIGHT-hh,self.current_pos[1]))
 
+    @staticmethod
+    def _solid_lid_block(width: int, height: int, angle: float):
+        """Opaque eyelid rectangle; bicubic rotate fringe is forced to solid black."""
+        from PIL import Image
+        lid = Image.new("RGBA", (max(1, width), max(1, height)), (*BG_COLOR, 255))
+        if abs(angle) <= 0.1:
+            return lid
+        rotated = lid.rotate(angle, resample=Image.BICUBIC, expand=True)
+        px = rotated.load()
+        w, h = rotated.size
+        for y in range(h):
+            for x in range(w):
+                if px[x, y][3] > 32:
+                    px[x, y] = (*BG_COLOR, 255)
+                else:
+                    px[x, y] = (0, 0, 0, 0)
+        return rotated
+
+    def draw_eyelids(self, eye_img, x0: float, y0: float, x1: float, y1: float) -> None:
+        """Eyelid masks with generous overdraw (ported from voice-agentv4)."""
+        w = int(x1 - x0)
+        h = int(y1 - y0)
+        if w < 1 or h < 1:
+            return
+
+        if self.top_lid > 0.01:
+            lid_h = int(h * self.top_lid)
+            lid_src = self._solid_lid_block(int(w * 2.1), lid_h + 64, self.lid_angle)
+            lid_x = int(x0 + w / 2 - lid_src.width / 2)
+            lid_y = int(y0 - 32)
+            eye_img.alpha_composite(lid_src, (lid_x, lid_y))
+
+        if self.bottom_lid > 0.01:
+            lid_h = int(h * self.bottom_lid)
+            lid_src = self._solid_lid_block(int(w * 2.1), lid_h + 28, self.lid_angle)
+            lid_x = int(x0 + w / 2 - lid_src.width / 2)
+            lid_y = int(y1 + 13 - lid_src.height)
+            eye_img.alpha_composite(lid_src, (lid_x, lid_y))
+
     def draw(self, bg_image):
         from PIL import Image, ImageDraw
-        dw=max(4,int(self.w)); dh=max(4,int(self.h))
-        sz=int(max(self.base_w,self.base_h)*2.5)
-        eye=Image.new("RGBA",(sz,sz),(0,0,0,0)); ed=ImageDraw.Draw(eye)
-        ox=0.0
-        oy=0.0
-        cx=cy=sz/2; x0=cx-dw/2; y0=cy-dh/2; x1=cx+dw/2; y1=cy+dh/2
-        sx=x0+(x1-x0)/2+ox*(dw*0.22); sy=y0+(y1-y0)/2+oy*(dh*0.18)
-        ed.ellipse([sx-dw/2,sy-dh/2,sx+dw/2,sy+dh/2],fill=EYE_COLOR)
-        for which,ratio,ypos in [("top",self.top_lid,y0),("bot",self.bottom_lid,y1)]:
-            if ratio>0.01:
-                lh=max(1,int(dh*ratio)); lw=int(dw+28); lh2=int(lh+14)
-                lid=Image.new("RGBA",(lw,lh2),(*BG_COLOR,255))
-                if abs(self.lid_angle)>0.1:
-                    lid=lid.rotate(self.lid_angle,resample=Image.BICUBIC,expand=True)
-                lx=int(cx-lid.width/2)
-                ly=int(y0-6) if which=="top" else int(y1+6-lid.height)
-                eye.alpha_composite(lid,(lx,ly))
-        rot=eye.rotate(0.0,resample=Image.BICUBIC,expand=False)
-        px=int(self.current_pos[0]-sz/2); py=int(self.current_pos[1]-sz/2)
-        bg_image.alpha_composite(rot,(px,py))
+        draw_w = max(6, min(int(self.w), SCREEN_WIDTH - 4))
+        draw_h = max(6, min(int(self.h), SCREEN_HEIGHT - 4))
+        eye_img_size = int(max(self.base_w, self.base_h) * 2.6)
+        eye_img = Image.new("RGBA", (eye_img_size, eye_img_size), (0, 0, 0, 0))
+        eye_draw = ImageDraw.Draw(eye_img)
+
+        cx = eye_img_size / 2
+        cy = eye_img_size / 2
+        x0 = cx - draw_w / 2
+        y0 = cy - draw_h / 2
+        x1 = cx + draw_w / 2
+        y1 = cy + draw_h / 2
+        eye_draw.ellipse([x0, y0, x1, y1], fill=EYE_COLOR)
+        self.draw_eyelids(eye_img, x0, y0, x1, y1)
+
+        paste_x = int(self.current_pos[0] - eye_img_size / 2)
+        paste_y = int(self.current_pos[1] - eye_img_size / 2)
+        bg_image.alpha_composite(eye_img, (paste_x, paste_y))
 
 
 class EyeRenderer:

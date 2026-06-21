@@ -98,12 +98,13 @@ def pan_cmd_to_mech(
     pan_max: float,
     mech_left: float,
     mech_right: float,
+    pan_sign: float = 1.0,
 ) -> float:
     if pan_cmd >= pan_center:
         span = max(pan_max - pan_center, 1e-6)
-        return (pan_cmd - pan_center) / span * mech_right
+        return (pan_cmd - pan_center) / span * mech_right * pan_sign
     span = max(pan_center - pan_min, 1e-6)
-    return (pan_center - pan_cmd) / span * mech_left
+    return (pan_center - pan_cmd) / span * mech_left * pan_sign
 
 
 def mech_to_pan_cmd(
@@ -114,7 +115,9 @@ def mech_to_pan_cmd(
     pan_max: float,
     mech_left: float,
     mech_right: float,
+    pan_sign: float = 1.0,
 ) -> float:
+    pan_mech_deg = pan_mech_deg * pan_sign
     if pan_mech_deg >= 0.0:
         span = max(mech_right, 1e-6)
         return pan_center + (pan_mech_deg / span) * (pan_max - pan_center)
@@ -132,6 +135,7 @@ def proactive_comp_pan_cmd(
     pan_max: float,
     mech_left: float,
     mech_right: float,
+    pan_sign: float = 1.0,
 ) -> float:
     """Servo pan command after proactive neck counter-rotation for a base step."""
     pan_mech = pan_cmd_to_mech(
@@ -141,6 +145,7 @@ def proactive_comp_pan_cmd(
         pan_max=pan_max,
         mech_left=mech_left,
         mech_right=mech_right,
+        pan_sign=pan_sign,
     )
     comp_mech = base_step_deg * compensation_gain
     compensated_mech = pan_mech - comp_mech
@@ -151,4 +156,5 @@ def proactive_comp_pan_cmd(
         pan_max=pan_max,
         mech_left=mech_left,
         mech_right=mech_right,
+        pan_sign=pan_sign,
     )

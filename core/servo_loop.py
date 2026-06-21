@@ -467,11 +467,6 @@ class ServoLoop:
     
     def _apply_base_compensation(self) -> None:
         """Feed-forward compensation: counter-rotate head when base moves."""
-        if self._mode == "track":
-            state = self.bb.read("base_encoder_deg")
-            self._last_base_enc = state.get("base_encoder_deg", 0.0)
-            return
-
         state = self.bb.read("base_encoder_deg")
         enc = state.get("base_encoder_deg", 0.0)
         
@@ -479,17 +474,62 @@ class ServoLoop:
             self._last_base_enc = enc
             return
             
-        delta = enc - self._last_base_enc
+        delta_enc = enc - self._last_base_enc
         self._last_base_enc = enc
         
-        if abs(delta) < 0.05:
+        if abs(delta_enc) < 0.05:
             return
             
-        # Counter-rotate by subtracting the base delta from the pan
-        pan_shift = -delta * self.base_sign * self.base_comp_gain
+        # Convert encoder delta to physical base degrees
+        delta_phys_base = delta_enc / self.base_sign if abs(self.base_sign) > 1e-6 else delta_enc
         
-        self._pan = clamp(self._pan + pan_shift, self.pan_min, self.pan_max)
-        self._wander.pan_goal = clamp(self._wander.pan_goal + pan_shift, self.pan_min, self.pan_max)
+        # We want to counter-rotate the head by this amount
+        comp_mech_deg = delta_phys_base * self.base_comp_gain
+        
+        # Current physical pan angle
+        current_pan_mech = signed_pan_mech_deg(self._pan, self._servo_cfg)
+        
+        # New desired physical pan angle
+        target_pan_mech = current_pan_mech - comp_mech_deg
+        
+        # Convert back to pan command
+        new_pan = mech_to_pan_cmd(
+            target_pan_mech,
+            pan_center=self.pan_center,
+            pan_min=self.pan_min,
+            pan_max=self.pan_max,
+            mech_left=self.mech_left,
+            mech_right=self.mech_right,
+            pan_sign=self.pan_sign,
+        )
+        
+        self._pan = clamp(new_pan, self.pan_min, self.pan_max)
+        
+        # Apply to wander goal as well so we don't snap back after returning to wander
+        current_goal_mech = signed_pan_mech_deg(self._wander.pan_goal, self._servo_cfg)
+        target_goal_mech = current_goal_mech - comp_mech_deg
+        new_goal = mech_to_pan_cmd(
+            target_goal_mech,
+            pan_center=self.pan_center,
+            pan_min=self.pan_min,
+            pan_max=self.pan_max,
+            mech_left=self.mech_left,
+            mech_right=self.mech_right,
+            pan_sign=self.pan_sign,
+        )
+        self._wander.pan_goal = clamp(new_goal, self.pan_min, self.pan_max)
+        
+        # In track mode, the base movement means the target shifts in the camera frame.
+        # Shift the visual memory so the PID doesn't fight the physical counter-rotation.
+        if self._mode == "track":
+            hfov_deg = 62.0  # approximate camera horizontal FOV
+            # If base physically turns right (+), object moves left (-) in frame.
+            # 1 physical degree = 2.0 / hfov_deg in normalized coordinates (-1 to 1).
+            norm_shift = -delta_phys_base * (2.0 / hfov_deg)
+            self._filtered_norm_x = clamp(self._filtered_norm_x + norm_shift, -1.0, 1.0)
+            self._pan_track_norm = clamp(self._pan_track_norm + norm_shift, -1.0, 1.0)
+            self._prev_face_x += norm_shift
+            self._prev_face_raw_x += norm_shift
 
     # ── IMU tilt compensation ──────────────────────────────────────────────────
 

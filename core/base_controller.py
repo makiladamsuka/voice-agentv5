@@ -219,8 +219,11 @@ class BaseController:
         return mech >= soft * (1.0 - self.pan_limit_margin)
 
     def _comp_pan_for_step(self, step: float, pan_cmd: float, gain: float) -> float:
+        # step is the hardware command sent to the mixer. 
+        # Convert it back to physical degrees for compensation math.
+        physical_step = step / self.base_sign if abs(self.base_sign) > 1e-6 else step
         return proactive_comp_pan_cmd(
-            step,
+            physical_step,
             pan_cmd,
             compensation_gain=gain,
             pan_center=self.pan_center,
@@ -228,6 +231,7 @@ class BaseController:
             pan_max=self.pan_max,
             mech_left=self.mech_left,
             mech_right=self.mech_right,
+            pan_sign=self.pan_sign,
         )
 
     def _reject_head_lead(self, step: float, pan_cmd: float) -> bool:

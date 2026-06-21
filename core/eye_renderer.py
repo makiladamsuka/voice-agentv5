@@ -1,8 +1,10 @@
 """EyeRenderer: BlockyEye animation + ST7735 SPI display output.
 
-Reads from BB: emotion, emotion_intensity, face_norm_x, face_norm_y,
-               face_roll_deg, face_detected, running
+Reads from BB: emotion, emotion_intensity, face_detected, running
 Writes to BB:  nothing
+
+Eyes stay fixed at screen center — no face-driven x/y offset or rotation.
+Head servos handle looking; the display only shows emotion (lids, scale, blink).
 """
 from __future__ import annotations
 import math, random, time
@@ -14,6 +16,7 @@ except ImportError:
     yaml = None
 
 from core.blackboard import Blackboard
+from core.emotion_presets import EMOTION_PRESETS, resolve_emotion_name
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
@@ -23,43 +26,7 @@ EYE_COLOR = (255, 255, 255)
 BG_COLOR = (0, 0, 0)
 EYE_SIZE = 120
 FLOOR_Y = SCREEN_HEIGHT - 5
-EYE_BOUND_MARGIN = 8
-BLINK_SPEED_MIN, BLINK_SPEED_MAX = 2.0, 3.5
-LOOK_SIDE_OFFSET = 16.0
-MAX_X_OFFSET, MAX_Y_OFFSET = 30, 22
-FACE_ROLL_MULT, FACE_ROLL_MAX_DEG = 0.75, 10.0
 EMOTION_CHANGE_COOLDOWN = 0.75
-
-EMOTION_PRESETS = {
-    "idle":                  {"scale_w":1.0,  "scale_h":1.0,  "top_lid":0.0,  "bottom_lid":0.0,  "lid_angle":0.0,  "mirror_angle":True},
-    "happy":                 {"scale_w":1.10, "scale_h":0.84, "top_lid":0.0,  "bottom_lid":0.30, "lid_angle":-6.0, "mirror_angle":True},
-    "sad":                   {"scale_w":0.98, "scale_h":0.96, "top_lid":0.12, "bottom_lid":0.0,  "lid_angle":-8.0, "mirror_angle":True, "pos":(0,4)},
-    "surprised":             {"scale_w":0.98, "scale_h":1.12, "top_lid":0.0,  "bottom_lid":0.0,  "lid_angle":0.0,  "mirror_angle":True},
-    "suspicious":            {"scale_w":1.06, "scale_h":0.74, "top_lid":0.38, "bottom_lid":0.35, "lid_angle":0.0,  "mirror_angle":True},
-    "sleepy":                {"scale_w":1.04, "scale_h":0.88, "top_lid":0.56, "bottom_lid":0.0,  "lid_angle":0.0,  "mirror_angle":True},
-    "looking_left_natural":  {"scale_w":1.02, "scale_h":0.98, "top_lid":0.0,  "bottom_lid":0.05, "lid_angle":-3.0, "mirror_angle":False},
-    "looking_right_natural": {"scale_w":1.02, "scale_h":0.98, "top_lid":0.0,  "bottom_lid":0.05, "lid_angle":3.0,  "mirror_angle":False},
-    "excited":               {"scale_w":1.14, "scale_h":0.80, "top_lid":0.0,  "bottom_lid":0.24, "lid_angle":0.0,  "mirror_angle":True},
-    "calm":                  {"scale_w":1.03, "scale_h":0.90, "top_lid":0.16, "bottom_lid":0.12, "lid_angle":0.0,  "mirror_angle":True},
-    "curious":               {"scale_w":1.02, "scale_h":1.03, "top_lid":0.0,  "bottom_lid":0.13, "lid_angle":4.0,  "mirror_angle":False},
-    "attentive":             {"scale_w":1.08, "scale_h":1.06, "top_lid":0.0,  "bottom_lid":0.0,  "lid_angle":0.0,  "mirror_angle":True},
-    "engaged":               {"scale_w":1.02, "scale_h":1.00, "top_lid":0.04, "bottom_lid":0.06, "lid_angle":5.0,  "mirror_angle":True},
-    "thinking":              {"scale_w":1.0,  "scale_h":1.0,  "top_lid":0.0,  "bottom_lid":0.0,  "lid_angle":0.0,  "mirror_angle":True, "pos":(0,-2)},
-    "warm":                  {"scale_w":1.06, "scale_h":1.00, "top_lid":0.0,  "bottom_lid":0.16, "lid_angle":2.0,  "mirror_angle":True, "pos":(0,-4)},
-    "amused":                {"scale_w":1.00, "scale_h":0.98, "top_lid":0.0,  "bottom_lid":0.14, "lid_angle":3.0,  "mirror_angle":False},
-    "playful":               {"scale_w":1.02, "scale_h":1.00, "top_lid":0.0,  "bottom_lid":0.06, "lid_angle":0.0,  "mirror_angle":False},
-    "concentrating":         {"scale_w":0.96, "scale_h":0.84, "top_lid":0.16, "bottom_lid":0.08, "lid_angle":0.0,  "mirror_angle":True},
-    "uncertain":             {"scale_w":0.98, "scale_h":0.96, "top_lid":0.08, "bottom_lid":0.04, "lid_angle":0.0,  "mirror_angle":True},
-    "squint":                {"scale_w":1.0,  "scale_h":0.62, "top_lid":0.42, "bottom_lid":0.35, "lid_angle":0.0,  "mirror_angle":True},
-    "afraid":                {"scale_w":0.92, "scale_h":1.12, "top_lid":0.0,  "bottom_lid":0.0,  "lid_angle":0.0,  "mirror_angle":True},
-    "proud":                 {"scale_w":1.06, "scale_h":1.02, "top_lid":0.0,  "bottom_lid":0.0,  "lid_angle":-2.0, "mirror_angle":True},
-    "remembering":           {"scale_w":1.04, "scale_h":1.03, "top_lid":0.02, "bottom_lid":0.0,  "lid_angle":0.0,  "mirror_angle":True},
-    "awkward":               {"scale_w":0.96, "scale_h":0.93, "top_lid":0.10, "bottom_lid":0.10, "lid_angle":0.0,  "mirror_angle":True},
-    "looking_left":          {"scale_w":1.02, "scale_h":0.98, "top_lid":0.0,  "bottom_lid":0.05, "lid_angle":-3.0, "mirror_angle":False},
-    "looking_right":         {"scale_w":1.02, "scale_h":0.98, "top_lid":0.0,  "bottom_lid":0.05, "lid_angle":3.0,  "mirror_angle":False},
-    "looking_left_happy":    {"scale_w":1.10, "scale_h":0.84, "top_lid":0.0,  "bottom_lid":0.30, "lid_angle":-6.0, "mirror_angle":False},
-    "looking_right_happy":   {"scale_w":1.10, "scale_h":0.84, "top_lid":0.0,  "bottom_lid":0.30, "lid_angle":6.0,  "mirror_angle":False},
-}
 
 
 def _load_yaml(path):
@@ -70,7 +37,7 @@ def _load_yaml(path):
 
 
 class BlockyEye:
-    """Animated blocky eye widget (extracted verbatim from face_tracking_head.py)."""
+    """Animated blocky eye widget."""
 
     def __init__(self, x, y, scale=1.0, is_left=True):
         self.base_x, self.base_y = x, y
@@ -103,26 +70,27 @@ class BlockyEye:
         self.noise_t = random.uniform(0, 100)
         self.emotion_pos_bias_x = self.emotion_pos_bias_y = 0.0
 
-    def start_blink(self, speed_mult=None):
+    def start_blink(self, speed_mult=None, blink_speed_min=2.0, blink_speed_max=3.5):
         if self.blink_state == "IDLE":
             self.blink_state = "DROPPING"
-            self.blink_speed_mult = speed_mult if speed_mult is not None else random.uniform(BLINK_SPEED_MIN, BLINK_SPEED_MAX)
+            self.blink_speed_mult = speed_mult if speed_mult is not None else random.uniform(blink_speed_min, blink_speed_max)
             self.vy = 40 * self.blink_speed_mult
 
     def set_emotion(self, name: str, intensity: float = 1.0, force: bool = False):
-        if name not in EMOTION_PRESETS:
+        resolved = resolve_emotion_name(name)
+        if resolved is None:
             return
         now = time.time()
-        if name != self.current_emotion and not force and (now - self.last_emotion_change_time) < EMOTION_CHANGE_COOLDOWN:
-            self.pending_emotion = name; self.pending_intensity = intensity
+        if resolved != self.current_emotion and not force and (now - self.last_emotion_change_time) < EMOTION_CHANGE_COOLDOWN:
+            self.pending_emotion = resolved; self.pending_intensity = intensity
             self.pending_apply_time = self.last_emotion_change_time + EMOTION_CHANGE_COOLDOWN
             return
-        if name == "happy" and self.current_emotion != "happy":
+        if resolved == "happy" and self.current_emotion != "happy":
             self.happy_burst_until = now + 0.35
-        if name != self.current_emotion:
+        if resolved != self.current_emotion:
             self.last_emotion_change_time = now
-        self.pending_emotion = None; self.current_emotion = name
-        preset = EMOTION_PRESETS[name]; idle = EMOTION_PRESETS["idle"]
+        self.pending_emotion = None; self.current_emotion = resolved
+        preset = EMOTION_PRESETS[resolved]; idle = EMOTION_PRESETS["idle"]
         side = preset.get("left_bias", {}) if self.is_left else preset.get("right_bias", {})
         intensity = max(0.0, min(1.0, intensity))
         self.emotion_pos_bias_x = side.get("pos_x", 0.0) * intensity
@@ -149,28 +117,13 @@ class BlockyEye:
             self.set_emotion(e, i, force=True)
 
         if self.blink_state == "IDLE":
-            t = time.time() + self.noise_t
-            tx = self.target_pos[0] + math.sin(t*1.3)*0.2 + math.sin(t*0.7)*0.1
-            ty = self.target_pos[1] + math.cos(t*1.1)*0.2 + math.cos(t*0.9)*0.1
             tl = self.target_top_lid; bl = self.target_bottom_lid; la = self.target_lid_angle
-            if time.time() < self.happy_burst_until:
-                ty -= 8.0
-            if self.current_emotion == "happy":
-                ht = time.time()*6.0 + self.happy_phase
-                ty -= 2.5 + math.sin(ht)*2.0; tx += math.sin(ht*1.7)*1.2
-            elif "looking_" in self.current_emotion and "left" in self.current_emotion:
-                tx -= LOOK_SIDE_OFFSET
-            elif "looking_" in self.current_emotion and "right" in self.current_emotion:
-                tx += LOOK_SIDE_OFFSET
-            ep = EMOTION_PRESETS[self.current_emotion].get("pos", (0,0))
-            tx += ep[0] + self.emotion_pos_bias_x; ty += ep[1] + self.emotion_pos_bias_y
+            tx = self.base_x
+            ty = self.base_y
             dx = tx - self.current_pos[0]; dy = ty - self.current_pos[1]
-            sy = 0.14 if dy < -1.0 else (0.38 if dy > 1.0 else 0.22)
-            self.current_pos[0] += dx*0.20; self.current_pos[1] += dy*sy
-            rx = self.current_pos[0]-self.base_x; ry = self.current_pos[1]-self.base_y
-            lr = (rx*0.5+ry*0.8)*self.rot_sensitivity
-            if self.current_emotion=="happy": lr += math.sin(time.time()*8.0+self.happy_phase)*1.2
-            self.current_rotation += (lr+self.target_rotation-self.current_rotation)*self.rot_speed
+            self.current_pos[0] += dx * 0.20
+            self.current_pos[1] += dy * 0.22
+            self.current_rotation = 0.0
             t2 = time.time()
             bw = math.sin(t2*1.5+self.base_x)*1.5 + math.sin(t2*0.5)*1.0
             bh = math.cos(t2*1.8+self.base_y)*1.5 + math.cos(t2*0.6)*1.0
@@ -214,13 +167,11 @@ class BlockyEye:
         dw=max(4,int(self.w)); dh=max(4,int(self.h))
         sz=int(max(self.base_w,self.base_h)*2.5)
         eye=Image.new("RGBA",(sz,sz),(0,0,0,0)); ed=ImageDraw.Draw(eye)
-        br=min(int(min(self.base_w,self.base_h)*0.25),int(min(dw,dh)//2))
-        ox=max(-1,min(1,(self.current_pos[0]-self.base_x)/30.0))
-        oy=max(-1,min(1,(self.current_pos[1]-self.base_y)/20.0))
+        ox=0.0
+        oy=0.0
         cx=cy=sz/2; x0=cx-dw/2; y0=cy-dh/2; x1=cx+dw/2; y1=cy+dh/2
         sx=x0+(x1-x0)/2+ox*(dw*0.22); sy=y0+(y1-y0)/2+oy*(dh*0.18)
         ed.ellipse([sx-dw/2,sy-dh/2,sx+dw/2,sy+dh/2],fill=EYE_COLOR)
-        # eyelids
         for which,ratio,ypos in [("top",self.top_lid,y0),("bot",self.bottom_lid,y1)]:
             if ratio>0.01:
                 lh=max(1,int(dh*ratio)); lw=int(dw+28); lh2=int(lh+14)
@@ -230,7 +181,7 @@ class BlockyEye:
                 lx=int(cx-lid.width/2)
                 ly=int(y0-6) if which=="top" else int(y1+6-lid.height)
                 eye.alpha_composite(lid,(lx,ly))
-        rot=eye.rotate(self.current_rotation,resample=Image.BICUBIC,expand=False)
+        rot=eye.rotate(0.0,resample=Image.BICUBIC,expand=False)
         px=int(self.current_pos[0]-sz/2); py=int(self.current_pos[1]-sz/2)
         bg_image.alpha_composite(rot,(px,py))
 
@@ -242,11 +193,14 @@ class EyeRenderer:
         self.bb = bb
         cfg = _load_yaml(config_path)
         s = cfg.get("stream", {}) or {}
+        e = cfg.get("eyes", {}) or {}
+
         self.render_fps = int(s.get("render_fps", 24))
+        self.blink_speed_min = float(e.get("blink_speed_min", 3.2))
+        self.blink_speed_max = float(e.get("blink_speed_max", 4.2))
 
     def run(self) -> None:
         from PIL import Image
-        # Display init (graceful fallback if hardware absent)
         disp_l = disp_r = None
         try:
             import board, busio, digitalio
@@ -268,7 +222,6 @@ class EyeRenderer:
         cx = SCREEN_WIDTH / 2; cy = SCREEN_HEIGHT / 2
         left_eye  = BlockyEye(cx, cy, is_left=True)
         right_eye = BlockyEye(cx, cy, is_left=False)
-        # Sync dynamics so both eyes look identical
         right_eye.noise_t = left_eye.noise_t
         right_eye.rot_sensitivity = left_eye.rot_sensitivity
         right_eye.rot_speed = left_eye.rot_speed
@@ -280,38 +233,22 @@ class EyeRenderer:
 
         while self.bb.read("running")["running"]:
             now = time.time()
-            state = self.bb.read("emotion","emotion_intensity","face_detected",
-                                 "face_norm_x","face_norm_y","face_roll_deg")
+            state = self.bb.read("emotion", "emotion_intensity", "running")
             emotion   = state["emotion"]
             intensity = state["emotion_intensity"]
-            norm_x    = state["face_norm_x"]
-            norm_y    = state["face_norm_y"]
-            face_roll = state["face_roll_deg"]
 
-            # Apply emotion change
             if emotion != current_emotion:
                 left_eye.set_emotion(emotion, intensity)
                 right_eye.set_emotion(emotion, intensity)
                 current_emotion = emotion
 
-            # Eye target position from face
-            tx = norm_x * MAX_X_OFFSET
-            ty = norm_y * MAX_Y_OFFSET
-            roll = max(-FACE_ROLL_MAX_DEG, min(FACE_ROLL_MAX_DEG, face_roll * FACE_ROLL_MULT))
-
             for eye in (left_eye, right_eye):
-                half_w = max(12.0, eye.base_w * 0.42)
-                half_h = max(12.0, eye.base_h * 0.42)
-                eye.target_pos[0] = max(half_w + EYE_BOUND_MARGIN,
-                                        min(SCREEN_WIDTH  - half_w - EYE_BOUND_MARGIN, cx + tx))
-                eye.target_pos[1] = max(half_h + EYE_BOUND_MARGIN,
-                                        min(SCREEN_HEIGHT - half_h - EYE_BOUND_MARGIN, cy + ty))
-                eye.target_rotation = roll
+                eye.target_pos[0] = cx
+                eye.target_pos[1] = cy
+                eye.target_rotation = 0.0
 
-            # Blink
             if now >= next_blink:
-                speed = random.uniform(BLINK_SPEED_MIN, BLINK_SPEED_MAX)
-                # Align blink start conditions so both displays animate the same phase
+                speed = random.uniform(self.blink_speed_min, self.blink_speed_max)
                 avg_y = (left_eye.current_pos[1] + right_eye.current_pos[1]) * 0.5
                 avg_w = (left_eye.current_w + right_eye.current_w) * 0.5
                 avg_h = (left_eye.current_h + right_eye.current_h) * 0.5
@@ -323,15 +260,13 @@ class EyeRenderer:
                     eye.current_h = avg_h
                     eye.w = avg_w
                     eye.h = avg_h
-                left_eye.start_blink(speed)
-                right_eye.start_blink(speed)
+                left_eye.start_blink(speed, self.blink_speed_min, self.blink_speed_max)
+                right_eye.start_blink(speed, self.blink_speed_min, self.blink_speed_max)
                 next_blink = now + random.uniform(3, 7)
 
-            # Update physics
             left_eye.update()
             right_eye.update()
 
-            # Render to displays
             if disp_l is not None or disp_r is not None:
                 try:
                     bg_l = Image.new("RGBA", (SCREEN_WIDTH, SCREEN_HEIGHT), (*BG_COLOR, 255))

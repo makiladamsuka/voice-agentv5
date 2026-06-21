@@ -270,3 +270,27 @@ servo:
   tilt_send_smooth_hz: 5.0
   home_smooth_sec: 0.9
   home_smooth_hz: 30.0
+
+eyes:
+  blink_speed_min: 3.2
+  blink_speed_max: 4.2
+
+face_tracking:
+  far_squint_chance: 0.08
+  face_track_default: attentive
+
+surroundings_emotion:
+  no_face_grace_sec: 0.9
+  no_person_hold_min_sec: 2.8
+  no_person_hold_max_sec: 5.2
+  person_hold_min_sec: 1.1
+  person_hold_max_sec: 2.8
+  direction_trigger_norm_x: 0.22
+  direction_hold_min_sec: 0.6
+  direction_hold_max_sec: 1.2
+  direction_cooldown_sec: 0.9
+  close_face_enter_ratio: 0.05
+  far_face_area_ratio: 0.018
+  near_exit_ratio: 0.041
+  far_exit_ratio: 0.0225
+  emotion_history_len: 3

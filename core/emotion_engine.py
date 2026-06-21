@@ -1,11 +1,11 @@
 """EmotionEngine: reactive emotion state machine.
 
-All emotion logic is contained here. Adding or changing an emotion trigger
-requires editing only this file.
+Uses SurroundingsEmotionController (ported from voice-agentv4) for distance,
+directional, activity, and squint-driven expression selection.
 
 Reads from BB:
-    face_detected, face_area_ratio, face_count, track_kind,
-    servo_mode, servo_pan, manual_emotion, running
+    face_detected, face_area_ratio, face_norm_x, face_norm_y, face_count,
+    track_kind, servo_mode, manual_emotion, running
 
 Writes to BB:
     emotion, emotion_intensity
@@ -23,25 +23,12 @@ except ImportError:
     yaml = None
 
 from core.blackboard import Blackboard
+from core.emotion_presets import EMOTION_INTENSITY, resolve_emotion_name
+from core.surroundings_emotion import SurroundingsEmotionConfig, SurroundingsEmotionController
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
 
-# ── Constants ──────────────────────────────────────────────────────────────────
-NO_FACE_GRACE_SEC = 0.9
-NO_PERSON_HOLD_MIN_SEC = 2.8
-NO_PERSON_HOLD_MAX_SEC = 5.2
-PERSON_HOLD_MIN_SEC = 1.1
-PERSON_HOLD_MAX_SEC = 2.8
-DIRECTION_TRIGGER_NORM_X = 0.22
-DIRECTION_HOLD_MIN_SEC = 0.6
-DIRECTION_HOLD_MAX_SEC = 1.2
-DIRECTION_COOLDOWN_SEC = 0.9
-CLOSE_FACE_AREA_RATIO = 0.05
-FAR_FACE_AREA_RATIO = 0.018
-NEAR_EXIT_RATIO = CLOSE_FACE_AREA_RATIO * 0.82
-FAR_EXIT_RATIO = FAR_FACE_AREA_RATIO * 1.25
-EMOTION_CHANGE_COOLDOWN = 0.75
 EMOTION_LOG = True
 
 
@@ -52,52 +39,8 @@ def _load_yaml(path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
-def _classify_distance(area: float, prev_zone: str) -> str:
-    if prev_zone == "near" and area >= NEAR_EXIT_RATIO:
-        return "near"
-    if prev_zone == "far" and area <= FAR_EXIT_RATIO:
-        return "far"
-    if area >= CLOSE_FACE_AREA_RATIO:
-        return "near"
-    if area < FAR_FACE_AREA_RATIO:
-        return "far"
-    return "mid"
-
-
-def _weighted_pick(weights: dict, fallback: str = "idle") -> str:
-    total = sum(w for w in weights.values() if w > 0)
-    if total <= 0:
-        return fallback
-    r = random.uniform(0.0, total)
-    acc = 0.0
-    for name, w in weights.items():
-        if w <= 0:
-            continue
-        acc += w
-        if r <= acc:
-            return name
-    return fallback
-
-
-def _choose_no_person(toggle: list) -> str:
-    base = toggle[0]
-    toggle[0] = "idle" if base == "sleepy" else "sleepy"
-    r = random.random()
-    if r < 0.08:
-        return "sad"
-    if r < 0.15:
-        return "idle"
-    return base
-
-
-def _choose_person(zone: str, track_kind: str) -> str:
-    if zone == "near":
-        return _weighted_pick({"happy": 0.45, "excited": 0.22, "warm": 0.20, "surprised": 0.13})
-    if zone == "far":
-        return _weighted_pick({"curious": 0.40, "attentive": 0.30, "calm": 0.20, "uncertain": 0.10})
-    if track_kind == "multi":
-        return _weighted_pick({"engaged": 0.35, "amused": 0.30, "playful": 0.25, "happy": 0.10})
-    return _weighted_pick({"attentive": 0.35, "engaged": 0.28, "curious": 0.22, "happy": 0.15})
+def _cfg(cfg: dict, key: str, default=None):
+    return (cfg.get(key) if cfg else None) or default
 
 
 # ── EmotionEngine ──────────────────────────────────────────────────────────────
@@ -107,39 +50,65 @@ class EmotionEngine:
 
     def __init__(self, bb: Blackboard, config_path: Path = DEFAULT_CONFIG_PATH) -> None:
         self.bb = bb
+        cfg = _load_yaml(config_path)
+        se = _cfg(cfg, "surroundings_emotion", default={}) or {}
+        ft = _cfg(cfg, "face_tracking", default={}) or {}
+
+        self._controller = SurroundingsEmotionController(
+            cfg=SurroundingsEmotionConfig(
+                no_face_grace_sec=float(se.get("no_face_grace_sec", 0.9)),
+                no_person_hold_min_sec=float(se.get("no_person_hold_min_sec", 2.8)),
+                no_person_hold_max_sec=float(se.get("no_person_hold_max_sec", 5.2)),
+                person_hold_min_sec=float(se.get("person_hold_min_sec", 1.1)),
+                person_hold_max_sec=float(se.get("person_hold_max_sec", 2.8)),
+                direction_trigger_norm_x=float(se.get("direction_trigger_norm_x", 0.22)),
+                direction_hold_min_sec=float(se.get("direction_hold_min_sec", 0.6)),
+                direction_hold_max_sec=float(se.get("direction_hold_max_sec", 1.2)),
+                direction_cooldown_sec=float(se.get("direction_cooldown_sec", 0.9)),
+                close_face_enter_ratio=float(se.get("close_face_enter_ratio", 0.05)),
+                far_face_area_ratio=float(se.get("far_face_area_ratio", 0.018)),
+                near_exit_ratio=float(se.get("near_exit_ratio", 0.041)),
+                far_exit_ratio=float(se.get("far_exit_ratio", 0.0225)),
+                emotion_history_len=int(se.get("emotion_history_len", 3)),
+            ),
+        )
+        self._face_track_default = str(ft.get("face_track_default", "attentive"))
+        self._far_squint_chance = float(ft.get("far_squint_chance", 0.08))
 
         self._current = "idle"
-        self._last_change_ts = 0.0
-        self._next_change_ts = time.time() + random.uniform(1.6, 3.0)
-        self._distance_zone = "mid"
-        self._no_person_toggle = ["sleepy"]
-        self._direction_cooldown = 0.0
-        self._last_seen_ts = 0.0
+        self._prev_norm_x = 0.0
+        self._prev_norm_y = 0.0
         self._loop_hz = 24.0
 
-    def _set(self, name: str, intensity: float = 1.0) -> None:
-        now = time.time()
-        if name == self._current:
+    def _set(self, name: str, intensity_scale: float = 1.0) -> None:
+        resolved = resolve_emotion_name(name)
+        if resolved is None:
             return
-        if (now - self._last_change_ts) < EMOTION_CHANGE_COOLDOWN:
+        intensity = EMOTION_INTENSITY.get(resolved, 0.5) * max(0.0, min(1.0, intensity_scale))
+        if resolved == self._current:
+            self.bb.write(emotion_intensity=intensity)
             return
-        self._current = name
-        self._last_change_ts = now
-        self.bb.write(emotion=name, emotion_intensity=intensity)
+        self._current = resolved
+        self.bb.write(emotion=resolved, emotion_intensity=intensity)
         if EMOTION_LOG:
-            print(f"[emotion {time.strftime('%H:%M:%S')}] {name}")
+            print(f"[emotion {time.strftime('%H:%M:%S')}] {resolved}")
 
     def run(self) -> None:
         loop_delay = 1.0 / self._loop_hz
-        self.bb.write(emotion="idle", emotion_intensity=1.0)
+        self._set("idle")
 
         while self.bb.read("running")["running"]:
             now = time.time()
 
-            # Manual override wins unconditionally
             state = self.bb.read(
-                "manual_emotion", "face_detected", "face_area_ratio",
-                "face_count", "track_kind", "servo_mode",
+                "manual_emotion",
+                "face_detected",
+                "face_area_ratio",
+                "face_norm_x",
+                "face_norm_y",
+                "face_count",
+                "track_kind",
+                "servo_mode",
             )
             manual = state["manual_emotion"]
             if manual is not None:
@@ -148,29 +117,37 @@ class EmotionEngine:
                 continue
 
             face = state["face_detected"]
-            area = state["face_area_ratio"]
-            count = state["face_count"]
-            kind = state["track_kind"]
+            area = float(state["face_area_ratio"])
+            norm_x = float(state["face_norm_x"])
+            norm_y = float(state["face_norm_y"])
             mode = state["servo_mode"]
+            wander_mode = mode == "wander"
 
-            if face:
-                self._last_seen_ts = now
+            dx = abs(norm_x - self._prev_norm_x)
+            dy = abs(norm_y - self._prev_norm_y)
+            activity = min(1.0, (dx + dy) / 2.0)
+            self._prev_norm_x = norm_x
+            self._prev_norm_y = norm_y
 
-            # Compute distance zone
-            if face:
-                self._distance_zone = _classify_distance(area, self._distance_zone)
+            zone = self._controller.classify_distance_zone(area) if face else self._controller.distance_zone
+            squint_hint = 0.0
+            if face and zone == "far" and random.random() < self._far_squint_chance:
+                squint_hint = 1.0
 
-            person_present = face or (now - self._last_seen_ts) < NO_FACE_GRACE_SEC
-
-            if now >= self._next_change_ts:
-                if not person_present:
-                    emotion = _choose_no_person(self._no_person_toggle)
-                    hold = random.uniform(NO_PERSON_HOLD_MIN_SEC, NO_PERSON_HOLD_MAX_SEC)
-                else:
-                    emotion = _choose_person(self._distance_zone, kind)
-                    hold = random.uniform(PERSON_HOLD_MIN_SEC, PERSON_HOLD_MAX_SEC)
-                self._set(emotion)
-                self._next_change_ts = now + hold
+            pick = self._controller.tick(
+                now=now,
+                face_detected=face,
+                face_area_ratio=area,
+                face_norm_x=norm_x,
+                squint_hint=squint_hint,
+                activity=activity,
+                wander_mode=wander_mode,
+            )
+            if pick:
+                self._set(pick)
+            elif face:
+                fallback = self._controller.current_emotion or self._face_track_default
+                self._set(fallback)
 
             time.sleep(loop_delay)
 

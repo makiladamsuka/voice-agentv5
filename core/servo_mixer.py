@@ -19,7 +19,7 @@ except ImportError:
     yaml = None
 
 from core.blackboard import Blackboard
-from core.base_controller import _pan_to_mech
+from lib.head_mech import signed_pan_mech_deg
 from base_safety import BaseMotionGate, BaseMoveWatchdog, BaseSafetyConfig
 from lib.elastic_head_motion import smooth_toward
 
@@ -58,6 +58,7 @@ class ServoMixer:
         cfg = _load_yaml(config_path)
         s = _cfg(cfg, "servo", default={}) or {}
         b = _cfg(cfg, "base", default={}) or {}
+        self._servo_cfg = s
 
         self.pan_min = float(s.get("pan_min", 40.0))
         self.pan_max = float(s.get("pan_max", 120.0))
@@ -99,6 +100,10 @@ class ServoMixer:
         self._encoder_deg = 0.0
         self._last_encoder_poll_ts = 0.0
         self._encoder_poll_hz = 2.0
+        self._last_debug_cmd_seq = 0
+
+    def _pan_mech(self, pan_cmd: float) -> float:
+        return signed_pan_mech_deg(pan_cmd, self._servo_cfg)
 
     def _publish_encoder(self, enc: float, pan: float, busy: bool, *, synced: bool = True) -> None:
         self._encoder_deg = enc
@@ -122,12 +127,6 @@ class ServoMixer:
         except Exception:
             return False
 
-    def _pan_mech(self, pan_cmd: float) -> float:
-        return _pan_to_mech(
-            pan_cmd, self.pan_center, self.pan_min, self.pan_max,
-            self.mech_left, self.mech_right,
-        )
-
     def _world_yaw(self, encoder_deg: float, pan_cmd: float) -> float:
         return encoder_deg + self._pan_mech(pan_cmd)
 
@@ -146,6 +145,38 @@ class ServoMixer:
             or abs(tilt - self._prev_tilt) >= self.send_min_deg
         )
 
+    def _handle_debug_commands(self, now: float) -> bool:
+        """Browser debug panel: zero base / fusion reset. Returns True if handled."""
+        dbg = self.bb.read(
+            "manual_control_enabled",
+            "debug_control_cmd",
+            "debug_control_seq",
+        )
+        if not dbg["manual_control_enabled"]:
+            return False
+
+        cmd = dbg["debug_control_cmd"]
+        cmd_seq = int(dbg["debug_control_seq"])
+        if not cmd or cmd_seq <= self._last_debug_cmd_seq:
+            return False
+
+        self._last_debug_cmd_seq = cmd_seq
+        if cmd == "quit":
+            self.bb.write(running=False, debug_control_cmd="")
+            return True
+        if cmd == "zero_base":
+            if self._link is not None:
+                self._link.zero_base()
+                time.sleep(0.15)
+                pan = self._quantize(self.bb.read("servo_pan")["servo_pan"])
+                self._sync_encoder(pan)
+            self.bb.write(base_fusion_resync_request=True, debug_control_cmd="")
+            return True
+        if cmd == "fusion_reset":
+            self.bb.write(base_fusion_resync_request=True, debug_control_cmd="")
+            return True
+        return False
+
     def run(self) -> None:
         if self._link is None or not self._link.connected:
             print("[ServoMixer] No servo link — running in dry-run mode.")
@@ -160,6 +191,10 @@ class ServoMixer:
 
         while self.bb.read("running")["running"]:
             now = time.time()
+            if self._handle_debug_commands(now):
+                time.sleep(loop_delay)
+                continue
+
             state = self.bb.read(
                 "servo_pan", "servo_tilt",
                 "base_step_ready", "base_step_deg", "base_step_source",

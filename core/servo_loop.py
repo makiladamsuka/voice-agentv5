@@ -151,6 +151,7 @@ class ServoLoop:
         pm = _cfg(cfg, "person_memory", default={}) or {}
         lss = _cfg(cfg, "last_seen_search", default={}) or {}
         b = _cfg(cfg, "base", default={}) or {}
+        dv = _cfg(cfg, "debug_viz", default={}) or {}
 
         # ── Servo limits ──────────────────────────────────────────────────────
         self.pan_min = float(s.get("pan_min", 40.0))
@@ -264,6 +265,31 @@ class ServoLoop:
         self._memory_reacquire_ts = 0.0
         self._last_base_enc = None
         self._proactive_comp_applied = False
+        self._last_debug_cmd_seq = 0
+        self._debug_head_step = float(dv.get("head_step_deg", 5.0))
+
+    def _apply_debug_head_cmd(self, cmd: str, step: float) -> bool:
+        """Browser WASD when manual_control_enabled. Returns True if cmd consumed."""
+        if cmd == "tilt_up":
+            self._tilt = clamp(self._tilt + self.tilt_sign * step, self.tilt_min, self.tilt_max)
+        elif cmd == "tilt_down":
+            self._tilt = clamp(self._tilt - self.tilt_sign * step, self.tilt_min, self.tilt_max)
+        elif cmd == "pan_left":
+            self._pan = clamp(self._pan - self.pan_sign * step, self.pan_min, self.pan_max)
+        elif cmd == "pan_right":
+            self._pan = clamp(self._pan + self.pan_sign * step, self.pan_min, self.pan_max)
+        elif cmd == "center":
+            self._pan = self.pan_center
+            self._tilt = self.tilt_center
+            self._wander.reset(self.pan_center, self.tilt_center, time.time())
+        else:
+            return False
+        self._wander.pan_goal = self._pan
+        self._wander.tilt_goal = self._tilt
+        self._pan_pid.reset()
+        self._tilt_pid.reset()
+        self.bb.write(imu_drift_reset_request=True)
+        return True
 
     # ── Base Compensation ──────────────────────────────────────────────────────
 
@@ -485,6 +511,31 @@ class ServoLoop:
             dt = max(0.001, min(0.5, now_pc - prev_ts))
             prev_ts = now_pc
             now = time.time()
+
+            dbg = self.bb.read(
+                "manual_control_enabled",
+                "debug_control_cmd",
+                "debug_control_seq",
+                "debug_head_step_deg",
+            )
+            manual = dbg["manual_control_enabled"]
+            cmd = dbg["debug_control_cmd"]
+            cmd_seq = int(dbg["debug_control_seq"])
+            if manual and cmd and cmd_seq > self._last_debug_cmd_seq:
+                self._last_debug_cmd_seq = cmd_seq
+                step = float(dbg["debug_head_step_deg"] or self._debug_head_step)
+                if cmd in ("tilt_up", "tilt_down", "pan_left", "pan_right", "center"):
+                    self._apply_debug_head_cmd(cmd, step)
+                    self.bb.write(
+                        debug_control_cmd="",
+                        servo_pan=self._pan,
+                        servo_tilt=self._tilt,
+                        servo_mode="manual",
+                        wander_moving=False,
+                        wander_last_step_deg=0.0,
+                    )
+                    time.sleep(loop_delay)
+                    continue
 
             self._apply_proactive_base_comp()
             self._apply_base_compensation()

@@ -79,6 +79,16 @@ class Blackboard:
     emotion_intensity: float = 1.0
     manual_emotion: str = None     # set via terminal/API override
 
+    # ── Debug manual control (written by viz POST /api/control) ───────────────
+    manual_control_enabled: bool = False
+    debug_control_cmd: str = ""
+    debug_control_seq: int = 0
+    debug_head_step_deg: float = 5.0
+    imu_yaw_raw_deg: float = 0.0
+    imu_drift_correction_deg: float = 0.0
+    fusion_stationary: bool = False
+    imu_drift_reset_request: bool = False
+
     # ── Control ──────────────────────────────────────────────────────────────
     running: bool = True
 

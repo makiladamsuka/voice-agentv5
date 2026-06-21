@@ -43,7 +43,8 @@ from lib.base_head_lead import (
     yaw_error_agrees_with_head,
 )
 from base_safety import BaseMotionGate
-from base_yaw_controller import BaseYawState, HeadYawFusion
+from base_yaw_controller import BaseYawState
+from lib.head_mech import signed_pan_mech_deg
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
@@ -63,15 +64,6 @@ def _cfg(data, *keys, default=None):
             return default
         cur = cur[key]
     return cur
-
-
-def _pan_to_mech(pan_cmd: float, pan_center: float, pan_min: float, pan_max: float,
-                 mech_left: float, mech_right: float) -> float:
-    if pan_cmd >= pan_center:
-        span = max(pan_max - pan_center, 1e-6)
-        return (pan_cmd - pan_center) / span * mech_right
-    span = max(pan_center - pan_min, 1e-6)
-    return (pan_center - pan_cmd) / span * mech_left
 
 
 class BaseController:
@@ -105,6 +97,8 @@ class BaseController:
         self.pan_center = float(s.get("pan_center", (self.pan_min + self.pan_max) * 0.5))
         self.mech_left = float(s.get("pan_mech_left_deg", -40.0))
         self.mech_right = float(s.get("pan_mech_right_deg", 40.0))
+        self.pan_sign = float(s.get("pan_sign", 1.0))
+        self._servo_cfg = s
         self.base_sign = float(b.get("sign", 1.0))
 
         # ── Trigger thresholds ────────────────────────────────────────────────
@@ -174,7 +168,6 @@ class BaseController:
             backoff_sec=float(b.get("error_backoff_sec", 45.0))
         )
         self._yaw_state = BaseYawState(max_yaw_deg=self.max_yaw_deg)
-        self._yaw_fusion = HeadYawFusion(imu_yaw_sign=float(imu.get("yaw_sign", 1.0)))
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self._last_nudge_ts = 0.0
@@ -190,15 +183,11 @@ class BaseController:
         self._random_turn_remaining = 0.0
         self._random_turn_sign = 0.0
         self._trigger_since = 0.0
-        self._fusion_initialized = False
-        self._fusion_last_ts = 0.0
-        self._fusion_resync_cooldown_ts = 0.0
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     def _pan_mech(self, pan_cmd: float) -> float:
-        return _pan_to_mech(pan_cmd, self.pan_center, self.pan_min, self.pan_max,
-                            self.mech_left, self.mech_right)
+        return signed_pan_mech_deg(pan_cmd, self._servo_cfg)
 
     def _head_pan_offset(self, pan_cmd: float) -> float:
         return self._pan_mech(pan_cmd)
@@ -332,38 +321,6 @@ class BaseController:
                     return 0.0
                 step = math.copysign(min(abs(step), budget * 0.95), step)
         return step
-
-    def _update_fusion(self, now: float, state: dict, pan_offset: float) -> None:
-        if not state.get("yaw_reference_locked"):
-            return
-
-        if state.get("base_fusion_resync_request"):
-            self._yaw_fusion.reset_reference(
-                pan_mech_deg=pan_offset,
-                base_encoder_deg=state["base_encoder_deg"],
-                imu_yaw_total_deg=state.get("imu_yaw_integral_deg", 0.0),
-                now=now,
-            )
-            self._fusion_resync_cooldown_ts = now
-            self.bb.write(base_fusion_resync_request=False)
-            return
-
-        if not self._fusion_initialized:
-            self._yaw_fusion.reset_reference(
-                pan_mech_deg=pan_offset,
-                base_encoder_deg=state["base_encoder_deg"],
-                imu_yaw_total_deg=state.get("imu_yaw_integral_deg", 0.0),
-                now=now,
-            )
-            self._fusion_initialized = True
-            self._fusion_last_ts = now
-
-        if not state.get("imu_available"):
-            return
-
-        self._yaw_fusion.imu_yaw_total_deg = state.get("imu_yaw_integral_deg", 0.0)
-        inferred = self._yaw_fusion.inferred_base_encoder_deg(pan_offset)
-        self.bb.write(imu_inferred_base_deg=inferred)
 
     # ── Per-mode planning ──────────────────────────────────────────────────────
 
@@ -515,12 +472,10 @@ class BaseController:
                 "imu_available", "imu_gyro_dps", "imu_gyro_z_dps",
                 "imu_yaw_integral_deg",
                 "yaw_reference_locked",
-                "base_fusion_resync_request",
             )
 
             pan_offset = self._head_pan_offset(state["servo_pan"])
             self._yaw_state.update(state["base_encoder_deg"], pan_offset)
-            self._update_fusion(now, state, pan_offset)
 
             self._gate.clear_backoff(now)
             if self._gate.allowed(now):

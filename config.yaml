@@ -32,7 +32,12 @@ debug_viz:
   enabled: true
   host: "0.0.0.0"
   port: 8082
-  base_yaw_sign: 1.0          # flip 3D base rotation if viz turns opposite to robot
+  manual_control_enabled: false  # true = browser WASD/Z/R work alongside face tracking
+  head_step_deg: 5.0
+  base_yaw_sign: -1.0         # flip 3D base rotation in world frame
+  pan_yaw_sign: 1.0           # 3D neck pan (keep 1.0 when servo.pan_sign handles hardware flip)
+  tilt_sign: 1.0              # flip head tilt (W/S); flip to -1.0 if viz tilts opposite
+  imu_pitch_sign: -1.0        # flip IMU pitch chip on head mesh
 
 person_memory:
   enabled: true
@@ -98,6 +103,11 @@ imu:
   horizon_max_up_from_center_deg: 3.0
   horizon_max_down_from_center_deg: 3.0
   yaw_sign: 1.0              # flip if IMU yaw integral opposes encoder/base
+  drift_correction_enabled: true
+  drift_stationary_hold_sec: 0.35
+  drift_enc_stable_deg: 0.2
+  drift_pan_stable_deg: 0.2
+  drift_gyro_max_dps: 6.0
 
 base:
   enabled: true
@@ -185,7 +195,7 @@ servo:
   pan_mech_right_deg: 40.0
   pan_track_range: 35.0
   tilt_track_range: 8.0
-  pan_sign: 1.0
+  pan_sign: -1.0              # −1: higher pan cmd = physical left; flip if A/D opposite to robot
   tilt_sign: -1.0
   deadzone_x: 0.05
   deadzone_y: 0.06

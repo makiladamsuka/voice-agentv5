@@ -219,6 +219,9 @@ class ImuAttitudeFilter:
     def reset_yaw_integral(self) -> None:
         self._yaw_integral_deg = 0.0
 
+    def set_yaw_integral_deg(self, degrees: float) -> None:
+        self._yaw_integral_deg = degrees
+
     def raw_roll_pitch_deg(self) -> tuple[float, float]:
         """Filter roll/pitch before level offsets (for startup calibration)."""
         return self._roll_deg, self._pitch_deg

@@ -92,9 +92,14 @@ def main():
 
     bb = Blackboard()
     bb.write(
+        running=True,
         yaw_reference_locked=False,
         imu_calibrated=False,
         base_encoder_synced=False,
+        manual_control_enabled=bool(debug_viz_cfg.get("manual_control_enabled", False)),
+        debug_control_cmd="",
+        debug_control_seq=0,
+        debug_head_step_deg=float(debug_viz_cfg.get("head_step_deg", 5.0)),
     )
 
     port_label = port if port else "auto"
@@ -137,6 +142,7 @@ def main():
         _wait_imu_ready(bb, timeout_sec=2.0)
 
     _lock_yaw_reference(bb, link, base_cfg)
+    bb.write(base_fusion_resync_request=True)
 
     # ── Phase 2: remaining services ───────────────────────────────────────────
     threads = [

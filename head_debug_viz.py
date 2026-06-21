@@ -9,7 +9,42 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any, Optional
+
+APP_DIR = Path(__file__).resolve().parent
+STATIC_DIR = APP_DIR / "static"
+_STATIC_MIME = {
+    ".js": "application/javascript; charset=utf-8",
+    ".mjs": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".wasm": "application/wasm",
+}
+
+
+def serve_debug_static(handler: BaseHTTPRequestHandler, path: str) -> bool:
+    """Serve files under /static/ (Three.js bundle). Returns True if handled."""
+    if not path.startswith("/static/"):
+        return False
+    rel = path[len("/static/") :].lstrip("/")
+    if not rel or ".." in rel.replace("\\", "/"):
+        handler.send_error(403)
+        return True
+    fp = (STATIC_DIR / rel).resolve()
+    root = STATIC_DIR.resolve()
+    if not str(fp).startswith(str(root)) or not fp.is_file():
+        handler.send_error(404)
+        return True
+    data = fp.read_bytes()
+    ctype = _STATIC_MIME.get(fp.suffix.lower(), "application/octet-stream")
+    handler.send_response(200)
+    handler.send_header("Content-Type", ctype)
+    handler.send_header("Cache-Control", "public, max-age=3600")
+    handler.send_header("Content-Length", str(len(data)))
+    handler.end_headers()
+    handler.wfile.write(data)
+    return True
 
 
 def find_available_port(host: str, preferred: int, *, max_tries: int = 12) -> int:
@@ -24,24 +59,6 @@ def find_available_port(host: str, preferred: int, *, max_tries: int = 12) -> in
     raise RuntimeError(f"no free port in range {preferred}-{preferred + max_tries - 1}")
 
 
-def servo_tilt_to_mechanical(
-    tilt_cmd: float,
-    *,
-    center: float,
-    t_min: float,
-    t_max: float,
-    mech_down_deg: float,
-    mech_up_deg: float,
-) -> float:
-    """Map servo command angle to physical tilt degrees (0 = upright at center)."""
-    tilt_cmd = max(t_min, min(t_max, tilt_cmd))
-    if tilt_cmd >= center:
-        span = max(t_max - center, 1e-6)
-        return mech_up_deg * (tilt_cmd - center) / span
-    span = max(center - t_min, 1e-6)
-    return mech_down_deg * (tilt_cmd - center) / span  # mech_down_deg is negative
-
-
 def servo_pan_to_mechanical(
     pan_cmd: float,
     *,
@@ -51,13 +68,34 @@ def servo_pan_to_mechanical(
     mech_left_deg: float,
     mech_right_deg: float,
 ) -> float:
-    """Map servo pan command to physical yaw degrees (0 = center)."""
+    """Map servo pan command to signed mechanical yaw (0 = center, + = right, − = left)."""
     pan_cmd = max(p_min, min(p_max, pan_cmd))
     if pan_cmd >= center:
         span = max(p_max - center, 1e-6)
         return mech_right_deg * (pan_cmd - center) / span
     span = max(center - p_min, 1e-6)
-    return mech_left_deg * (pan_cmd - center) / span
+    # Use positive left span scale; sign comes from (pan_cmd − center) < 0.
+    left_span_deg = abs(mech_left_deg) if mech_left_deg != 0 else abs(mech_right_deg)
+    return left_span_deg * (pan_cmd - center) / span
+
+
+def servo_tilt_to_mechanical(
+    tilt_cmd: float,
+    *,
+    center: float,
+    t_min: float,
+    t_max: float,
+    mech_down_deg: float,
+    mech_up_deg: float,
+) -> float:
+    """Map servo tilt command to signed mechanical tilt (0 = upright, + = up, − = down)."""
+    tilt_cmd = max(t_min, min(t_max, tilt_cmd))
+    if tilt_cmd >= center:
+        span = max(t_max - center, 1e-6)
+        return mech_up_deg * (tilt_cmd - center) / span
+    span = max(center - t_min, 1e-6)
+    down_span_deg = abs(mech_down_deg) if mech_down_deg != 0 else abs(mech_up_deg)
+    return down_span_deg * (tilt_cmd - center) / span
 
 
 @dataclass
@@ -137,7 +175,16 @@ _DEBUG_HTML = """<!DOCTYPE html>
   <style>
     html, body { margin: 0; height: 100%; background: #0f1117; color: #d8dee9; font: 13px/1.4 ui-monospace, monospace; }
     #wrap { display: grid; grid-template-columns: 1fr 320px; height: 100%; }
-    #view { position: relative; min-height: 320px; }
+    #view { position: relative; min-height: 320px; height: 100%; overflow: hidden; }
+    #view canvas { display: block; width: 100% !important; height: 100% !important; }
+    #ground-hud {
+      position: absolute; top: 10px; left: 10px; right: 10px; max-width: 420px;
+      background: rgba(15,17,23,0.82); border: 1px solid #334155; border-radius: 8px;
+      padding: 10px 12px; font-size: 12px; line-height: 1.55; pointer-events: none;
+    }
+    #ground-hud .title { color: #88c0d0; margin-bottom: 4px; font-size: 11px; letter-spacing: 0.04em; }
+    #ground-hud .grow { display: flex; justify-content: space-between; gap: 10px; }
+    #ground-hud .gk { color: #6b7280; }
     #hud {
       padding: 12px 14px; overflow: auto; border-left: 1px solid #2a3142;
       background: #151922;
@@ -148,33 +195,86 @@ _DEBUG_HTML = """<!DOCTYPE html>
     .warn { color: #ebcb8b; }
     .bad { color: #bf616a; }
     .ok { color: #a3be8c; }
-    #legend { position: absolute; left: 10px; bottom: 10px; background: rgba(0,0,0,.45); padding: 8px 10px; border-radius: 6px; }
+    #legend { position: absolute; left: 10px; bottom: 10px; background: rgba(0,0,0,.45); padding: 8px 10px; border-radius: 6px; font-size: 11px; }
     #legend span { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; vertical-align: middle; }
+    #controls { margin: 10px 0 12px; padding: 10px; border: 1px solid #2a3142; border-radius: 8px; background: #11151d; }
+    #controls h2 { font-size: 12px; margin: 0 0 8px; color: #88c0d0; font-weight: 600; }
+    .btn-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 8px; }
+    .btn-grid button, .btn-row button {
+      background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px;
+      padding: 8px 4px; font: inherit; cursor: pointer;
+    }
+    .btn-grid button:hover, .btn-row button:hover { background: #334155; }
+    .btn-grid button:active, .btn-row button:active { background: #475569; }
+    .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .btn-row button { flex: 1; min-width: 70px; }
+    .hint { color: #6b7280; font-size: 11px; margin-top: 6px; }
+    #debug-panel { margin-top: 10px; padding-top: 8px; border-top: 1px solid #2a3142; }
+    #debug-panel h2 { font-size: 12px; margin: 0 0 6px; color: #88c0d0; font-weight: 600; }
   </style>
 </head>
 <body>
 <div id="wrap">
   <div id="view">
+    <div id="ground-hud">
+      <div class="title">ANGLES vs GROUND / FORWARD (+Z at startup)</div>
+      <div id="ground-hud-body"></div>
+    </div>
     <div id="legend">
-      <div><span style="background:#4ade80"></span>actual head</div>
-      <div><span style="background:#fb923c"></span>target</div>
-      <div><span style="background:#60a5fa"></span>IMU frame</div>
-      <div><span style="background:#f472b6"></span>look ray</div>
-      <div><span style="background:#facc15"></span>person memory</div>
+      <div><span style="background:#38bdf8"></span>enc base (blue arrow)</div>
+      <div><span style="background:#fb923c"></span>imu inferred base</div>
+      <div><span style="background:#fbbf24"></span>world aim (yellow)</div>
+      <div><span style="background:#f472b6"></span>head local (pink)</div>
+      <div><span style="background:#4ade80"></span>head mesh</div>
     </div>
   </div>
   <div id="hud">
     <h1>Head debug</h1>
+    <div id="controls" style="display:none">
+      <h2>Manual control</h2>
+      <div class="btn-grid">
+        <button type="button" data-cmd="tilt_up">W tilt+</button>
+        <button type="button" data-cmd="center">C center</button>
+        <button type="button" data-cmd="tilt_down">S tilt−</button>
+        <button type="button" data-cmd="pan_left">A pan−</button>
+        <button type="button" data-cmd="zero_base">Z zero</button>
+        <button type="button" data-cmd="pan_right">D pan+</button>
+      </div>
+      <div class="btn-row">
+        <button type="button" data-cmd="fusion_reset">R fusion reset</button>
+        <button type="button" data-cmd="quit">Q quit</button>
+      </div>
+      <div class="hint">WASD keys work when this page is focused. Rotate base by hand.</div>
+    </div>
+    <div id="debug-panel">
+      <h2>Fusion debug</h2>
+      <div id="fusion-stats"></div>
+    </div>
     <div id="stats"></div>
   </div>
 </div>
 <script type="importmap">
 {
   "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+    "three": "/static/vendor/three.module.js",
+    "three/addons/": "/static/vendor/addons/"
   }
 }
+</script>
+<script>
+window.addEventListener('error', (ev) => {
+  const view = document.getElementById('view');
+  if (!view || view.dataset.vizErr) return;
+  const msg = ev.message || 'unknown error';
+  if (msg.includes('three') || msg.includes('OrbitControls') || ev.filename && ev.filename.includes('static/vendor')) {
+    view.dataset.vizErr = '1';
+    const box = document.createElement('div');
+    box.className = 'bad';
+    box.style.cssText = 'position:absolute;inset:12px;padding:12px;background:rgba(15,17,23,.92);border:1px solid #bf616a;border-radius:8px;z-index:5';
+    box.textContent = '3D view failed to load: ' + msg;
+    view.appendChild(box);
+  }
+});
 </script>
 <script type="module">
 import * as THREE from 'three';
@@ -251,10 +351,11 @@ camLens.position.set(0, 0.11, 0.12);
 tiltNode.add(camLens);
 
 const targetGroup = new THREE.Group();
-neck.add(targetGroup);
+panNode.add(targetGroup);
 const targetMesh = box(0.28, 0.16, 0.14, 0xfb923c, 0.45);
 targetMesh.position.y = 0.11;
 targetGroup.add(targetMesh);
+targetGroup.visible = false;
 
 const imuGroup = new THREE.Group();
 headMesh.add(imuGroup);
@@ -291,6 +392,24 @@ const worldAimTip = new THREE.Mesh(
 worldAimTip.rotation.x = -Math.PI / 2;
 worldAimTip.position.set(0, 0, 1.05);
 worldAimGroup.add(worldAimTip);
+
+const inferredBaseGroup = new THREE.Group();
+scene.add(inferredBaseGroup);
+const inferredTickGeom = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(0, 0.018, 0.36),
+  new THREE.Vector3(0, 0.018, 0.58),
+]);
+const inferredTick = new THREE.Line(
+  inferredTickGeom,
+  new THREE.LineBasicMaterial({ color: 0xfb923c, linewidth: 2 })
+);
+inferredBaseGroup.add(inferredTick);
+const inferredDot = new THREE.Mesh(
+  new THREE.SphereGeometry(0.035, 12, 12),
+  new THREE.MeshStandardMaterial({ color: 0xfb923c, emissive: 0x7c2d12, emissiveIntensity: 0.4 })
+);
+inferredDot.position.set(0, 0.018, 0.58);
+inferredBaseGroup.add(inferredDot);
 
 const limitPan = new THREE.Group();
 base.add(limitPan);
@@ -348,6 +467,61 @@ function servoToRot(pan, tilt, panCenter, tiltCenter, s) {
   };
 }
 
+function updateGroundHud(s) {
+  const el = document.getElementById('ground-hud-body');
+  if (!el) return;
+  const baseG = s.base_ground_yaw_deg ?? s.base_fwd_deg ?? s.base_yaw_deg ?? 0;
+  const neckP = s.neck_pan_rel_base_deg ?? s.pan_rel_base_deg ?? s.pan_mech_deg ?? 0;
+  const headYawG = s.head_yaw_ground_deg ?? s.pan_ground_yaw_deg ?? s.world_fwd_deg ?? s.base_world_yaw_deg ?? 0;
+  const headTiltG = s.tilt_ground_deg ?? s.tilt_rel_fwd_deg ?? s.tilt_mech_deg ?? 0;
+  const vizYaw = s.viz_world_applied_deg ?? 0;
+  const vizTilt = s.viz_tilt_applied_deg ?? 0;
+  el.innerHTML = `
+    <div class="grow"><span class="gk">base (motor)</span><span>${fmtDir(baseG)}</span></div>
+    <div class="grow"><span class="gk">neck pan (on base)</span><span>${fmtDir(neckP)}</span></div>
+    <div class="grow"><span class="gk">head yaw (ground)</span><span>${fmtDir(headYawG)} <span class="gk">= base+neck</span></span></div>
+    <div class="grow"><span class="gk">head tilt (ground)</span><span>${fmtTilt(headTiltG)}</span></div>
+    <div class="grow"><span class="gk">3D viz yaw</span><span>${fmtDir(vizYaw)}</span></div>
+    <div class="grow"><span class="gk">3D viz tilt</span><span>${fmtTilt(vizTilt)}</span></div>
+    <div class="grow"><span class="gk">servo cmd</span><span>P ${fmt(s.pan)} T ${fmt(s.tilt)}</span></div>
+  `;
+}
+
+function setFusionStats(s) {
+  const fusionEl = document.getElementById('fusion-stats');
+  const controlsEl = document.getElementById('controls');
+  if (!fusionEl) return;
+  const showControls = !!s.manual_control_enabled || s.mode === 'manual_test';
+  if (controlsEl) controlsEl.style.display = showControls ? 'block' : 'none';
+
+  const fusionDelta = (s.fusion_delta_deg !== undefined)
+    ? s.fusion_delta_deg
+    : ((s.base_yaw_deg || 0) - (s.imu_inferred_base_deg || 0));
+  const drift = s.imu_drift_correction_deg || 0;
+  const stationary = s.fusion_stationary ? 'yes' : 'no';
+  const cls = (ok) => ok ? 'ok' : 'warn';
+
+  fusionEl.innerHTML = `
+    <div class="row" style="margin-top:4px;color:#88c0d0"><span>vs forward (0° = startup facing +Z)</span></div>
+    <div class="row"><span class="k">base encoder</span><span>${fmtDir(s.base_fwd_deg ?? s.base_yaw_deg)}</span></div>
+    <div class="row"><span class="k">head pan</span><span>${fmtDir(s.pan_rel_base_deg ?? s.pan_mech_deg)} <span class="k">on base</span></span></div>
+    <div class="row"><span class="k">head tilt</span><span>${fmtTilt(s.tilt_rel_fwd_deg ?? s.tilt_mech_deg)} <span class="k">mech on neck</span></span></div>
+    <div class="row"><span class="k">world camera</span><span>${fmtDir(s.world_fwd_deg ?? s.base_world_yaw_deg)} <span class="k">yaw only</span></span></div>
+    <div class="row"><span class="k">3D viz yaw</span><span>${fmtDir(s.viz_world_applied_deg)} <span class="k">(base×${fmt(s.viz_base_yaw_sign,0)} pan×${fmt(s.viz_pan_yaw_sign,0)})</span></span></div>
+    <div class="row"><span class="k">3D viz tilt</span><span>${fmtTilt(s.viz_tilt_applied_deg ?? (Number(s.tilt_rel_fwd_deg ?? s.tilt_mech_deg||0) * Number(s.viz_tilt_sign??1)))} <span class="k">(tilt×${fmt(s.viz_tilt_sign,0)})</span></span></div>
+    <div class="row"><span class="k">IMU pitch</span><span>${fmtTilt(s.viz_imu_pitch_applied_deg ?? s.imu_pitch_deg)} raw ${fmt(s.imu_pitch_deg)}° <span class="k">(×${fmt(s.viz_imu_pitch_sign,0)})</span></span></div>
+    <div class="row"><span class="k">stationary</span><span class="${cls(s.fusion_stationary)}">${stationary}</span></div>
+    <div class="row"><span class="k">enc base</span><span>${fmt(s.base_yaw_deg)}° raw</span></div>
+    <div class="row"><span class="k">imu base</span><span>${fmtDir(s.imu_inferred_base_deg)}</span></div>
+    <div class="row"><span class="k">fusion Δ</span><span class="${Math.abs(fusionDelta) > 8 ? 'warn' : 'ok'}">${fmt(fusionDelta)}° (enc−imu)</span></div>
+    <div class="row"><span class="k">imu total</span><span>${fmtDir(s.imu_yaw_total_deg)}</span></div>
+    <div class="row"><span class="k">imu raw</span><span>${fmt(s.imu_yaw_raw_deg)}°</span></div>
+    <div class="row"><span class="k">drift fix</span><span class="${Math.abs(drift) > 0.05 ? 'ok' : ''}">${fmt(drift)}°</span></div>
+    <div class="row"><span class="k">gyro</span><span>${fmt(s.imu_gyro_dps)} dps</span></div>
+    <div class="row"><span class="k">servo cmd</span><span>P ${fmt(s.pan)} T ${fmt(s.tilt)}</span></div>
+  `;
+}
+
 function setStats(s) {
   const cls = (ok) => ok ? 'ok' : 'bad';
   const hz = s.ts ? (1 / Math.max(0.001, performance.now() / 1000 - (window._lastTs || s.ts))).toFixed(1) : '-';
@@ -367,8 +541,6 @@ function setStats(s) {
     <div class="row"><span class="k">memory</span><span>${mems.length} active ${s.active_memory_id ? '#'+s.active_memory_id : '-'}</span></div>
     <div class="row"><span class="k">mem list</span><span>${memText}</span></div>
     <div class="row"><span class="k">base</span><span>enc ${fmt(s.base_yaw_deg)} world ${fmt(s.base_world_yaw_deg)} busy ${s.base_busy ? 'yes' : 'no'}</span></div>
-    <div class="row"><span class="k">yaw frame</span><span>base ${fmt(s.base_yaw_deg)}° + pan ${fmt(s.pan_mech_deg)}° = world ${fmt(s.base_world_yaw_deg)}°</span></div>
-    <div class="row"><span class="k">viz</span><span>blue arrow=base fwd · yellow=world aim · pink=head local</span></div>
     <div class="row"><span class="k">yaw split</span><span>imu ${fmt(s.imu_yaw_total_deg)} panΔ ${fmt(s.imu_pan_delta_deg)} base≈${fmt(s.imu_inferred_base_deg)}</span></div>
     <div class="row"><span class="k">IMU pitch</span><span class="${Math.abs(s.imu_pitch_deg||0) > 8 ? 'warn' : 'ok'}">${fmt(s.imu_pitch_deg)}° (vs mech ${fmt(s.tilt_mech_deg)}°)</span></div>
     <div class="row"><span class="k">IMU roll</span><span>${fmt(s.imu_roll_deg)}</span></div>
@@ -441,28 +613,56 @@ function fmt(v, d=1) {
   return Number(v).toFixed(d);
 }
 
+function fmtDir(v, d=1) {
+  if (v === undefined || v === null || Number.isNaN(v)) return '-';
+  const n = Number(v);
+  if (Math.abs(n) < 0.05) return `${n.toFixed(d)}° fwd`;
+  return `${n.toFixed(d)}° ${n > 0 ? 'R' : 'L'}`;
+}
+
+function fmtTilt(v, d=1) {
+  if (v === undefined || v === null || Number.isNaN(v)) return '-';
+  const n = Number(v);
+  if (Math.abs(n) < 0.05) return `${n.toFixed(d)}° level`;
+  return `${n.toFixed(d)}° ${n > 0 ? 'up' : 'down'}`;
+}
+
+function panMechDeg(s) {
+  if (s.pan_mech_deg !== undefined && s.pan_mech_deg !== null) return Number(s.pan_mech_deg);
+  return Number(s.pan) - Number(s.pan_center);
+}
+
+function tiltMechDeg(s) {
+  if (s.tilt_mech_deg !== undefined && s.tilt_mech_deg !== null) return Number(s.tilt_mech_deg);
+  return Number(s.tilt) - Number(s.tilt_center);
+}
+
 async function poll() {
   try {
     const res = await fetch('/api/state', { cache: 'no-store' });
     latest = await res.json();
     setStats(latest);
-    const a = servoToRot(latest.pan, latest.tilt, latest.pan_center, latest.tilt_center, latest);
-    const tPanMech = latest.pan_target_mech_deg ?? (latest.pan_target - latest.pan_center);
-    const tTiltMech = latest.tilt_target_mech_deg ?? (latest.tilt_target - latest.tilt_center);
-    const t = { pan: deg(tPanMech), tilt: -deg(tTiltMech) };
-    const baseSign = (latest.viz_base_yaw_sign === undefined || latest.viz_base_yaw_sign === null)
-      ? 1.0
-      : Number(latest.viz_base_yaw_sign);
-    // Base only on root; pan is applied on panNode (world = base + pan).
-    root.rotation.y = deg(latest.base_yaw_deg || 0) * baseSign;
-    panNode.rotation.y = a.pan;
-    tiltNode.rotation.x = a.tilt;
-    targetGroup.rotation.y = t.pan;
-    targetGroup.rotation.x = t.tilt;
-    worldAimGroup.rotation.y = deg(latest.base_world_yaw_deg || 0) * baseSign;
+    setFusionStats(latest);
+    updateGroundHud(latest);
+    const panMech = panMechDeg(latest);
+    const tiltMech = tiltMechDeg(latest);
+    const baseSign = Number(latest.viz_base_yaw_sign ?? 1);
+    const panSign = Number(latest.viz_pan_yaw_sign ?? 1);
+    const tiltSign = Number(latest.viz_tilt_sign ?? 1);
+    const imuPitchSign = Number(latest.viz_imu_pitch_sign ?? -1);
+    const baseRad = deg(latest.base_yaw_deg || 0) * baseSign;
+    const panRad = deg(panMech) * panSign;
+    const tiltRad = deg(tiltMech) * tiltSign;
+    // World aim must match scene graph: baseRad + panRad (not (base+pan)*sign).
+    root.rotation.y = baseRad;
+    panNode.rotation.y = panRad;
+    tiltNode.rotation.x = tiltRad;
+    targetGroup.rotation.x = tiltRad;
+    worldAimGroup.rotation.y = baseRad + panRad;
+    inferredBaseGroup.rotation.y = deg(latest.imu_inferred_base_deg || 0) * baseSign;
     updateBaseLimitArc(latest.base_max_yaw_deg);
     imuGroup.rotation.z = deg(latest.imu_roll_deg || 0);
-    imuGroup.rotation.x = deg(latest.imu_pitch_deg || 0);
+    imuGroup.rotation.x = deg(latest.imu_pitch_deg || 0) * imuPitchSign;
     updateMemoryMarkers(latest);
     const nearTiltMax = latest.tilt_mech_deg >= (latest.tilt_mech_up_deg - 1);
     const nearTiltMin = latest.tilt_mech_deg <= (latest.tilt_mech_down_deg + 1);
@@ -482,6 +682,41 @@ function resize() {
 
 window.addEventListener('resize', resize);
 resize();
+const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => resize()) : null;
+if (ro) ro.observe(view);
+
+let controlSeq = 0;
+async function sendControl(cmd) {
+  controlSeq += 1;
+  try {
+    await fetch('/api/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd, seq: controlSeq, step: latest.head_step_deg || 5 }),
+    });
+  } catch (e) {
+    console.warn('control failed', e);
+  }
+}
+
+document.querySelectorAll('#controls [data-cmd]').forEach((btn) => {
+  btn.addEventListener('click', () => sendControl(btn.dataset.cmd));
+});
+
+const keyToCmd = {
+  w: 'tilt_up', s: 'tilt_down', a: 'pan_left', d: 'pan_right',
+  c: 'center', z: 'zero_base', r: 'fusion_reset', q: 'quit',
+};
+window.addEventListener('keydown', (ev) => {
+  const controlsEl = document.getElementById('controls');
+  if (!controlsEl || controlsEl.style.display === 'none') return;
+  if (ev.target && (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA')) return;
+  const cmd = keyToCmd[ev.key.toLowerCase()];
+  if (!cmd) return;
+  ev.preventDefault();
+  sendControl(cmd);
+});
+
 setInterval(poll, 100);
 poll();
 
@@ -504,6 +739,8 @@ class _DebugHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:  # noqa: N802
+        if serve_debug_static(self, self.path):
+            return
         if self.path in ("/", "/index.html"):
             body = _DEBUG_HTML.encode("utf-8")
             self.send_response(200)

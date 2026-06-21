@@ -18,6 +18,8 @@ except ImportError:
     yaml = None
 
 from core.blackboard import Blackboard
+from base_yaw_controller import EncoderImuDriftCorrector, HeadYawFusion
+from lib.head_mech import signed_pan_mech_deg
 
 try:
     from imu_sensor import HorizonTiltBias, ImuReader, startup_level_calibrate
@@ -85,11 +87,22 @@ class ImuService:
         self.horizon_max_down: float = float(imu.get("horizon_max_down_from_center_deg", 4.0))
 
         servo = _cfg(cfg, "servo", default={}) or {}
+        self._servo_cfg = servo
         self._tilt_center = float(servo.get("tilt_center", 114.0))
         self._tilt_min = float(servo.get("tilt_min", 112.0))
         self._tilt_max = float(servo.get("tilt_max", 115.0))
         self._tilt_mechanical_scale = float(servo.get("tilt_mechanical_scale", 3.0))
         self._held_tilt_center = self._tilt_center
+
+        self.drift_correction_enabled = bool(imu.get("drift_correction_enabled", True))
+        self._fusion = HeadYawFusion(imu_yaw_sign=self.yaw_sign)
+        self._drift = EncoderImuDriftCorrector(
+            stationary_hold_sec=float(imu.get("drift_stationary_hold_sec", 0.35)),
+            enc_stable_deg=float(imu.get("drift_enc_stable_deg", 0.2)),
+            pan_stable_deg=float(imu.get("drift_pan_stable_deg", 0.2)),
+            gyro_max_dps=float(imu.get("drift_gyro_max_dps", 6.0)),
+        )
+        self._fusion_initialized = False
 
         self._reader = None
         self._horizon = None
@@ -165,6 +178,8 @@ class ImuService:
         while self.bb.read("running")["running"]:
             if self.bb.read("base_watchdog_reset")["base_watchdog_reset"]:
                 self._reader.filter.reset_yaw_integral()
+                self._fusion_initialized = False
+                self._drift.reset_motion_tracking()
                 self.bb.write(base_watchdog_reset=False)
 
             sample = self._reader.latest()
@@ -172,9 +187,65 @@ class ImuService:
                 time.sleep(0.005)
                 continue
 
-            now = time.perf_counter()
-            dt = max(0.001, min(0.1, now - prev_ts))
-            prev_ts = now
+            now_mono = time.perf_counter()
+            now = time.time()
+            dt = max(0.001, min(0.1, now_mono - prev_ts))
+            prev_ts = now_mono
+
+            bb_state = self.bb.read(
+                "yaw_reference_locked",
+                "base_encoder_deg",
+                "servo_pan",
+                "base_fusion_resync_request",
+                "imu_drift_reset_request",
+            )
+            pan_mech = signed_pan_mech_deg(float(bb_state["servo_pan"]), self._servo_cfg)
+            base_enc = float(bb_state["base_encoder_deg"])
+            raw_yaw = self._reader.filter.yaw_integral_deg() * self.yaw_sign
+
+            if bb_state.get("base_fusion_resync_request"):
+                self._fusion.reset_reference(
+                    pan_mech_deg=pan_mech,
+                    base_encoder_deg=base_enc,
+                    imu_yaw_total_deg=raw_yaw,
+                    now=now,
+                )
+                self._drift.reset_motion_tracking()
+                self._fusion_initialized = True
+                self.bb.write(base_fusion_resync_request=False)
+
+            if bb_state.get("imu_drift_reset_request"):
+                self._drift.reset_motion_tracking()
+                self.bb.write(imu_drift_reset_request=False)
+
+            if bb_state.get("yaw_reference_locked") and not self._fusion_initialized:
+                self._fusion.reset_reference(
+                    pan_mech_deg=pan_mech,
+                    base_encoder_deg=base_enc,
+                    imu_yaw_total_deg=raw_yaw,
+                    now=now,
+                )
+                self._fusion_initialized = True
+
+            yaw_out = raw_yaw
+            drift_correction = 0.0
+            stationary = False
+            inferred_base = base_enc
+
+            if self.drift_correction_enabled and self._fusion_initialized:
+                self._fusion.imu_yaw_total_deg = raw_yaw
+                corrected, drift_correction, stationary = self._drift.update(
+                    self._fusion,
+                    imu_yaw_raw=raw_yaw,
+                    base_encoder_deg=base_enc,
+                    pan_mech_deg=pan_mech,
+                    gyro_dps=sample.gyro_mag_dps,
+                    now=now,
+                )
+                yaw_out = corrected
+                if stationary and abs(drift_correction) > 0.01:
+                    self._reader.filter.set_yaw_integral_deg(yaw_out / self.yaw_sign)
+                inferred_base = self._fusion.inferred_base_encoder_deg(pan_mech)
 
             gyro_ok = sample.gyro_mag_dps < self.horizon_gyro_max
             pitch = sample.accel_pitch_deg if sample.accel_trusted else sample.pitch_deg
@@ -192,7 +263,11 @@ class ImuService:
                 imu_roll_deg=sample.roll_deg,
                 imu_gyro_dps=sample.gyro_mag_dps,
                 imu_gyro_z_dps=sample.gyro_z_dps,
-                imu_yaw_integral_deg=self._reader.filter.yaw_integral_deg() * self.yaw_sign,
+                imu_yaw_raw_deg=raw_yaw,
+                imu_yaw_integral_deg=yaw_out,
+                imu_drift_correction_deg=drift_correction,
+                fusion_stationary=stationary,
+                imu_inferred_base_deg=inferred_base,
                 imu_accel_trusted=sample.accel_trusted,
                 imu_horizon_ok=gyro_ok,
                 imu_effective_tilt_center=self._held_tilt_center,

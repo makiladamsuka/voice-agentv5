@@ -38,6 +38,7 @@ class HeadYawFusion:
     imu_yaw_sign: float = 1.0
     ref_pan_mech_deg: float = 0.0
     ref_base_encoder_deg: float = 0.0
+    ref_imu_yaw_total_deg: float = 0.0
     imu_yaw_total_deg: float = 0.0
     _last_ts: float | None = None
 
@@ -51,8 +52,17 @@ class HeadYawFusion:
     ) -> None:
         self.ref_pan_mech_deg = pan_mech_deg
         self.ref_base_encoder_deg = base_encoder_deg
+        self.ref_imu_yaw_total_deg = imu_yaw_total_deg
         self.imu_yaw_total_deg = imu_yaw_total_deg
         self._last_ts = now
+
+    def expected_imu_total_deg(self, pan_mech_deg: float, base_encoder_deg: float) -> float:
+        """IMU total yaw consistent with encoder base + known pan (ground truth when still)."""
+        return (
+            self.ref_imu_yaw_total_deg
+            + self.encoder_base_delta_deg(base_encoder_deg)
+            + self.pan_delta_deg(pan_mech_deg)
+        )
 
     def integrate_gyro(self, gyro_z_dps: float, dt: float) -> float:
         dt = max(0.0, min(0.2, dt))
@@ -75,6 +85,64 @@ class HeadYawFusion:
 
     def world_yaw_deg(self, *, base_encoder_deg: float, pan_mech_deg: float) -> float:
         return base_encoder_deg + pan_mech_deg
+
+
+@dataclass
+class EncoderImuDriftCorrector:
+    """When encoder + pan are stable, snap IMU yaw integral to match encoder decomposition."""
+
+    stationary_hold_sec: float = 0.35
+    enc_stable_deg: float = 0.2
+    pan_stable_deg: float = 0.2
+    gyro_max_dps: float = 6.0
+    _still_since: float | None = None
+    _last_enc: float | None = None
+    _last_pan_mech: float | None = None
+
+    def reset_motion_tracking(self) -> None:
+        self._still_since = None
+        self._last_enc = None
+        self._last_pan_mech = None
+
+    def update(
+        self,
+        fusion: HeadYawFusion,
+        *,
+        imu_yaw_raw: float,
+        base_encoder_deg: float,
+        pan_mech_deg: float,
+        gyro_dps: float,
+        now: float,
+    ) -> tuple[float, float, bool]:
+        """Returns (corrected_imu_yaw, drift_correction_deg, is_stationary)."""
+        enc_stable = (
+            self._last_enc is None
+            or abs(base_encoder_deg - self._last_enc) <= self.enc_stable_deg
+        )
+        pan_stable = (
+            self._last_pan_mech is None
+            or abs(pan_mech_deg - self._last_pan_mech) <= self.pan_stable_deg
+        )
+        gyro_stable = abs(gyro_dps) <= self.gyro_max_dps
+        self._last_enc = base_encoder_deg
+        self._last_pan_mech = pan_mech_deg
+
+        if enc_stable and pan_stable and gyro_stable:
+            if self._still_since is None:
+                self._still_since = now
+        else:
+            self._still_since = None
+
+        stationary = (
+            self._still_since is not None
+            and (now - self._still_since) >= self.stationary_hold_sec
+        )
+        if not stationary:
+            return imu_yaw_raw, 0.0, False
+
+        expected = fusion.expected_imu_total_deg(pan_mech_deg, base_encoder_deg)
+        correction = expected - imu_yaw_raw
+        return expected, correction, True
 
 
 class HeadingPid:

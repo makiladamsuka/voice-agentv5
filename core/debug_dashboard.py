@@ -20,6 +20,7 @@ from core.blackboard import Blackboard
 from head_debug_viz import (
     HeadDebugSnapshot,
     _DEBUG_HTML,
+    serve_debug_static,
     servo_pan_to_mechanical,
     servo_tilt_to_mechanical,
 )
@@ -67,8 +68,10 @@ def build_debug_snapshot(
 
     pan = float(state.get("servo_pan", pan_center))
     tilt = float(state.get("servo_tilt", tilt_center))
-    pan_mech = servo_pan_to_mechanical(pan, **mech_kw)
-    tilt_mech = servo_tilt_to_mechanical(tilt, **tilt_kw)
+    pan_sign = float(servo_cfg.get("pan_sign", 1.0))
+    tilt_sign = float(servo_cfg.get("tilt_sign", -1.0))
+    pan_mech = servo_pan_to_mechanical(pan, **mech_kw) * pan_sign
+    tilt_mech = servo_tilt_to_mechanical(tilt, **tilt_kw) * tilt_sign
 
     imu_yaw_total = float(state.get("imu_yaw_integral_deg", 0.0))
     imu_inferred_base = float(state.get("imu_inferred_base_deg", 0.0))
@@ -120,7 +123,35 @@ def build_debug_snapshot(
         person_memories=state.get("person_snapshots") or [],
         active_memory_id=0,
     )
-    return asdict(snap)
+    result = asdict(snap)
+    result["manual_control_enabled"] = bool(state.get("manual_control_enabled", False))
+    result["head_step_deg"] = float(state.get("debug_head_step_deg", 5.0))
+    result["imu_yaw_raw_deg"] = float(state.get("imu_yaw_raw_deg", imu_yaw_total))
+    result["imu_drift_correction_deg"] = float(state.get("imu_drift_correction_deg", 0.0))
+    result["fusion_stationary"] = bool(state.get("fusion_stationary", False))
+    result["fusion_delta_deg"] = float(state.get("base_encoder_deg", 0.0)) - imu_inferred_base
+    base_enc = float(state.get("base_encoder_deg", 0.0))
+    world_fwd = float(state.get("base_world_yaw_deg", base_enc + pan_mech))
+    base_sign = float(debug_viz_cfg.get("base_yaw_sign", 1.0))
+    pan_sign = float(debug_viz_cfg.get("pan_yaw_sign", 1.0))
+    tilt_sign = float(debug_viz_cfg.get("tilt_sign", 1.0))
+    imu_pitch_sign = float(debug_viz_cfg.get("imu_pitch_sign", -1.0))
+    result["viz_pan_yaw_sign"] = pan_sign
+    result["viz_tilt_sign"] = tilt_sign
+    result["viz_imu_pitch_sign"] = imu_pitch_sign
+    result["base_fwd_deg"] = base_enc
+    result["pan_rel_base_deg"] = pan_mech
+    result["world_fwd_deg"] = world_fwd
+    result["base_ground_yaw_deg"] = base_enc
+    result["neck_pan_rel_base_deg"] = pan_mech
+    result["head_yaw_ground_deg"] = world_fwd
+    result["tilt_ground_deg"] = tilt_mech
+    result["pan_ground_yaw_deg"] = world_fwd
+    result["viz_world_applied_deg"] = base_sign * base_enc + pan_sign * pan_mech
+    result["tilt_rel_fwd_deg"] = tilt_mech
+    result["viz_tilt_applied_deg"] = tilt_mech * tilt_sign
+    result["viz_imu_pitch_applied_deg"] = float(state.get("imu_pitch_deg", 0.0)) * imu_pitch_sign
+    return result
 
 
 class _DashboardHandler(BaseHTTPRequestHandler):
@@ -132,7 +163,46 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
 
+    def _send_json(self, code: int, payload: dict[str, Any]) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:
+        if self.path != "/api/control":
+            self.send_error(404)
+            return
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length) if length > 0 else b"{}"
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError:
+            self._send_json(400, {"ok": False, "error": "invalid json"})
+            return
+
+        cmd = str(payload.get("cmd", "")).strip()
+        if not cmd:
+            self._send_json(400, {"ok": False, "error": "missing cmd"})
+            return
+
+        seq = int(payload.get("seq", 0))
+        step = payload.get("step")
+        writes: dict[str, Any] = {
+            "debug_control_cmd": cmd,
+            "debug_control_seq": seq,
+        }
+        if step is not None:
+            writes["debug_head_step_deg"] = float(step)
+        self.bb.write(**writes)
+        self._send_json(200, {"ok": True, "cmd": cmd, "seq": seq})
+
     def do_GET(self) -> None:
+        if serve_debug_static(self, self.path):
+            return
         if self.path in ("/", "/index.html"):
             body = _MODIFIED_HTML.encode("utf-8")
             self.send_response(200)

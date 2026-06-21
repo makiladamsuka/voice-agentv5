@@ -84,6 +84,7 @@ def main():
     servo_cfg = cfg.get("servo", {}) or {}
     base_cfg = cfg.get("base", {}) or {}
     imu_cfg = cfg.get("imu", {}) or {}
+    debug_viz_cfg = cfg.get("debug_viz", {}) or {}
     port = servo_cfg.get("port") or ""
     baud = int(servo_cfg.get("baud", 115200))
 
@@ -153,8 +154,23 @@ def main():
         ),
         threading.Thread(target=EmotionEngine(bb).run, daemon=True, name="EmotionEngine"),
         threading.Thread(target=EyeRenderer(bb).run, daemon=True, name="EyeRenderer"),
-        threading.Thread(target=DebugDashboard(bb).run, daemon=True, name="DebugDashboard"),
     ]
+
+    if debug_viz_cfg.get("enabled", True):
+        threads.append(
+            threading.Thread(
+                target=DebugDashboard(
+                    bb,
+                    host=str(debug_viz_cfg.get("host", "0.0.0.0")),
+                    port=int(debug_viz_cfg.get("port", 8082)),
+                    servo_cfg=servo_cfg,
+                    debug_viz_cfg=debug_viz_cfg,
+                    base_cfg=base_cfg,
+                ).run,
+                daemon=True,
+                name="DebugDashboard",
+            )
+        )
 
     for t in threads:
         t.start()

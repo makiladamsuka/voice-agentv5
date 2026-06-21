@@ -95,6 +95,7 @@ class HeadDebugSnapshot:
     imu_pan_delta_deg: float = 0.0
     imu_inferred_base_deg: float = 0.0
     viz_base_yaw_sign: float = 1.0
+    base_max_yaw_deg: float = 120.0
     base_busy: bool = False
     imu_enabled: bool = False
     imu_pitch_deg: float = 0.0
@@ -218,6 +219,18 @@ const base = box(0.55, 0.08, 0.55, 0x475569);
 base.position.y = 0.04;
 root.add(base);
 
+const baseArrow = new THREE.Mesh(
+  new THREE.ConeGeometry(0.07, 0.20, 12),
+  new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0c4a6e, emissiveIntensity: 0.35 })
+);
+baseArrow.rotation.x = -Math.PI / 2;
+baseArrow.position.set(0, 0.05, 0.24);
+base.add(baseArrow);
+
+const baseStripe = box(0.08, 0.02, 0.55, 0x38bdf8);
+baseStripe.position.set(0, 0.05, 0);
+base.add(baseStripe);
+
 const neck = box(0.12, 0.16, 0.12, 0x64748b);
 neck.position.y = 0.16;
 base.add(neck);
@@ -259,6 +272,26 @@ const lookLine = new THREE.Line(
 );
 tiltNode.add(lookLine);
 
+const worldAimGroup = new THREE.Group();
+worldAimGroup.position.y = 0.11;
+scene.add(worldAimGroup);
+const worldAimGeom = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(0, 0, 0),
+  new THREE.Vector3(0, 0, 1.05),
+]);
+const worldAimLine = new THREE.Line(
+  worldAimGeom,
+  new THREE.LineBasicMaterial({ color: 0xfbbf24, linewidth: 2 })
+);
+worldAimGroup.add(worldAimLine);
+const worldAimTip = new THREE.Mesh(
+  new THREE.ConeGeometry(0.04, 0.10, 10),
+  new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
+);
+worldAimTip.rotation.x = -Math.PI / 2;
+worldAimTip.position.set(0, 0, 1.05);
+worldAimGroup.add(worldAimTip);
+
 const limitPan = new THREE.Group();
 base.add(limitPan);
 const limitTilt = new THREE.Group();
@@ -267,8 +300,40 @@ const memoryGroup = new THREE.Group();
 scene.add(memoryGroup);
 
 let latest = {};
+let lastLimitYaw = null;
 
 function deg(v) { return THREE.MathUtils.degToRad(v); }
+
+function updateBaseLimitArc(maxYawDeg) {
+  const yaw = maxYawDeg || 120;
+  if (lastLimitYaw === yaw) return;
+  lastLimitYaw = yaw;
+  limitPan.clear();
+  const radius = 0.50;
+  const steps = 56;
+  const maxRad = deg(yaw);
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = -maxRad + (2 * maxRad * i) / steps;
+    pts.push(new THREE.Vector3(Math.sin(t) * radius, 0.012, Math.cos(t) * radius));
+  }
+  limitPan.add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.7 })
+  ));
+  for (const sign of [-1, 1]) {
+    const t = sign * maxRad;
+    const tick = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(Math.sin(t) * (radius - 0.04), 0.012, Math.cos(t) * (radius - 0.04)),
+      new THREE.Vector3(Math.sin(t) * (radius + 0.04), 0.012, Math.cos(t) * (radius + 0.04)),
+    ]);
+    limitPan.add(new THREE.Line(
+      tick,
+      new THREE.LineBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.85 })
+    ));
+  }
+}
+updateBaseLimitArc(120);
 
 function servoToRot(pan, tilt, panCenter, tiltCenter, s) {
   const panMech = (s.pan_mech_deg !== undefined)
@@ -302,6 +367,8 @@ function setStats(s) {
     <div class="row"><span class="k">memory</span><span>${mems.length} active ${s.active_memory_id ? '#'+s.active_memory_id : '-'}</span></div>
     <div class="row"><span class="k">mem list</span><span>${memText}</span></div>
     <div class="row"><span class="k">base</span><span>enc ${fmt(s.base_yaw_deg)} world ${fmt(s.base_world_yaw_deg)} busy ${s.base_busy ? 'yes' : 'no'}</span></div>
+    <div class="row"><span class="k">yaw frame</span><span>base ${fmt(s.base_yaw_deg)}° + pan ${fmt(s.pan_mech_deg)}° = world ${fmt(s.base_world_yaw_deg)}°</span></div>
+    <div class="row"><span class="k">viz</span><span>blue arrow=base fwd · yellow=world aim · pink=head local</span></div>
     <div class="row"><span class="k">yaw split</span><span>imu ${fmt(s.imu_yaw_total_deg)} panΔ ${fmt(s.imu_pan_delta_deg)} base≈${fmt(s.imu_inferred_base_deg)}</span></div>
     <div class="row"><span class="k">IMU pitch</span><span class="${Math.abs(s.imu_pitch_deg||0) > 8 ? 'warn' : 'ok'}">${fmt(s.imu_pitch_deg)}° (vs mech ${fmt(s.tilt_mech_deg)}°)</span></div>
     <div class="row"><span class="k">IMU roll</span><span>${fmt(s.imu_roll_deg)}</span></div>
@@ -392,6 +459,8 @@ async function poll() {
     tiltNode.rotation.x = a.tilt;
     targetGroup.rotation.y = t.pan;
     targetGroup.rotation.x = t.tilt;
+    worldAimGroup.rotation.y = deg(latest.base_world_yaw_deg || 0) * baseSign;
+    updateBaseLimitArc(latest.base_max_yaw_deg);
     imuGroup.rotation.z = deg(latest.imu_roll_deg || 0);
     imuGroup.rotation.x = deg(latest.imu_pitch_deg || 0);
     updateMemoryMarkers(latest);

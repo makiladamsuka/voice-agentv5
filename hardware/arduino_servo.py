@@ -23,6 +23,7 @@ SERVO_SEND_MIN_DEG = 0.06
 SERVO_SEND_HZ = 25.0
 SERVO_ANGLE_QUANTUM_DEG = 0.2
 _SERVO_ACK_RE = re.compile(r"^OK\s+P(-?\d+)\s+T(-?\d+)\s*$")
+_ARM_HOME_RE = re.compile(r"^HOME\s+A0=")
 _BASE_ACK_RE = re.compile(r"^OK\s+B(-?\d+(?:\.\d+)?)\s*$")
 _OK_C_RE = re.compile(r"^OK\s+C(-?\d+(?:\.\d+)?)\s*$")
 _OK_E_RE = re.compile(r"^OK\s+E(-?\d+)\s*$")
@@ -66,6 +67,10 @@ class ArduinoServoLink:
         self._connected = False
         self._last_pan: Optional[float] = None
         self._last_tilt: Optional[float] = None
+        self._last_a0: Optional[float] = None
+        self._last_a1: Optional[float] = None
+        self._last_a2: Optional[float] = None
+        self._last_a3: Optional[float] = None
         self._last_base_ack: Optional[float] = None
         self._last_send_ts = 0.0
         self.servo_send_min_deg = SERVO_SEND_MIN_DEG
@@ -269,6 +274,102 @@ class ArduinoServoLink:
             self._last_send_ts = now
         return ok
 
+    @staticmethod
+    def _format_arm_cmd(a0: float, a1: float, a2: float, a3: float) -> str:
+        return f"A0={a0:.1f} A1={a1:.1f} A2={a2:.1f} A3={a3:.1f}"
+
+    def has_arm_firmware(self) -> bool:
+        """True if ESP32 responds to V with HOME A0= (head_servo_hands sketch)."""
+        if not self.send_line("V", drain_after=False):
+            return False
+        return self._read_line_matching(ACK_TIMEOUT_SEC, _ARM_HOME_RE) is not None
+
+    def write_arms(
+        self,
+        a0: float,
+        a1: float,
+        a2: float,
+        a3: float,
+        *,
+        force: bool = False,
+    ) -> bool:
+        a0 = _quantize_servo_angle(a0, self.servo_angle_quantum_deg)
+        a1 = _quantize_servo_angle(a1, self.servo_angle_quantum_deg)
+        a2 = _quantize_servo_angle(a2, self.servo_angle_quantum_deg)
+        a3 = _quantize_servo_angle(a3, self.servo_angle_quantum_deg)
+        now = time.time()
+        send_interval = 1.0 / max(1.0, self.servo_send_hz)
+        moved = (
+            self._last_a0 is None
+            or self._last_a1 is None
+            or self._last_a2 is None
+            or self._last_a3 is None
+            or abs(a0 - self._last_a0) >= self.servo_send_min_deg
+            or abs(a1 - self._last_a1) >= self.servo_send_min_deg
+            or abs(a2 - self._last_a2) >= self.servo_send_min_deg
+            or abs(a3 - self._last_a3) >= self.servo_send_min_deg
+        )
+        due = (now - self._last_send_ts) >= send_interval
+        if not force and not (moved and due):
+            return True
+        ok = self.send_line(self._format_arm_cmd(a0, a1, a2, a3), drain_after=False)
+        if ok:
+            self._last_a0 = a0
+            self._last_a1 = a1
+            self._last_a2 = a2
+            self._last_a3 = a3
+            self._last_send_ts = now
+        return ok
+
+    def write_angles_and_arms(
+        self,
+        pan: float,
+        tilt: float,
+        a0: float,
+        a1: float,
+        a2: float,
+        a3: float,
+        *,
+        force: bool = False,
+        wait_ack: bool = False,
+    ) -> bool:
+        pan = _quantize_servo_angle(pan, self.servo_angle_quantum_deg)
+        tilt = _quantize_servo_angle(tilt, self.servo_angle_quantum_deg)
+        a0 = _quantize_servo_angle(a0, self.servo_angle_quantum_deg)
+        a1 = _quantize_servo_angle(a1, self.servo_angle_quantum_deg)
+        a2 = _quantize_servo_angle(a2, self.servo_angle_quantum_deg)
+        a3 = _quantize_servo_angle(a3, self.servo_angle_quantum_deg)
+        now = time.time()
+        send_interval = 1.0 / max(1.0, self.servo_send_hz)
+        moved = (
+            self._last_pan is None
+            or self._last_tilt is None
+            or self._last_a0 is None
+            or self._last_a1 is None
+            or self._last_a2 is None
+            or self._last_a3 is None
+            or abs(pan - self._last_pan) >= self.servo_send_min_deg
+            or abs(tilt - self._last_tilt) >= self.servo_send_min_deg
+            or abs(a0 - self._last_a0) >= self.servo_send_min_deg
+            or abs(a1 - self._last_a1) >= self.servo_send_min_deg
+            or abs(a2 - self._last_a2) >= self.servo_send_min_deg
+            or abs(a3 - self._last_a3) >= self.servo_send_min_deg
+        )
+        due = (now - self._last_send_ts) >= send_interval
+        if not force and not (moved and due):
+            return True
+        cmd = f"P{pan:.1f} T{tilt:.1f} {self._format_arm_cmd(a0, a1, a2, a3)}"
+        ok = self.send_line(cmd, wait_servo=wait_ack)
+        if ok:
+            self._last_pan = pan
+            self._last_tilt = tilt
+            self._last_a0 = a0
+            self._last_a1 = a1
+            self._last_a2 = a2
+            self._last_a3 = a3
+            self._last_send_ts = now
+        return ok
+
     def _scale_base_command(self, deg: float) -> float:
         return deg * self.base_command_scale
 
@@ -412,14 +513,29 @@ class ArduinoServoLink:
         self._last_tilt = None
         return ok
 
-    def close(self, *, home_pan: float | None = None, home_tilt: float | None = None, skip_home: bool = False) -> None:
+    def close(
+        self,
+        *,
+        home_pan: float | None = None,
+        home_tilt: float | None = None,
+        home_arm0: float | None = None,
+        home_arm1: float | None = None,
+        home_arm2: float | None = None,
+        home_arm3: float | None = None,
+        skip_home: bool = False,
+    ) -> None:
         if self._ser is not None:
             try:
                 if self._ser.is_open:
                     self.write_base_stop()
-                    if not skip_home and home_pan is not None and home_tilt is not None:
-                        self.home_smooth(home_pan, home_tilt)
-                        time.sleep(0.12)
+                    if not skip_home:
+                        arms = (home_arm0, home_arm1, home_arm2, home_arm3)
+                        if all(v is not None for v in arms):
+                            self.write_arms(*arms, force=True)  # type: ignore[arg-type]
+                            time.sleep(0.12)
+                        elif home_pan is not None and home_tilt is not None:
+                            self.home_smooth(home_pan, home_tilt)
+                            time.sleep(0.12)
                     self._ser.close()
             except Exception:
                 pass

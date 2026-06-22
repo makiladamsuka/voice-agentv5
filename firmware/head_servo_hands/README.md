@@ -22,7 +22,9 @@ I2C: SDA=21, SCL=22, address `0x40`, 115200 baud USB serial.
 arduino-cli upload -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32 firmware/head_servo_hands
 ```
 
-Boot banner: `FW head_servo_hands_v5` (not `FW head_servo_v5_base`).
+Boot banner: `FW head_servo_hands_v5`
+
+Arm PWM is **off at boot** and after **1.5 s** without an `A0..A3` command. Send `AO` to detach immediately. Head pan/tilt (ch 4/5) unchanged.
 
 ## Test arms
 

@@ -321,6 +321,14 @@ class ArduinoServoLink:
             self._last_send_ts = now
         return ok
 
+    def detach_arms(self) -> bool:
+        """Stop PCA9685 PWM on arm channels only (AO). Head pan/tilt unaffected."""
+        self._last_a0 = None
+        self._last_a1 = None
+        self._last_a2 = None
+        self._last_a3 = None
+        return self.send_line("AO", drain_after=False)
+
     def write_angles_and_arms(
         self,
         pan: float,
@@ -533,6 +541,7 @@ class ArduinoServoLink:
                         if all(v is not None for v in arms):
                             self.write_arms(*arms, force=True)  # type: ignore[arg-type]
                             time.sleep(0.12)
+                            self.detach_arms()
                         elif home_pan is not None and home_tilt is not None:
                             self.home_smooth(home_pan, home_tilt)
                             time.sleep(0.12)

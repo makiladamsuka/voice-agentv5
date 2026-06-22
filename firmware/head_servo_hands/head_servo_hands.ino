@@ -6,8 +6,12 @@
  * Base: GPIO35/34 encoder, GPIO25 PWM, GPIO26/27 -> TB6612FNG -> N20 motor.
  *
  * Protocol: all head_servo commands plus:
- *   A0=0.0 A1=180.0 A2=90.0 A3=90.0  -> arm servos (arms-only or with P/T)
- *   V                                  -> print arm home pose (HOME A0=...)
+ *   A0=0.0 A1=180.0 A2=90.0 A3=90.0  -> arm servos (Pi-driven; PWM on demand)
+ *   AO                               -> detach all arm PWM (idle / quiet hands)
+ *   V                                -> print arm home pose (HOME A0=...)
+ *
+ * Arm channels (0,2,8,9) stay OFF until the Pi sends A0..A3. After ARM_IDLE_DETACH_MS
+ * without an arm command, PWM is removed to stop SG90 buzz/heat. Head pan/tilt unchanged.
  */
 
 #include <Wire.h>
@@ -39,6 +43,7 @@ const uint8_t ARM_CH[ARM_CH_COUNT] = {0, 2, 8, 9};
 const float ARM_MIN = 0.0f;
 const float ARM_MAX = 180.0f;
 const float ARM_HOME_DEG[ARM_CH_COUNT] = {0.0f, 180.0f, 90.0f, 90.0f};
+const unsigned long ARM_IDLE_DETACH_MS = 1500UL;
 
 const int ENC_A_PIN = 35;
 const int ENC_B_PIN = 34;
@@ -82,6 +87,8 @@ float tiltAngle = TILT_CENTER;
 float armAngles[ARM_CH_COUNT] = {
   ARM_HOME_DEG[0], ARM_HOME_DEG[1], ARM_HOME_DEG[2], ARM_HOME_DEG[3]
 };
+bool armChannelActive[ARM_CH_COUNT] = {false, false, false, false};
+unsigned long lastArmCommandMs = 0;
 bool pcaReady = false;
 
 volatile long encoderCount = 0;
@@ -129,6 +136,31 @@ void setServoPulseUs(uint8_t ch, int pulseUs) {
   uint32_t tick = ((uint32_t)pulseUs * 4096UL) / 20000UL;
   if (tick >= 4096) tick = 4095;
   pwm.setPWM(ch, 0, tick);
+}
+
+void detachArmChannel(uint8_t idx) {
+  if (idx >= ARM_CH_COUNT || !pcaReady) return;
+  pwm.setPWM(ARM_CH[idx], 0, 0);
+  armChannelActive[idx] = false;
+}
+
+void detachAllArmChannels() {
+  if (!pcaReady) return;
+  for (uint8_t i = 0; i < ARM_CH_COUNT; i++) {
+    detachArmChannel(i);
+  }
+  lastArmCommandMs = 0;
+}
+
+void touchArmCommandClock() {
+  lastArmCommandMs = millis();
+}
+
+void updateArmPower() {
+  if (!pcaReady || lastArmCommandMs == 0) return;
+  if ((millis() - lastArmCommandMs) >= ARM_IDLE_DETACH_MS) {
+    detachAllArmChannels();
+  }
 }
 
 void serviceEncoder() {
@@ -281,6 +313,8 @@ void writeArmAngle(uint8_t idx, float deg) {
   float a = clampf(deg, ARM_MIN, ARM_MAX);
   armAngles[idx] = a;
   setServoPulseUs(ARM_CH[idx], mapAngleToUs(a, ARM_MIN, ARM_MAX));
+  armChannelActive[idx] = true;
+  touchArmCommandClock();
 }
 
 void writeAllArmAngles(const float *deg, const bool *setMask) {
@@ -427,6 +461,13 @@ void handleLine() {
     tiltLimitMin = TILT_MIN;
     tiltLimitMax = TILT_MAX;
     Serial.println(F("OK RL"));
+    lineLen = 0;
+    return;
+  }
+
+  if (lineLen == 2 && lineBuffer[0] == 'A' && lineBuffer[1] == 'O') {
+    detachAllArmChannels();
+    Serial.println(F("OK AO"));
     lineLen = 0;
     return;
   }
@@ -705,9 +746,7 @@ void setup() {
     pwm.setPWMFreq(50);
     delay(10);
     pcaReady = true;
-    for (uint8_t i = 0; i < ARM_CH_COUNT; i++) {
-      writeArmAngle(i, ARM_HOME_DEG[i]);
-    }
+    detachAllArmChannels();
   } else {
     Serial.println(F("WARN PCA9685 not found at 0x40"));
   }
@@ -734,6 +773,7 @@ void loop() {
 
   updateBaseMotor();
   updateBaseJog();
+  updateArmPower();
 
   if (spinPwm != 0) {
     motorDrive(spinPwm);

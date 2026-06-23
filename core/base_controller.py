@@ -55,7 +55,9 @@ def _load_yaml(path: Path) -> dict:
     if yaml is None or not path.exists():
         return {}
     with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        from lib.live_tune import sanitize_config
+
+        return sanitize_config(yaml.safe_load(f) or {})
 
 
 def _cfg(data, *keys, default=None):
@@ -204,8 +206,22 @@ class BaseController:
         self._sustained_since: Optional[float] = None
         self._sustained_sign = 0.0
         self._last_sustained_ts = 0.0
+        self._last_tune_seq = 0
 
     # ── Helpers ────────────────────────────────────────────────────────────────
+
+    def _apply_live_tune_if_changed(self) -> None:
+        state = self.bb.read("debug_live_tune", "debug_tune_seq")
+        seq = int(state["debug_tune_seq"])
+        if seq == self._last_tune_seq:
+            return
+        self._last_tune_seq = seq
+        tune = state["debug_live_tune"] or {}
+        if not tune:
+            return
+        from lib.live_tune import apply_base_tune
+
+        apply_base_tune(self, tune)
 
     def _pan_mech(self, pan_cmd: float) -> float:
         return signed_pan_mech_deg(pan_cmd, self._servo_cfg)
@@ -574,6 +590,7 @@ class BaseController:
 
         while self.bb.read("running")["running"]:
             now = time.time()
+            self._apply_live_tune_if_changed()
 
             state = self.bb.read(
                 "face_detected", "face_norm_x", "face_area_ratio",

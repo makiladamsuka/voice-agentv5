@@ -92,6 +92,8 @@ class Blackboard:
     debug_control_cmd: str = ""
     debug_control_seq: int = 0
     debug_head_step_deg: float = 5.0
+    debug_live_tune: dict = None
+    debug_tune_seq: int = 0
     imu_yaw_raw_deg: float = 0.0
     imu_drift_correction_deg: float = 0.0
     fusion_stationary: bool = False
@@ -105,6 +107,7 @@ class Blackboard:
         # Mutable defaults that can't be class-level
         self.face_candidates = []
         self.person_snapshots = []
+        self.debug_live_tune = {}
 
     # ─────────────────────────────────────────────────────────────────────────
 

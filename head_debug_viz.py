@@ -231,6 +231,16 @@ _DEBUG_HTML = """<!DOCTYPE html>
     .hint { color: #6b7280; font-size: 11px; margin-top: 6px; }
     #debug-panel { margin-top: 10px; padding-top: 8px; border-top: 1px solid #2a3142; }
     #debug-panel h2 { font-size: 12px; margin: 0 0 6px; color: #88c0d0; font-weight: 600; }
+    #tune-panel { margin: 10px 0 0; padding: 10px; border: 1px solid #2a3142; border-radius: 8px; background: #11151d; max-height: 42vh; overflow-y: auto; }
+    #tune-panel h2 { font-size: 12px; margin: 0 0 8px; color: #88c0d0; font-weight: 600; }
+    .tune-section { font-size: 11px; color: #6b7280; margin: 10px 0 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .tune-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; margin: 6px 0; font-size: 11px; }
+    .tune-controls { display: flex; align-items: center; gap: 6px; min-width: 150px; }
+    .tune-controls input[type=range] { width: 100px; }
+    .tune-val { min-width: 42px; text-align: right; color: #a3be8c; font-variant-numeric: tabular-nums; }
+    #tune-save { margin-top: 8px; background: #1e3a5f; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 8px 12px; cursor: pointer; font: inherit; }
+    #tune-save:hover { background: #334155; }
+    #tune-status { display: block; margin-top: 6px; font-size: 11px; }
     #mode-banner {
       margin: 0 0 10px; padding: 10px 12px; border-radius: 8px;
       border: 1px solid #2a3142; background: #11151d;
@@ -288,6 +298,13 @@ _DEBUG_HTML = """<!DOCTYPE html>
     <div id="debug-panel">
       <h2>Fusion debug</h2>
       <div id="fusion-stats"></div>
+    </div>
+    <div id="tune-panel">
+      <h2>Live tuning</h2>
+      <div class="hint" style="margin-bottom:8px">Adjust while the robot runs. Changes apply immediately; Save writes config.yaml.</div>
+      <div id="tune-fields"></div>
+      <button type="button" id="tune-save">Save to config.yaml</button>
+      <span id="tune-status"></span>
     </div>
     <div id="stats"></div>
   </div>
@@ -730,6 +747,8 @@ async function poll() {
     setModeBanner(latest);
     setStats(latest);
     setFusionStats(latest);
+    if (latest.live_tune_schema) buildTunePanel(latest.live_tune_schema);
+    if (latest.live_tune) updateTuneInputs(latest.live_tune);
     updateGroundHud(latest);
     const panMech = panMechDeg(latest);
     const tiltMech = tiltMechDeg(latest);
@@ -773,6 +792,113 @@ const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => resi
 if (ro) ro.observe(view);
 
 let controlSeq = 0;
+let tuneBuilt = false;
+let tuneEditing = false;
+let tuneDebounce = null;
+
+function formatTuneVal(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '?';
+  const s = n.toFixed(3);
+  return s.replace(/\\.?0+$/, '');
+}
+
+function buildTunePanel(schema) {
+  const host = document.getElementById('tune-fields');
+  if (!host || tuneBuilt || !schema || !schema.length) return;
+  tuneBuilt = true;
+  let lastSection = '';
+  schema.forEach((spec) => {
+    if (spec.section !== lastSection) {
+      lastSection = spec.section;
+      const h = document.createElement('div');
+      h.className = 'tune-section';
+      h.textContent = spec.section === 'servo' ? 'Servo / face tracking' : 'Base rotation';
+      host.appendChild(h);
+    }
+    const row = document.createElement('div');
+    row.className = 'tune-row';
+    const label = document.createElement('label');
+    label.textContent = spec.label;
+    const wrap = document.createElement('div');
+    wrap.className = 'tune-controls';
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = spec.min;
+    input.max = spec.max;
+    input.step = spec.step;
+    input.dataset.key = spec.key;
+    const val = document.createElement('span');
+    val.className = 'tune-val';
+    val.dataset.key = spec.key;
+    input.addEventListener('pointerdown', () => { tuneEditing = true; });
+    input.addEventListener('input', () => {
+      val.textContent = formatTuneVal(input.value);
+      clearTimeout(tuneDebounce);
+      tuneDebounce = setTimeout(() => sendTuneUpdate(), 120);
+    });
+    input.addEventListener('change', () => {
+      tuneEditing = false;
+      sendTuneUpdate();
+    });
+    wrap.appendChild(input);
+    wrap.appendChild(val);
+    row.appendChild(label);
+    row.appendChild(wrap);
+    host.appendChild(row);
+  });
+  document.getElementById('tune-save')?.addEventListener('click', saveTuneConfig);
+}
+
+function updateTuneInputs(tune) {
+  if (tuneEditing || !tune) return;
+  document.querySelectorAll('#tune-fields input[data-key]').forEach((input) => {
+    const key = input.dataset.key;
+    if (key in tune) {
+      input.value = tune[key];
+      const val = document.querySelector(`.tune-val[data-key="${key}"]`);
+      if (val) val.textContent = formatTuneVal(tune[key]);
+    }
+  });
+}
+
+async function sendTuneUpdate() {
+  const values = {};
+  document.querySelectorAll('#tune-fields input[data-key]').forEach((input) => {
+    values[input.dataset.key] = Number(input.value);
+  });
+  const st = document.getElementById('tune-status');
+  try {
+    const res = await fetch('/api/tune', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'tune failed');
+    if (st) { st.textContent = 'Live'; st.className = 'ok'; }
+  } catch (e) {
+    if (st) { st.textContent = String(e); st.className = 'bad'; }
+  }
+}
+
+async function saveTuneConfig() {
+  const st = document.getElementById('tune-status');
+  if (st) { st.textContent = 'Saving…'; st.className = ''; }
+  try {
+    const res = await fetch('/api/save_config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'save failed');
+    if (st) { st.textContent = `Saved ${data.updated?.length || 0} keys`; st.className = 'ok'; }
+  } catch (e) {
+    if (st) { st.textContent = String(e); st.className = 'bad'; }
+  }
+}
+
 async function sendControl(cmd) {
   controlSeq += 1;
   try {

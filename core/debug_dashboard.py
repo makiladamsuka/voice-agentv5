@@ -24,6 +24,11 @@ from head_debug_viz import (
     servo_pan_to_mechanical,
     servo_tilt_to_mechanical,
 )
+from lib.live_tune import (
+    merge_tune_values,
+    save_tune_to_config,
+    tune_schema_dicts,
+)
 
 _CAMERA_STREAM_HTML = (
     '<div style="margin-bottom: 10px; border: 1px solid #2a3142; background: #000;">'
@@ -211,6 +216,12 @@ def build_debug_snapshot(
     cpu_temp = _read_cpu_temp_c()
     if cpu_temp is not None:
         result["cpu_temp_c"] = cpu_temp
+    result["live_tune"] = merge_tune_values(
+        state.get("debug_live_tune"),
+        servo_cfg=servo_cfg,
+        base_cfg=base_cfg,
+    )
+    result["live_tune_schema"] = tune_schema_dicts()
     return result
 
 
@@ -219,6 +230,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     servo_cfg: dict[str, Any]
     debug_viz_cfg: dict[str, Any]
     base_cfg: dict[str, Any]
+    config_path: Any
     dashboard_html: str
 
     def log_message(self, format: str, *args: Any) -> None:
@@ -234,9 +246,6 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self) -> None:
-        if self.path != "/api/control":
-            self.send_error(404)
-            return
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length > 0 else b"{}"
         try:
@@ -245,6 +254,46 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "invalid json"})
             return
 
+        if self.path == "/api/tune":
+            values = payload.get("values")
+            if not isinstance(values, dict):
+                self._send_json(400, {"ok": False, "error": "missing values object"})
+                return
+            state = self.bb.read("debug_live_tune", "debug_tune_seq")
+            merged = merge_tune_values(
+                state["debug_live_tune"],
+                servo_cfg=self.servo_cfg,
+                base_cfg=self.base_cfg,
+            )
+            for key, val in values.items():
+                try:
+                    merged[key] = float(val)
+                except (TypeError, ValueError):
+                    self._send_json(400, {"ok": False, "error": f"bad value for {key}"})
+                    return
+            seq = int(state["debug_tune_seq"]) + 1
+            self.bb.write(debug_live_tune=merged, debug_tune_seq=seq)
+            self._send_json(200, {"ok": True, "seq": seq, "live_tune": merged})
+            return
+
+        if self.path == "/api/save_config":
+            state = self.bb.read("debug_live_tune")
+            tune = merge_tune_values(
+                state["debug_live_tune"],
+                servo_cfg=self.servo_cfg,
+                base_cfg=self.base_cfg,
+            )
+            try:
+                updated = save_tune_to_config(self.config_path, tune)
+            except (OSError, RuntimeError) as e:
+                self._send_json(500, {"ok": False, "error": str(e)})
+                return
+            self._send_json(200, {"ok": True, "updated": updated, "path": str(self.config_path)})
+            return
+
+        if self.path != "/api/control":
+            self.send_error(404)
+            return
         cmd = str(payload.get("cmd", "")).strip()
         if not cmd:
             self._send_json(400, {"ok": False, "error": "missing cmd"})
@@ -340,6 +389,7 @@ class DebugDashboard:
         servo_cfg: dict[str, Any] | None = None,
         debug_viz_cfg: dict[str, Any] | None = None,
         base_cfg: dict[str, Any] | None = None,
+        config_path: Any = None,
         include_camera_stream: bool = True,
     ) -> None:
         self.bb = bb
@@ -348,6 +398,7 @@ class DebugDashboard:
         self.servo_cfg = servo_cfg or {}
         self.debug_viz_cfg = debug_viz_cfg or {}
         self.base_cfg = base_cfg or {}
+        self.config_path = config_path
         self.include_camera_stream = include_camera_stream
         self._http = None
 
@@ -361,6 +412,7 @@ class DebugDashboard:
                 "servo_cfg": self.servo_cfg,
                 "debug_viz_cfg": self.debug_viz_cfg,
                 "base_cfg": self.base_cfg,
+                "config_path": self.config_path,
                 "dashboard_html": dashboard_html,
             },
         )

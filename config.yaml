@@ -113,7 +113,7 @@ imu:
 base:
   enabled: true
   # --- BASE CALIBRATION (change only via test_base_motor.py, not face-tracking tuning) ---
-  counts_per_degree: 31.166667  # set by --calibrate-manual# set by --calibrate-manual
+  counts_per_degree: 31.166667  # set by --calibrate-manual
   encoder_sign: -1  # set by --calibrate-manual (+deg → encoder counts decrease)
   command_scale: 0.1714  # legacy; spin control uses encoder DEG directly (see spin_*)
   spin_stop_tolerance_deg: 1.5
@@ -130,8 +130,8 @@ base:
   trigger_norm_x: 0.50       # face must be farther off-center before base helps
   trigger_hold_sec: 2.0      # wait longer before first base nudge
   cooldown_sec: 4.0          # pause between base moves
-  min_step_deg: 5.0
-  max_step_deg: 15.0         # wander/track nudges — no full spins
+  min_step_deg: 8
+  max_step_deg: 15.0  # wander/track nudges — no full spins
   single_shot_max_deg: 15.0
   norm_to_deg_gain: 1.8
   pan_soft_limit_deg: 12.0
@@ -162,7 +162,7 @@ base:
   fast_face_velocity_to_deg_gain: 2.0
   fast_face_compensation_gain: 0.45
   wander_enabled: true
-  wander_step_deg: 15.0      # base follows head with ~15° plate steps
+  wander_step_deg: 15.0  # base follows head with ~15° plate steps
   wander_cooldown_sec: 12.0
   wander_chance: 0.15
   wander_min_pan_offset_deg: 12.0
@@ -205,7 +205,7 @@ servo:
   pan_center_hysteresis: 0.03    # extra |norm_x| before leaving center band (anti-flicker)
   pan_track_alpha: 0.28         # smooth pan bearing — damps bbox jitter, still follows motion
   pan_track_sign: -1.0            # flip to 1.0 if pan follows face the wrong way
-  pan_max_step_deg: 0.75        # hard cap per loop tick (prevents overshoot on fast moves)
+  pan_max_step_deg: 0.75  # hard cap per loop tick (prevents overshoot on fast moves)
   tilt_track_range: 28.0
   pan_error_full_scale: 0.42
   pan_track_min_gain: 0.32
@@ -218,15 +218,15 @@ servo:
   loop_hz: 80.0
   no_face_home_sec: 1.2
   debug_hz: 2.0
-  face_alpha_x: 0.12             # tilt/velocity only
+  face_alpha_x: 0.12  # tilt/velocity only
   face_alpha_y: 0.24
-  pan_pid_kp: 0.40
-  pan_pid_ki: 0.0
-  pan_pid_kd: 0.30
+  pan_pid_kp: 0.7
+  pan_pid_ki: 0.065
+  pan_pid_kd: 0.3
   tilt_pid_kp: 0.48
-  tilt_pid_ki: 0.0
+  tilt_pid_ki: 0
   tilt_pid_kd: 0.06
-  pid_integral_limit: 0.50
+  pid_integral_limit: 0.5
   predict_hold_sec: 1.0
   predict_edge_norm: 0.55
   predict_gain: 0.72
@@ -240,8 +240,8 @@ servo:
   forward_return_min_tilt_deg: 10.0  # |mech tilt| above this counts as off-forward
   forward_return_smooth_hz: 4.5
   wander_pan_amp_deg: 28.0    # smaller head glances — less base follow trigger
-  wander_step_min_deg: 8.0
-  wander_step_max_deg: 18.0
+  wander_step_min_deg: 7.5
+  wander_step_max_deg: 18
   wander_jump_chance: 0.0     # no sudden jumps
   wander_arrival_deg: 1.2
   wander_tilt_step_max_deg: 10.0
@@ -254,7 +254,7 @@ servo:
   wander_thinking_hold_max_sec: 8.0
   wander_long_stare_chance: 0.14
   wander_pan_smooth_hz: 5.5
-  wander_tilt_smooth_hz: 6.0
+  wander_tilt_smooth_hz: 6
   wander_track_loss_hold_min_sec: 1.2   # hold last track pose before first wander glance
   wander_track_loss_hold_max_sec: 2.8
   wander_imu_tilt_blend: 0.18          # light IMU bias; wander owns most tilt motion
@@ -267,9 +267,9 @@ servo:
   multi_face_track_servo_alpha: 0.34
   multi_face_track_gain: 0.62
   social_multi_grace_sec: 2.4
-  target_smooth_hz: 5.0
+  target_smooth_hz: 13
   pan_smooth_hz: 7.0
-  pan_track_smooth_hz: 8.0   # always applied during track — limits overshoot
+  pan_track_smooth_hz: 16.25  # always applied during track — limits overshoot
   tilt_smooth_hz: 5.5
   servo_send_min_deg: 0.04
   servo_send_hz: 50.0

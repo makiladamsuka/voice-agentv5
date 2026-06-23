@@ -16,6 +16,7 @@ from core.servo_mixer import ServoMixer
 from core.emotion_engine import EmotionEngine
 from core.eye_renderer import EyeRenderer
 from core.debug_dashboard import DebugDashboard
+from lib.live_tune import load_tune_defaults_from_config, sanitize_config
 from hardware.arduino_servo import ArduinoServoLink
 from base_motor_utils import apply_base_calibration_to_nano
 
@@ -32,7 +33,7 @@ def _load_yaml(path: Path) -> dict:
     if yaml is None or not path.exists():
         return {}
     with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        return sanitize_config(yaml.safe_load(f) or {})
 
 
 def _wait_imu_ready(bb: Blackboard, timeout_sec: float = 12.0) -> None:
@@ -154,6 +155,8 @@ def main():
         debug_control_cmd="",
         debug_control_seq=0,
         debug_head_step_deg=float(debug_viz_cfg.get("head_step_deg", 5.0)),
+        debug_live_tune=load_tune_defaults_from_config(cfg),
+        debug_tune_seq=0,
     )
 
     port_label = port if port else "auto"
@@ -241,6 +244,7 @@ def main():
                     servo_cfg=servo_cfg,
                     debug_viz_cfg=debug_viz_cfg,
                     base_cfg=base_cfg,
+                    config_path=DEFAULT_CONFIG_PATH,
                 ).run,
                 daemon=True,
                 name="DebugDashboard",

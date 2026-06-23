@@ -48,7 +48,9 @@ def _load_yaml(path: Path) -> dict:
     if yaml is None or not path.exists():
         return {}
     with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        from lib.live_tune import sanitize_config
+
+        return sanitize_config(yaml.safe_load(f) or {})
 
 
 def _cfg(data, *keys, default=None):
@@ -332,6 +334,20 @@ class ServoLoop:
         self._pan_in_center_band = True
         self._off_forward_since: Optional[float] = None
         self._forward_return_active = False
+        self._last_tune_seq = 0
+
+    def _apply_live_tune_if_changed(self) -> None:
+        state = self.bb.read("debug_live_tune", "debug_tune_seq")
+        seq = int(state["debug_tune_seq"])
+        if seq == self._last_tune_seq:
+            return
+        self._last_tune_seq = seq
+        tune = state["debug_live_tune"] or {}
+        if not tune:
+            return
+        from lib.live_tune import apply_servo_tune
+
+        apply_servo_tune(self, tune)
 
     def _pan_mech_offset(self) -> float:
         return signed_pan_mech_deg(self._pan, self._servo_cfg)
@@ -838,6 +854,8 @@ class ServoLoop:
             dt = max(0.001, min(0.5, now_pc - prev_ts))
             prev_ts = now_pc
             now = time.time()
+
+            self._apply_live_tune_if_changed()
 
             dbg = self.bb.read(
                 "manual_control_enabled",

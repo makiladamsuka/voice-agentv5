@@ -266,6 +266,42 @@ def _tick_blend(
     return False
 
 
+HOME_BLEND_DEG_PER_SEC = 45.0
+
+
+def _smooth_home_arms(
+    link: ArduinoServoLink,
+    arms: list[float],
+    envelope: ArmSafetyEnvelope,
+    homes: tuple[float, float, float, float],
+    blend_sec: float,
+) -> None:
+    """Move arms to home with smoothstep; wait for servos to settle."""
+    target = envelope.clamp_arms(*homes)
+    start = tuple(arms)
+    max_delta = max(abs(start[i] - target[i]) for i in range(4))
+    if max_delta < 0.5:
+        arms[:] = list(target)
+        link.write_arms(*arms, force=True)
+        time.sleep(0.5)
+        return
+    duration = max(blend_sec, max_delta / HOME_BLEND_DEG_PER_SEC, 0.5)
+    interval = 1.0 / JOG_HZ
+    t0 = time.time()
+    print(f"homing ({duration:.1f}s)...", flush=True)
+    while True:
+        now = time.time()
+        t = (now - t0) / duration
+        if t >= 1.0:
+            arms[:] = list(target)
+            link.write_arms(*arms, force=True)
+            break
+        arms[:] = list(_lerp_pose(start, target, t, envelope))
+        link.write_arms(*arms, force=True)
+        time.sleep(interval)
+    time.sleep(0.5)
+
+
 def _print_pose_list(presets: ArmPosePresets) -> None:
     names = presets.list_names()
     if not names:
@@ -384,6 +420,16 @@ def main() -> int:
         idx = preset_idx if preset_idx >= 0 else 0
         idx = (idx + delta) % len(names)
         _start_preset_blend(names[idx])
+
+    def _exit_home() -> None:
+        nonlocal blend
+        if args.no_home:
+            return
+        blend = None
+        held.clear()
+        _sync_arms_from_link(link, arms)
+        _smooth_home_arms(link, arms, envelope, homes, blend_sec)
+        _print_pose(arms, envelope)
 
     print(
         "Safe-zone arm jogger — sweep clamped to raise-dependent limits\n"
@@ -507,12 +553,11 @@ def main() -> int:
                         last_clamped = False
 
                 time.sleep(POLL_SEC)
+            if quit_requested and not args.no_home:
+                _exit_home()
     except KeyboardInterrupt:
         print("\nCtrl+C — homing arms...", flush=True)
-        arms = list(envelope.clamp_arms(*homes))
-        if not args.no_home:
-            link.write_arms(*arms, force=True)
-            time.sleep(0.15)
+        _exit_home()
     finally:
         link.close(
             home_arm0=homes[0],

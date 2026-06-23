@@ -10,11 +10,16 @@ surroundings emotion in EmotionEngine, and amplitude drives EyeRenderer.
 from __future__ import annotations
 
 import asyncio
-import os
+import contextlib
 import json
+import logging
+import os
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from livekit.agents import AgentServer, WorkerOptions
+from livekit.agents.job import JobExecutorType
 
 from dotenv import load_dotenv
 from livekit import agents, rtc
@@ -39,6 +44,7 @@ APP_DIR = Path(__file__).resolve().parent.parent
 _bb: Blackboard | None = None
 _global_image_server: ImageServer | None = None
 _global_event_db = None
+_active_session: AgentSession | None = None
 
 # ── VADER Sentiment ──────────────────────────────────────────────────────────
 try:
@@ -247,7 +253,7 @@ def prewarm(proc: agents.JobProcess) -> None:
 
 
 async def entrypoint(ctx: agents.JobContext) -> None:
-    global _thinking_task, _awkward_timer_task, _smart_wait_task, _session_live
+    global _thinking_task, _awkward_timer_task, _smart_wait_task, _session_live, _active_session
 
     print(f"[VoiceService] Job received: room={ctx.room.name}")
 
@@ -282,6 +288,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     agent = CampusAgent(image_server, event_db)
     agent._room = ctx.room
+    _active_session = session
 
     @ctx.room.on("data_received")
     def on_data_received(packet):
@@ -399,6 +406,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             await asyncio.sleep(1)
     finally:
         _session_live = False
+        _active_session = None
         if _bb is not None:
             _bb.write(
                 voice_session_active=False,
@@ -413,29 +421,103 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
 # ── Public entry point (called from start_robot.py thread) ───────────────────
 
-def run_voice_service(bb: "Blackboard") -> None:
+logger = logging.getLogger(__name__)
+
+
+async def _graceful_voice_shutdown(server: AgentServer, bb: "Blackboard") -> None:
+    """Drain active voice session and worker before closing the asyncio loop."""
+    global _active_session
+
+    print("[VoiceService] Shutting down...")
+    if _bb is not None:
+        _bb.write(
+            voice_session_active=False,
+            conv_state="idle",
+            conv_emotion=None,
+            amplitude_fast=0.0,
+            amplitude_slow=0.0,
+            user_speaking=False,
+            agent_speaking=False,
+        )
+
+    session = _active_session
+    if session is not None:
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(session.drain(), timeout=4.0)
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(session.aclose(), timeout=4.0)
+        _active_session = None
+
+    with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(server.drain(timeout=15), timeout=8.0)
+    with contextlib.suppress(Exception):
+        await server.aclose()
+
+
+async def _run_voice_worker(
+    server: AgentServer,
+    bb: "Blackboard",
+    *,
+    devmode: bool,
+) -> None:
+    run_task = asyncio.create_task(server.run(devmode=devmode))
+    try:
+        while bb.read("running")["running"] and not run_task.done():
+            await asyncio.sleep(0.2)
+
+        if not run_task.done():
+            await _graceful_voice_shutdown(server, bb)
+            await asyncio.wait_for(run_task, timeout=10.0)
+        else:
+            run_task.result()
+    except asyncio.TimeoutError:
+        logger.warning("[VoiceService] worker shutdown timed out")
+    except Exception:
+        logger.exception("[VoiceService] worker failed")
+
+
+def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
     """Start LiveKit voice agent on a dedicated asyncio event loop (blocking).
 
     Called from a daemon thread in start_robot.py. Sets the module-level
     Blackboard reference so all callbacks can write to BB directly.
+
+    Uses AgentServer.run() directly instead of cli.run_app() because the CLI
+    registers signal handlers, which only work on the main thread.
+    JobExecutorType.THREAD keeps jobs in-process so Blackboard writes work.
     """
     global _bb
     _bb = bb
 
     env_path = APP_DIR / ".env"
     load_dotenv(env_path)
+    if devmode:
+        os.environ["LIVEKIT_DEV_MODE"] = "1"
 
     print("[VoiceService] Starting LiveKit agent...")
     print(f"[VoiceService] .env loaded from {env_path}")
+    print(f"[VoiceService] mode={'dev' if devmode else 'start'}")
 
-    from livekit.agents import WorkerOptions, cli
-
-    cli.run_app(
+    server = AgentServer.from_server_options(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             prewarm_fnc=prewarm,
             agent_name="campus-greeting-agent",
             initialize_process_timeout=120,
             num_idle_processes=1,
+            job_executor_type=JobExecutorType.THREAD,
         )
     )
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.slow_callback_duration = 0.1
+
+    try:
+        loop.run_until_complete(_run_voice_worker(server, bb, devmode=devmode))
+    finally:
+        if not loop.is_closed():
+            with contextlib.suppress(Exception):
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.close()
+    print("[VoiceService] Stopped.")

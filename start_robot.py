@@ -405,16 +405,23 @@ def main():
 
     # ── Phase 3: Voice / LiveKit Agent (Optional) ───────────────────────────
     voice_cfg = cfg.get("voice", {}) or {}
+    voice_devmode = voice_cfg.get("devmode", True)
+    if len(sys.argv) > 1 and sys.argv[1] == "start":
+        voice_devmode = False
+    elif len(sys.argv) > 1 and sys.argv[1] == "dev":
+        voice_devmode = True
+
+    voice_thread: threading.Thread | None = None
     if voice_cfg.get("enabled", False):
         from voice.voice_service import run_voice_service
-        threads.append(
-            threading.Thread(
-                target=run_voice_service,
-                args=(bb,),
-                daemon=True,
-                name="VoiceService",
-            )
+
+        voice_thread = threading.Thread(
+            target=run_voice_service,
+            kwargs={"bb": bb, "devmode": voice_devmode},
+            daemon=False,
+            name="VoiceService",
         )
+        threads.append(voice_thread)
 
     for t in threads:
         t.start()
@@ -424,7 +431,13 @@ def main():
     def signal_handler(sig, frame):
         print("\nShutting down...")
         bb.write(running=False)
+        if voice_thread is not None and voice_thread.is_alive():
+            voice_thread.join(timeout=10.0)
+            if voice_thread.is_alive():
+                print("[Bootstrap] WARNING: VoiceService shutdown timed out.")
         for t in worker_threads:
+            if t is voice_thread:
+                continue
             t.join(timeout=2.0)
         if link is not None:
             _shutdown_home_servos(
@@ -439,6 +452,13 @@ def main():
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
+    if voice_cfg.get("enabled", False):
+        mode_label = "dev" if voice_devmode else "start"
+        print(
+            f"Voice agent enabled (LiveKit {mode_label}). "
+            "Connect via frontend with AGENT_NAME=campus-greeting-agent."
+        )
 
     print("Robot running. Press Ctrl+C to exit.")
 

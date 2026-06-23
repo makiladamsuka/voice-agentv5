@@ -176,6 +176,32 @@ def _bootstrap_home_arms(
     return home
 
 
+def _resolve_arm_home_pose(
+    arms_cfg: dict,
+    arm_controller: ArmController | None,
+) -> tuple[float, float, float, float] | None:
+    """Home arm pose for shutdown (same source as bootstrap)."""
+    if not arms_cfg.get("enabled", False):
+        return None
+    if arm_controller is not None and arm_controller.enabled:
+        return arm_controller.home_pose
+
+    from arm_pose_presets import ArmPosePresets, DEFAULT_PRESETS_PATH
+    from arm_safety_envelope import ArmSafetyEnvelope, DEFAULT_LIMITS_PATH
+
+    limits_path = Path(arms_cfg.get("limits_path", DEFAULT_LIMITS_PATH))
+    if not limits_path.is_absolute():
+        limits_path = APP_DIR / limits_path
+    presets_path = Path(arms_cfg.get("presets_path", DEFAULT_PRESETS_PATH))
+    if not presets_path.is_absolute():
+        presets_path = APP_DIR / presets_path
+
+    envelope = ArmSafetyEnvelope.from_json(limits_path)
+    base_pose = str(arms_cfg.get("base_pose", "home"))
+    presets = ArmPosePresets.load_or_create_home(presets_path, home=envelope.homes)
+    return envelope.clamp_arms(*presets.get(base_pose))
+
+
 def main():
     cfg = _load_yaml(DEFAULT_CONFIG_PATH)
     servo_cfg = cfg.get("servo", {}) or {}
@@ -313,27 +339,42 @@ def main():
     for t in threads:
         t.start()
 
+    worker_threads = list(threads)
+
     def signal_handler(sig, frame):
         print("\nShutting down...")
         bb.write(running=False)
-        time.sleep(0.5)
+        for t in worker_threads:
+            t.join(timeout=2.0)
         if link is not None:
             pan_center = float(servo_cfg.get("pan_center", 80.0))
             tilt_center = float(servo_cfg.get("tilt_center", 110.0))
-            print(f"Homing servos (pan={pan_center}, tilt={tilt_center}) and stopping base...")
+            arm_home = _resolve_arm_home_pose(arms_cfg, arm_controller)
             close_kwargs: dict = {
                 "home_pan": pan_center,
                 "home_tilt": tilt_center,
             }
-            if arm_controller is not None and arm_controller.enabled:
-                h = arm_controller.home_pose
+            if arm_home is not None:
+                bb.write(
+                    arm_a0=arm_home[0],
+                    arm_a1=arm_home[1],
+                    arm_a2=arm_home[2],
+                    arm_a3=arm_home[3],
+                )
                 close_kwargs.update(
-                    home_arm0=h[0],
-                    home_arm1=h[1],
-                    home_arm2=h[2],
-                    home_arm3=h[3],
+                    home_arm0=arm_home[0],
+                    home_arm1=arm_home[1],
+                    home_arm2=arm_home[2],
+                    home_arm3=arm_home[3],
                     skip_arm_detach=not bool(arms_cfg.get("detach_on_shutdown", False)),
                 )
+                print(
+                    f"Homing servos (pan={pan_center}, tilt={tilt_center}) "
+                    f"and arms (A0={arm_home[0]:.1f} A1={arm_home[1]:.1f} "
+                    f"A2={arm_home[2]:.1f} A3={arm_home[3]:.1f})..."
+                )
+            else:
+                print(f"Homing servos (pan={pan_center}, tilt={tilt_center}) and stopping base...")
             link.close(**close_kwargs)
         sys.exit(0)
 

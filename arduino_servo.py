@@ -505,6 +505,46 @@ class ArduinoServoLink:
         self._last_pan = pan
         self._last_tilt = tilt
 
+    def home_smooth_pose(
+        self,
+        pan: float,
+        tilt: float,
+        a0: float,
+        a1: float,
+        a2: float,
+        a3: float,
+        *,
+        duration_sec: float | None = None,
+    ) -> None:
+        """Smoothstep pan/tilt/arms to target (used on shutdown)."""
+        start_pan = self._last_pan if self._last_pan is not None else pan
+        start_tilt = self._last_tilt if self._last_tilt is not None else tilt
+        start = (
+            self._last_a0 if self._last_a0 is not None else a0,
+            self._last_a1 if self._last_a1 is not None else a1,
+            self._last_a2 if self._last_a2 is not None else a2,
+            self._last_a3 if self._last_a3 is not None else a3,
+        )
+        max_arm_delta = max(abs(start[i] - v) for i, v in enumerate((a0, a1, a2, a3)))
+        duration = duration_sec
+        if duration is None:
+            duration = max(self.home_smooth_sec, max_arm_delta / 45.0, 0.6)
+        if duration <= 0.0:
+            self.write_angles_and_arms(pan, tilt, a0, a1, a2, a3, force=True)
+            return
+
+        steps = max(2, int(duration * self.home_smooth_hz))
+        delay = duration / steps
+        for i in range(1, steps + 1):
+            t = i / steps
+            eased = t * t * (3.0 - 2.0 * t)
+            p = start_pan + (pan - start_pan) * eased
+            q = start_tilt + (tilt - start_tilt) * eased
+            arms = tuple(start[j] + (target - start[j]) * eased for j, target in enumerate((a0, a1, a2, a3)))
+            self.write_angles_and_arms(p, q, *arms, force=True)
+            time.sleep(delay)
+        time.sleep(0.25)
+
     def set_counts_per_degree(self, cpd: float) -> bool:
         ok = self.send_line(f"C{cpd:.4f}", drain_after=False)
         if not ok:
@@ -567,16 +607,39 @@ class ArduinoServoLink:
                     self.write_base_stop()
                     if not skip_home:
                         arms = (home_arm0, home_arm1, home_arm2, home_arm3)
-                        if all(v is not None for v in arms):
-                            self.write_arms(*arms, force=True)  # type: ignore[arg-type]
-                            time.sleep(home_arm_settle_sec)
+                        has_arms = all(v is not None for v in arms)
+                        has_head = home_pan is not None and home_tilt is not None
+                        if has_arms and has_head:
+                            self.home_smooth_pose(
+                                home_pan,  # type: ignore[arg-type]
+                                home_tilt,  # type: ignore[arg-type]
+                                arms[0],  # type: ignore[arg-type]
+                                arms[1],
+                                arms[2],
+                                arms[3],
+                                duration_sec=home_arm_settle_sec,
+                            )
                             if not skip_arm_detach:
                                 self.detach_arms()
-                        elif home_pan is not None and home_tilt is not None:
+                        elif has_arms:
+                            pan = self._last_pan if self._last_pan is not None else 100.0
+                            tilt = self._last_tilt if self._last_tilt is not None else 110.0
+                            self.home_smooth_pose(
+                                pan,
+                                tilt,
+                                arms[0],  # type: ignore[arg-type]
+                                arms[1],
+                                arms[2],
+                                arms[3],
+                                duration_sec=home_arm_settle_sec,
+                            )
+                            if not skip_arm_detach:
+                                self.detach_arms()
+                        elif has_head:
                             self.home_smooth(home_pan, home_tilt)
                             time.sleep(0.12)
                     self._ser.close()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[ArduinoServoLink] close homing failed: {e}")
         self._ser = None
         self._connected = False

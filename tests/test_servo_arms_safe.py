@@ -50,7 +50,7 @@ _AXIS_PAIRS = (
     ("a0_down", "a0_up", 0),
     ("a2_left", "a2_right", 2),
     ("a1_down", "a1_up", 1),
-    ("a3_left", "a3_right", 3),  # L = sweep outward (+), J = inward (-)
+    ("a3_right", "a3_left", 3),  # L = sweep decrease, J = sweep increase
 )
 _OPPOSITE: dict[str, str] = {}
 for _neg, _pos, _ in _AXIS_PAIRS:
@@ -128,13 +128,13 @@ def _map_key(key: str) -> Optional[str]:
     if key in ("d", "D", ARROW_RIGHT):
         return "a2_right"
     if key in ("i", "I"):
-        return "a1_up"
-    if key in ("k", "K"):
         return "a1_down"
+    if key in ("k", "K"):
+        return "a1_up"
     if key in ("j", "J"):
-        return "a3_left"
-    if key in ("l", "L"):
         return "a3_right"
+    if key in ("l", "L"):
+        return "a3_left"
     if key in ("+", "="):
         return "step_up"
     if key in ("-", "_"):
@@ -433,7 +433,7 @@ def main() -> int:
 
     print(
         "Safe-zone arm jogger — sweep clamped to raise-dependent limits\n"
-        "Right WASD: W/S=A0 raise, A/D=A2 sweep  |  Left IJKL: I/K=A1, J=in L=out (A3)\n"
+        "Right WASD: W/S=A0 raise, A/D=A2 sweep  |  Left IJKL: K=raise I=lower, J=in L=out (A3)\n"
         "B=save  N=recall  ,/.=prev/next pose  0=list  H=home  P=print  +/-=step  Q=quit"
     )
     link.write_arms(*envelope.clamp_arms(*arms), force=True)

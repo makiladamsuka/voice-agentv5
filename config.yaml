@@ -285,6 +285,21 @@ servo:
   home_smooth_sec: 0.9
   home_smooth_hz: 30.0
 
+arms:
+  enabled: true
+  presets_path: tests/arm_pose_presets.json
+  limits_path: tests/captured_arm_limits.json
+  base_pose: home
+  turn_step_delta_deg: 4.0
+  ref_step_deg: 8.0
+  turn_sweep_factor: 0.45
+  blend_hz: 5.0
+  keepalive_sec: 0.8
+  min_spin_moved_deg: 2.0
+  detach_on_shutdown: false
+  turn_sign: 1.0
+  loop_hz: 50.0
+
 eyes:
   blink_speed_min: 3.2
   blink_speed_max: 4.2

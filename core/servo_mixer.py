@@ -103,6 +103,43 @@ class ServoMixer:
         self._encoder_poll_hz = 2.0
         self._last_debug_cmd_seq = 0
 
+        a = _cfg(cfg, "arms", default={}) or {}
+        self._arms_enabled = bool(a.get("enabled", False))
+        if self._arms_enabled and link is not None and link.connected:
+            if not link.has_arm_firmware():
+                print("[ServoMixer] arms.enabled but no arm firmware — arms disabled.")
+                self._arms_enabled = False
+        elif self._arms_enabled:
+            self._arms_enabled = False
+
+        self._prev_a0: float | None = None
+        self._prev_a1: float | None = None
+        self._prev_a2: float | None = None
+        self._prev_a3: float | None = None
+        self._last_arm_keepalive_ts = 0.0
+        keepalive = float(a.get("keepalive_sec", 0.8))
+        self._arm_keepalive_sec = max(0.2, keepalive)
+
+    def _read_arms(self) -> tuple[float, float, float, float]:
+        state = self.bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
+        return (
+            self._quantize(state["arm_a0"]),
+            self._quantize(state["arm_a1"]),
+            self._quantize(state["arm_a2"]),
+            self._quantize(state["arm_a3"]),
+        )
+
+    def _arms_moved(self, arms: tuple[float, float, float, float]) -> bool:
+        if self._prev_a0 is None:
+            return True
+        return any(
+            abs(arms[i] - prev) >= self.send_min_deg
+            for i, prev in enumerate((self._prev_a0, self._prev_a1, self._prev_a2, self._prev_a3))
+        )
+
+    def _remember_arms(self, arms: tuple[float, float, float, float]) -> None:
+        self._prev_a0, self._prev_a1, self._prev_a2, self._prev_a3 = arms
+
     def _pan_mech(self, pan_cmd: float) -> float:
         return signed_pan_mech_deg(pan_cmd, self._servo_cfg)
 
@@ -141,15 +178,25 @@ class ServoMixer:
             return v
         return round(v / self.angle_quantum) * self.angle_quantum
 
-    def _should_send(self, pan: float, tilt: float, now: float) -> bool:
+    def _should_send(
+        self,
+        pan: float,
+        tilt: float,
+        arms: tuple[float, float, float, float] | None,
+        now: float,
+    ) -> bool:
         if (now - self._last_send_ts) < (1.0 / self.send_hz):
             return False
         if self._prev_pan is None:
             return True
-        return (
+        if (
             abs(pan - self._prev_pan) >= self.send_min_deg
             or abs(tilt - self._prev_tilt) >= self.send_min_deg
-        )
+        ):
+            return True
+        if self._arms_enabled and arms is not None:
+            return self._arms_moved(arms)
+        return False
 
     def _handle_debug_commands(self, now: float) -> bool:
         """Browser debug panel: zero base / fusion reset. Returns True if handled."""
@@ -192,6 +239,10 @@ class ServoMixer:
                 print(f"[ServoMixer] Encoder synced: {self._encoder_deg:+.1f}°")
             else:
                 print("[ServoMixer] WARNING: could not read base encoder — base moves blocked.")
+            if self._arms_enabled:
+                tilt = self._quantize(self.bb.read("servo_tilt")["servo_tilt"])
+                self._send_pose(pan, tilt, force_arms=True)
+                print("[ServoMixer] Arms enabled — home pose sent to firmware.")
 
         loop_delay = 1.0 / max(1.0, self.loop_hz)
 
@@ -228,8 +279,18 @@ class ServoMixer:
                 self._last_encoder_poll_ts = now
                 self._sync_encoder(pan)
 
-            if self._should_send(pan, tilt, now):
-                self._send_angles(pan, tilt)
+            if (
+                self._arms_enabled
+                and not state["base_motion_busy"]
+                and (now - self._last_arm_keepalive_ts) >= self._arm_keepalive_sec
+            ):
+                self._send_pose(pan, tilt, force_arms=True)
+                self._last_arm_keepalive_ts = now
+
+            if self._should_send(
+                pan, tilt, self._read_arms() if self._arms_enabled else None, now
+            ):
+                self._send_pose(pan, tilt)
                 self._last_send_ts = now
                 self._prev_pan = pan
                 self._prev_tilt = tilt
@@ -258,20 +319,35 @@ class ServoMixer:
         )
         return self._send_pan
 
-    def _send_angles(self, pan: float, tilt: float) -> None:
+    def _send_pose(self, pan: float, tilt: float, *, force_arms: bool = False) -> None:
         if self._link is None:
             return
+        send_pan = self._pan_for_send(pan)
+        send_tilt = self._tilt_for_send(tilt)
         try:
-            self._link.write_angles(self._pan_for_send(pan), self._tilt_for_send(tilt))
+            if self._arms_enabled:
+                arms = self._read_arms()
+                self._link.write_angles_and_arms(
+                    send_pan, send_tilt, *arms, force=force_arms
+                )
+                self._remember_arms(arms)
+            else:
+                self._link.write_angles(send_pan, send_tilt)
         except Exception as e:
-            print(f"[ServoMixer] write_angles failed: {e}")
+            print(f"[ServoMixer] write failed: {e}")
 
-    def _refresh_head_during_spin(self) -> None:
-        """Keep head tracking while base L/R spin is in progress."""
+    def _send_angles(self, pan: float, tilt: float) -> None:
+        self._send_pose(pan, tilt)
+
+    def _refresh_during_spin(self) -> None:
+        """Keep head tracking and arm lean fresh while base L/R spin is in progress."""
         state = self.bb.read("servo_pan", "servo_tilt")
         pan = self._quantize(state["servo_pan"])
         tilt = self._quantize(state["servo_tilt"])
-        self._send_angles(pan, tilt)
+        self._send_pose(pan, tilt, force_arms=True)
+
+    def _refresh_head_during_spin(self) -> None:
+        self._refresh_during_spin()
 
     def _execute_base_step(self, pan: float, tilt: float, step: float, source: str, now: float) -> None:
         if self._link is None:
@@ -297,7 +373,7 @@ class ServoMixer:
                 positive_uses_left=self.spin_positive_uses_left,
                 encoder_sign=self.encoder_sign,
                 stall_sec=self.spin_stall_sec,
-                on_poll=self._refresh_head_during_spin,
+                on_poll=self._refresh_during_spin,
             )
             if self._watchdog is not None:
                 self._watchdog.finish_move()

@@ -559,6 +559,7 @@ class ArduinoServoLink:
         home_arm3: float | None = None,
         skip_home: bool = False,
         home_arm_settle_sec: float = 1.5,
+        skip_arm_detach: bool = False,
     ) -> None:
         if self._ser is not None:
             try:
@@ -569,7 +570,8 @@ class ArduinoServoLink:
                         if all(v is not None for v in arms):
                             self.write_arms(*arms, force=True)  # type: ignore[arg-type]
                             time.sleep(home_arm_settle_sec)
-                            self.detach_arms()
+                            if not skip_arm_detach:
+                                self.detach_arms()
                         elif home_pan is not None and home_tilt is not None:
                             self.home_smooth(home_pan, home_tilt)
                             time.sleep(0.12)

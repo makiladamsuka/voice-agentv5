@@ -42,6 +42,12 @@ class Blackboard:
     wander_moving: bool = False    # head is gliding to a wander target (ServoLoop)
     wander_last_step_deg: float = 0.0  # last head wander step size
 
+    # ── Arm targets (written by ArmController, sent by ServoMixer) ───────────
+    arm_a0: float = 47.0
+    arm_a1: float = 65.0
+    arm_a2: float = 64.0
+    arm_a3: float = 87.0
+
     # ── Base rotation (written by BaseController / ServoMixer) ────────────────
     base_step_deg: float = 0.0
     base_step_source: str = ""

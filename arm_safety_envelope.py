@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-DEFAULT_LIMITS_PATH = Path(__file__).with_name("captured_arm_limits.json")
+DEFAULT_LIMITS_PATH = Path(__file__).resolve().parent / "tests" / "captured_arm_limits.json"
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -95,8 +95,6 @@ class ArmSafetyEnvelope:
         high_raise = poses["max_raise"]
         min_sw_high = poses["min_sweep_at_high"]
 
-        # Raise up → sweep decreases: low-raise anchors from step 1–2,
-        # high-raise sweep from max_raise (right) / min_sweep_at_high (left).
         right = _CoupledArm(
             raise_idx=0,
             sweep_idx=2,

@@ -19,7 +19,7 @@
 | Servo | Min | Max | Home |
 |-------|-----|-----|------|
 | A0 (R raise) | 47 | 124 | 47 |
-| A1 (L raise) | 0 | 65 | 65 |
+| A1 (L raise) | 6 | 65 | 65 (rest down; lower angle = raised) |
 | A2 (R sweep) | 44 | 78 | 64 |
 | A3 (L sweep) | 70 | 102 | 87 |
 
@@ -35,7 +35,7 @@ arduino-cli upload -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32 firmware/head_servo_
 
 Boot banner: `FW head_servo_hands_v5`
 
-Arm PWM is **off at boot** and after **1.5 s** without an `A0..A3` command. Send `AO` to detach immediately. Head pan/tilt (ch 4/5) unchanged.
+Arm PWM is **off at boot** until the Pi sends `A0..A3`. After **30 s** without an arm command, PWM turns off (Pi keepalive should send every &lt;1 s). Send `AO` to detach immediately. Head pan/tilt (ch 4/5) unchanged.
 
 ## Test arms
 

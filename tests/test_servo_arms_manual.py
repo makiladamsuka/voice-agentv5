@@ -2,9 +2,9 @@
 """Interactive arm jogger — hold keys for continuous motion.
 
 Right arm (WASD):  W/S = A0 raise up/down,  A/D = A2 arm left/right
-Left arm (IJKL):   I/K = A1 raise up/down,  J/L = A3 arm left/right
+Left arm (IJKL):   K/I = A1 raise up/down,  J/L = A3 sweep in/out
 
-Requires ``firmware/head_servo_hands`` flashed.
+Requires ``firmware/head_servo_hands`` flashed (v13+).
 
   cd voice-agentv5 && python tests/test_servo_arms_manual.py
 
@@ -38,7 +38,7 @@ from test_servo_manual import load_servo_cfg
 
 ARM_LIMITS = (
     (47.0, 124.0),   # A0 right shoulder raise
-    (0.0, 65.0),     # A1 left shoulder raise (low=65, high=0)
+    (6.0, 65.0),     # A1 left shoulder raise (rest=65, raised toward 6)
     (44.0, 78.0),    # A2 right arm sweep
     (70.0, 102.0),   # A3 left arm sweep
 )
@@ -80,7 +80,7 @@ _AXIS_PAIRS = (
     ("a0_down", "a0_up", 0),
     ("a2_left", "a2_right", 2),
     ("a1_down", "a1_up", 1),
-    ("a3_left", "a3_right", 3),  # L = sweep outward (+), J = inward (-)
+    ("a3_right", "a3_left", 3),  # L = sweep decrease, J = sweep increase
 )
 _OPPOSITE: dict[str, str] = {}
 for _neg, _pos, _ in _AXIS_PAIRS:
@@ -272,15 +272,15 @@ def _map_key(key: str) -> Optional[str]:
         return "a2_left"
     if key in ("d", "D", ARROW_RIGHT):
         return "a2_right"
-    # Left arm: A1 big raise (I/K), A3 small sweep (J/L)
+    # Left arm: A1 big raise (K=up I=down), A3 small sweep (L=decrease J=increase)
     if key in ("i", "I"):
-        return "a1_up"
-    if key in ("k", "K"):
         return "a1_down"
+    if key in ("k", "K"):
+        return "a1_up"
     if key in ("j", "J"):
-        return "a3_left"
-    if key in ("l", "L"):
         return "a3_right"
+    if key in ("l", "L"):
+        return "a3_left"
     if key in ("+", "="):
         return "step_up"
     if key in ("-", "_"):
@@ -397,7 +397,7 @@ def main() -> int:
 
     print(
         "Right arm WASD: W/S=A0 big raise, A/D=A2 small sweep\n"
-        "Left arm  IJKL: I/K=A1 big raise, J/L=A3 small sweep\n"
+        "Left arm  IJKL: K=raise I=lower, J=sweep in L=sweep out (A3)\n"
         "Hold keys for continuous motion. +/-=step  H=home  C=calibrate\n"
         "Y=5-step limit capture  Ctrl+C=home+quit  Q=quit"
     )

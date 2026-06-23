@@ -13,6 +13,7 @@ from core.imu_service import ImuService
 from core.servo_loop import ServoLoop
 from core.base_controller import BaseController
 from core.servo_mixer import ServoMixer
+from core.arm_controller import ArmController
 from core.emotion_engine import EmotionEngine
 from core.eye_renderer import EyeRenderer
 from core.debug_dashboard import DebugDashboard
@@ -134,10 +135,52 @@ def _lock_yaw_reference(bb: Blackboard, link, base_cfg: dict) -> None:
     print("[Bootstrap] Yaw reference locked (world yaw = 0 at startup pose).")
 
 
+def _bootstrap_home_arms(
+    link: ArduinoServoLink,
+    bb: Blackboard,
+    arms_cfg: dict,
+    servo_cfg: dict,
+) -> tuple[float, float, float, float] | None:
+    """Send arm home pose immediately after connect (before IMU wait)."""
+    if not arms_cfg.get("enabled", False):
+        return None
+    if not link.connected or not link.has_arm_firmware():
+        print("[Bootstrap] Arms enabled in config but arm firmware not detected.")
+        return None
+
+    from arm_pose_presets import ArmPosePresets, DEFAULT_PRESETS_PATH
+    from arm_safety_envelope import ArmSafetyEnvelope, DEFAULT_LIMITS_PATH
+
+    limits_path = Path(arms_cfg.get("limits_path", DEFAULT_LIMITS_PATH))
+    if not limits_path.is_absolute():
+        limits_path = APP_DIR / limits_path
+    presets_path = Path(arms_cfg.get("presets_path", DEFAULT_PRESETS_PATH))
+    if not presets_path.is_absolute():
+        presets_path = APP_DIR / presets_path
+
+    envelope = ArmSafetyEnvelope.from_json(limits_path)
+    base_pose = str(arms_cfg.get("base_pose", "home"))
+    presets = ArmPosePresets.load_or_create_home(presets_path, home=envelope.homes)
+    home = envelope.clamp_arms(*presets.get(base_pose))
+
+    pan = float(servo_cfg.get("pan_center", 100.0))
+    tilt = float(servo_cfg.get("tilt_center", 110.0))
+    link.write_angles_and_arms(pan, tilt, *home, force=True)
+    time.sleep(0.4)
+    bb.write(arm_a0=home[0], arm_a1=home[1], arm_a2=home[2], arm_a3=home[3])
+    print(
+        f"[Bootstrap] Arms homed: A0={home[0]:.1f} A1={home[1]:.1f} "
+        f"A2={home[2]:.1f} A3={home[3]:.1f}",
+        flush=True,
+    )
+    return home
+
+
 def main():
     cfg = _load_yaml(DEFAULT_CONFIG_PATH)
     servo_cfg = cfg.get("servo", {}) or {}
     base_cfg = cfg.get("base", {}) or {}
+    arms_cfg = cfg.get("arms", {}) or {}
     imu_cfg = cfg.get("imu", {}) or {}
     debug_viz_cfg = cfg.get("debug_viz", {}) or {}
     port = servo_cfg.get("port") or ""
@@ -183,6 +226,9 @@ def main():
         print(f"WARNING: Serial connection failed: {e}. Running in dry-run mode.")
         link = None
 
+    if link is not None and link.connected:
+        _bootstrap_home_arms(link, bb, arms_cfg, servo_cfg)
+
     base_gate = BaseMotionGate(backoff_sec=float(base_cfg.get("error_backoff_sec", 45.0)))
     bb.write(base_motion_allowed=True)
 
@@ -216,6 +262,15 @@ def main():
 
     _print_debug_viz_banner(debug_viz_cfg)
 
+    arm_controller: ArmController | None = None
+    if arms_cfg.get("enabled", False):
+        arm_controller = ArmController(bb)
+        if link is not None and link.connected and not link.has_arm_firmware():
+            print(
+                "[Bootstrap] WARNING: arms.enabled but ESP32 has no arm firmware. "
+                "Flash firmware/head_servo_hands/ for arm gestures."
+            )
+
     # ── Phase 2: remaining services ───────────────────────────────────────────
     threads = [
         threading.Thread(target=FaceTracker(bb).run, daemon=True, name="FaceTracker"),
@@ -233,6 +288,10 @@ def main():
         threading.Thread(target=EmotionEngine(bb).run, daemon=True, name="EmotionEngine"),
         threading.Thread(target=EyeRenderer(bb).run, daemon=True, name="EyeRenderer"),
     ]
+    if arm_controller is not None and arm_controller.enabled:
+        threads.append(
+            threading.Thread(target=arm_controller.run, daemon=True, name="ArmController")
+        )
 
     if debug_viz_cfg.get("enabled", True):
         threads.append(
@@ -262,7 +321,20 @@ def main():
             pan_center = float(servo_cfg.get("pan_center", 80.0))
             tilt_center = float(servo_cfg.get("tilt_center", 110.0))
             print(f"Homing servos (pan={pan_center}, tilt={tilt_center}) and stopping base...")
-            link.close(home_pan=pan_center, home_tilt=tilt_center)
+            close_kwargs: dict = {
+                "home_pan": pan_center,
+                "home_tilt": tilt_center,
+            }
+            if arm_controller is not None and arm_controller.enabled:
+                h = arm_controller.home_pose
+                close_kwargs.update(
+                    home_arm0=h[0],
+                    home_arm1=h[1],
+                    home_arm2=h[2],
+                    home_arm3=h[3],
+                    skip_arm_detach=not bool(arms_cfg.get("detach_on_shutdown", False)),
+                )
+            link.close(**close_kwargs)
         sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)

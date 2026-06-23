@@ -40,7 +40,7 @@ const int PULSE_MAX_US = 2600;
 
 const uint8_t ARM_CH_COUNT = 4;
 const uint8_t ARM_CH[ARM_CH_COUNT] = {0, 2, 8, 9};
-const float ARM_MIN_DEG[ARM_CH_COUNT] = {47.0f, 0.0f, 44.0f, 70.0f};
+const float ARM_MIN_DEG[ARM_CH_COUNT] = {47.0f, 6.0f, 44.0f, 70.0f};
 const float ARM_MAX_DEG[ARM_CH_COUNT] = {124.0f, 65.0f, 78.0f, 102.0f};
 const float ARM_HOME_DEG[ARM_CH_COUNT] = {47.0f, 65.0f, 64.0f, 87.0f};
 // MG996R raise (A0,A1) use full pulse span; SG90 sweep (A2,A3) use typical 1–2 ms.
@@ -48,7 +48,7 @@ const int ARM_PULSE_MIN_US[ARM_CH_COUNT] = {450, 450, 1000, 1000};
 const int ARM_PULSE_MAX_US[ARM_CH_COUNT] = {2600, 2600, 2000, 2000};
 // Left sweep (A3): logical angle matches pulse direction (outward = higher deg → 102).
 const bool ARM_INVERT[ARM_CH_COUNT] = {false, false, false, false};
-const unsigned long ARM_IDLE_DETACH_MS = 1500UL;
+const unsigned long ARM_IDLE_DETACH_MS = 30000UL;
 
 const int ENC_A_PIN = 35;
 const int ENC_B_PIN = 34;
@@ -767,7 +767,7 @@ void setup() {
   panAngle = PAN_CENTER;
   tiltAngle = TILT_CENTER;
   zeroOffset = 0;
-  Serial.println(F("FW head_servo_hands_v9"));
+  Serial.println(F("FW head_servo_hands_v14"));
   Serial.println(F("READY"));
   Serial.flush();
 }

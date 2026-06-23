@@ -31,6 +31,7 @@ except ImportError:
     yaml = None
 
 from core.blackboard import Blackboard
+from lib.base_head_lead import mech_to_pan_cmd
 from lib.elastic_head_motion import (
     OrganicWanderSearch,
     clamp,

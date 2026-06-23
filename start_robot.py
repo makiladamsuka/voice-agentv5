@@ -202,6 +202,73 @@ def _resolve_arm_home_pose(
     return envelope.clamp_arms(*presets.get(base_pose))
 
 
+def _load_arm_envelope(
+    arms_cfg: dict,
+    arm_controller: ArmController | None,
+) -> "ArmSafetyEnvelope":
+    from arm_safety_envelope import ArmSafetyEnvelope, DEFAULT_LIMITS_PATH
+
+    if arm_controller is not None and arm_controller.enabled:
+        return arm_controller.envelope
+
+    limits_path = Path(arms_cfg.get("limits_path", DEFAULT_LIMITS_PATH))
+    if not limits_path.is_absolute():
+        limits_path = APP_DIR / limits_path
+    return ArmSafetyEnvelope.from_json(limits_path)
+
+
+def _shutdown_home_servos(
+    link: ArduinoServoLink,
+    bb: Blackboard,
+    *,
+    arms_cfg: dict,
+    arm_controller: ArmController | None,
+    servo_cfg: dict,
+) -> None:
+    """Smooth arm + head homing (same path as test_servo_arms_safe.py exit)."""
+    from lib.arm_home_motion import smooth_home_arms
+
+    pan_center = float(servo_cfg.get("pan_center", 100.0))
+    tilt_center = float(servo_cfg.get("tilt_center", 110.0))
+    link.write_base_stop()
+
+    arm_home = _resolve_arm_home_pose(arms_cfg, arm_controller)
+    if arm_home is not None and link.has_arm_firmware():
+        state = bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
+        start = [
+            float(state["arm_a0"]),
+            float(state["arm_a1"]),
+            float(state["arm_a2"]),
+            float(state["arm_a3"]),
+        ]
+        for i, attr in enumerate(("_last_a0", "_last_a1", "_last_a2", "_last_a3")):
+            sent = getattr(link, attr, None)
+            if sent is not None:
+                start[i] = float(sent)
+
+        envelope = _load_arm_envelope(arms_cfg, arm_controller)
+        blend_sec = float(arms_cfg.get("shutdown_blend_sec", 0.6))
+        link.configure_servo_stream(send_hz=30.0, min_deg=0.02, quantum_deg=0.1)
+        final = smooth_home_arms(
+            link, tuple(start), arm_home, envelope, blend_sec=blend_sec
+        )
+        bb.write(
+            arm_a0=final[0],
+            arm_a1=final[1],
+            arm_a2=final[2],
+            arm_a3=final[3],
+        )
+        print(
+            f"Arms at home: A0={final[0]:.1f} A1={final[1]:.1f} "
+            f"A2={final[2]:.1f} A3={final[3]:.1f}",
+            flush=True,
+        )
+
+    print(f"Homing head (pan={pan_center}, tilt={tilt_center})...", flush=True)
+    link.home_smooth(pan_center, tilt_center)
+    time.sleep(0.12)
+
+
 def main():
     cfg = _load_yaml(DEFAULT_CONFIG_PATH)
     servo_cfg = cfg.get("servo", {}) or {}
@@ -347,35 +414,14 @@ def main():
         for t in worker_threads:
             t.join(timeout=2.0)
         if link is not None:
-            pan_center = float(servo_cfg.get("pan_center", 80.0))
-            tilt_center = float(servo_cfg.get("tilt_center", 110.0))
-            arm_home = _resolve_arm_home_pose(arms_cfg, arm_controller)
-            close_kwargs: dict = {
-                "home_pan": pan_center,
-                "home_tilt": tilt_center,
-            }
-            if arm_home is not None:
-                bb.write(
-                    arm_a0=arm_home[0],
-                    arm_a1=arm_home[1],
-                    arm_a2=arm_home[2],
-                    arm_a3=arm_home[3],
-                )
-                close_kwargs.update(
-                    home_arm0=arm_home[0],
-                    home_arm1=arm_home[1],
-                    home_arm2=arm_home[2],
-                    home_arm3=arm_home[3],
-                    skip_arm_detach=not bool(arms_cfg.get("detach_on_shutdown", False)),
-                )
-                print(
-                    f"Homing servos (pan={pan_center}, tilt={tilt_center}) "
-                    f"and arms (A0={arm_home[0]:.1f} A1={arm_home[1]:.1f} "
-                    f"A2={arm_home[2]:.1f} A3={arm_home[3]:.1f})..."
-                )
-            else:
-                print(f"Homing servos (pan={pan_center}, tilt={tilt_center}) and stopping base...")
-            link.close(**close_kwargs)
+            _shutdown_home_servos(
+                link,
+                bb,
+                arms_cfg=arms_cfg,
+                arm_controller=arm_controller,
+                servo_cfg=servo_cfg,
+            )
+            link.close(skip_home=True)
         sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)

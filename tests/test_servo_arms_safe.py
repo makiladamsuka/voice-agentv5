@@ -376,6 +376,7 @@ def main() -> int:
     blend_sec = max(0.0, args.blend)
     preset_names = presets.list_names()
     preset_idx = preset_names.index("home") if "home" in preset_names else -1
+    homed_on_exit = False
 
     def _refresh_preset_names() -> list[str]:
         nonlocal preset_names, preset_idx
@@ -422,7 +423,7 @@ def main() -> int:
         _start_preset_blend(names[idx])
 
     def _exit_home() -> None:
-        nonlocal blend
+        nonlocal blend, homed_on_exit
         if args.no_home:
             return
         blend = None
@@ -430,6 +431,7 @@ def main() -> int:
         _sync_arms_from_link(link, arms)
         _smooth_home_arms(link, arms, envelope, homes, blend_sec)
         _print_pose(arms, envelope)
+        homed_on_exit = True
 
     print(
         "Safe-zone arm jogger — sweep clamped to raise-dependent limits\n"
@@ -559,13 +561,15 @@ def main() -> int:
         print("\nCtrl+C — homing arms...", flush=True)
         _exit_home()
     finally:
-        link.close(
-            home_arm0=homes[0],
-            home_arm1=homes[1],
-            home_arm2=homes[2],
-            home_arm3=homes[3],
-            skip_home=args.no_home,
-        )
+        if args.no_home or homed_on_exit:
+            link.close(skip_home=True)
+        else:
+            link.close(
+                home_arm0=homes[0],
+                home_arm1=homes[1],
+                home_arm2=homes[2],
+                home_arm3=homes[3],
+            )
     print("Done.")
     return 0
 

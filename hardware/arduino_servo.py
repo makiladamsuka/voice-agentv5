@@ -622,17 +622,8 @@ class ArduinoServoLink:
                             if not skip_arm_detach:
                                 self.detach_arms()
                         elif has_arms:
-                            pan = self._last_pan if self._last_pan is not None else 100.0
-                            tilt = self._last_tilt if self._last_tilt is not None else 110.0
-                            self.home_smooth_pose(
-                                pan,
-                                tilt,
-                                arms[0],  # type: ignore[arg-type]
-                                arms[1],
-                                arms[2],
-                                arms[3],
-                                duration_sec=home_arm_settle_sec,
-                            )
+                            self.write_arms(*arms, force=True)  # type: ignore[arg-type]
+                            time.sleep(home_arm_settle_sec)
                             if not skip_arm_detach:
                                 self.detach_arms()
                         elif has_head:

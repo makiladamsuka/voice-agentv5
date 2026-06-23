@@ -94,6 +94,10 @@ class ServoMixer:
 
         self._prev_pan = None
         self._prev_tilt = None
+        self._prev_a0 = None
+        self._prev_a1 = None
+        self._prev_a2 = None
+        self._prev_a3 = None
         self._send_pan = None
         self._send_tilt = None
         self._last_send_ts = 0.0
@@ -141,14 +145,18 @@ class ServoMixer:
             return v
         return round(v / self.angle_quantum) * self.angle_quantum
 
-    def _should_send(self, pan: float, tilt: float, now: float) -> bool:
+    def _should_send(self, pan: float, tilt: float, a0: float, a1: float, a2: float, a3: float, now: float) -> bool:
         if (now - self._last_send_ts) < (1.0 / self.send_hz):
             return False
-        if self._prev_pan is None:
+        if self._prev_pan is None or self._prev_a0 is None:
             return True
         return (
             abs(pan - self._prev_pan) >= self.send_min_deg
             or abs(tilt - self._prev_tilt) >= self.send_min_deg
+            or abs(a0 - self._prev_a0) >= self.send_min_deg
+            or abs(a1 - self._prev_a1) >= self.send_min_deg
+            or abs(a2 - self._prev_a2) >= self.send_min_deg
+            or abs(a3 - self._prev_a3) >= self.send_min_deg
         )
 
     def _handle_debug_commands(self, now: float) -> bool:
@@ -203,11 +211,16 @@ class ServoMixer:
 
             state = self.bb.read(
                 "servo_pan", "servo_tilt",
+                "hand_a0", "hand_a1", "hand_a2", "hand_a3",
                 "base_step_ready", "base_step_deg", "base_step_source",
                 "base_motion_busy",
             )
             pan = self._quantize(state["servo_pan"])
             tilt = self._quantize(state["servo_tilt"])
+            a0 = self._quantize(state["hand_a0"])
+            a1 = self._quantize(state["hand_a1"])
+            a2 = self._quantize(state["hand_a2"])
+            a3 = self._quantize(state["hand_a3"])
 
             if state["base_step_ready"] and not state["base_motion_busy"]:
                 step = state["base_step_deg"]
@@ -228,11 +241,15 @@ class ServoMixer:
                 self._last_encoder_poll_ts = now
                 self._sync_encoder(pan)
 
-            if self._should_send(pan, tilt, now):
-                self._send_angles(pan, tilt)
+            if self._should_send(pan, tilt, a0, a1, a2, a3, now):
+                self._send_angles(pan, tilt, a0, a1, a2, a3)
                 self._last_send_ts = now
                 self._prev_pan = pan
                 self._prev_tilt = tilt
+                self._prev_a0 = a0
+                self._prev_a1 = a1
+                self._prev_a2 = a2
+                self._prev_a3 = a3
 
             time.sleep(loop_delay)
 
@@ -258,20 +275,28 @@ class ServoMixer:
         )
         return self._send_pan
 
-    def _send_angles(self, pan: float, tilt: float) -> None:
+    def _send_angles(self, pan: float, tilt: float, a0: float, a1: float, a2: float, a3: float) -> None:
         if self._link is None:
             return
         try:
-            self._link.write_angles(self._pan_for_send(pan), self._tilt_for_send(tilt))
+            self._link.write_angles_and_arms(
+                self._pan_for_send(pan),
+                self._tilt_for_send(tilt),
+                a0, a1, a2, a3
+            )
         except Exception as e:
-            print(f"[ServoMixer] write_angles failed: {e}")
+            print(f"[ServoMixer] write_angles_and_arms failed: {e}")
 
     def _refresh_head_during_spin(self) -> None:
         """Keep head tracking while base L/R spin is in progress."""
-        state = self.bb.read("servo_pan", "servo_tilt")
+        state = self.bb.read("servo_pan", "servo_tilt", "hand_a0", "hand_a1", "hand_a2", "hand_a3")
         pan = self._quantize(state["servo_pan"])
         tilt = self._quantize(state["servo_tilt"])
-        self._send_angles(pan, tilt)
+        a0 = self._quantize(state["hand_a0"])
+        a1 = self._quantize(state["hand_a1"])
+        a2 = self._quantize(state["hand_a2"])
+        a3 = self._quantize(state["hand_a3"])
+        self._send_angles(pan, tilt, a0, a1, a2, a3)
 
     def _execute_base_step(self, pan: float, tilt: float, step: float, source: str, now: float) -> None:
         if self._link is None:
@@ -285,7 +310,9 @@ class ServoMixer:
                     encoder_deg=enc,
                     pan_offset_deg=pan_mech,
                 )
-            self._send_angles(pan, tilt)
+            # Send current arms along with base move
+            state = self.bb.read("hand_a0", "hand_a1", "hand_a2", "hand_a3")
+            self._send_angles(pan, tilt, state["hand_a0"], state["hand_a1"], state["hand_a2"], state["hand_a3"])
             self.bb.write(base_motion_busy=True)
             from base_spin_motion import write_base_step_spin
 

@@ -42,6 +42,13 @@ class Blackboard:
     wander_moving: bool = False    # head is gliding to a wander target (ServoLoop)
     wander_last_step_deg: float = 0.0  # last head wander step size
 
+    # ── Hands (written by GestureEngine/Animation) ───────────────────────────
+    hand_a0: float = 0.0     # Right raise (0=neutral..180)
+    hand_a1: float = 180.0   # Left raise (180=neutral..0)
+    hand_a2: float = 90.0    # Right sweep (centered)
+    hand_a3: float = 90.0    # Left sweep (centered)
+    hand_priority: str = "living"  # "living" | "agent"
+
     # ── Base rotation (written by BaseController / ServoMixer) ────────────────
     base_step_deg: float = 0.0
     base_step_source: str = ""

@@ -13,6 +13,7 @@ from core.imu_service import ImuService
 from core.servo_loop import ServoLoop
 from core.base_controller import BaseController
 from core.servo_mixer import ServoMixer
+from core.gesture_engine import GestureEngine
 from core.emotion_engine import EmotionEngine
 from core.eye_renderer import EyeRenderer
 from core.debug_dashboard import DebugDashboard
@@ -230,6 +231,7 @@ def main():
             daemon=True,
             name="ServoMixer",
         ),
+        threading.Thread(target=GestureEngine(bb).run, daemon=True, name="GestureEngine"),
         threading.Thread(target=EmotionEngine(bb).run, daemon=True, name="EmotionEngine"),
         threading.Thread(target=EyeRenderer(bb).run, daemon=True, name="EyeRenderer"),
     ]
@@ -261,8 +263,15 @@ def main():
         if link is not None:
             pan_center = float(servo_cfg.get("pan_center", 80.0))
             tilt_center = float(servo_cfg.get("tilt_center", 110.0))
-            print(f"Homing servos (pan={pan_center}, tilt={tilt_center}) and stopping base...")
-            link.close(home_pan=pan_center, home_tilt=tilt_center)
+            print(f"Homing servos (pan={pan_center}, tilt={tilt_center}, arms) and stopping base...")
+            link.close(
+                home_pan=pan_center, 
+                home_tilt=tilt_center,
+                home_arm0=0.0,
+                home_arm1=180.0,
+                home_arm2=90.0,
+                home_arm3=90.0
+            )
         sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)

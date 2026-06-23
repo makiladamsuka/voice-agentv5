@@ -242,6 +242,10 @@ class ArduinoServoLink:
             self._last_send_ts = now
         return ok
 
+    @staticmethod
+    def _format_arm_cmd(a0: float, a1: float, a2: float, a3: float) -> str:
+        return f"A0={a0:.1f} A1={a1:.1f} A2={a2:.1f} A3={a3:.1f}"
+
     def write_angles_and_arms(
         self, pan: float, tilt: float, a0: float, a1: float, a2: float, a3: float, *, force: bool = False, wait_ack: bool = False
     ) -> bool:
@@ -269,7 +273,10 @@ class ArduinoServoLink:
         if not force and not (moved and due):
             return True
             
-        ok = self.send_line(f"P{pan:.1f} T{tilt:.1f} U{a0:.1f} V{a1:.1f} W{a2:.1f} Y{a3:.1f}", wait_servo=wait_ack)
+        ok = self.send_line(
+            f"P{pan:.1f} T{tilt:.1f} {ArduinoServoLink._format_arm_cmd(a0, a1, a2, a3)}",
+            wait_servo=wait_ack,
+        )
         if ok:
             self._last_pan = pan
             self._last_tilt = tilt
@@ -370,7 +377,11 @@ class ArduinoServoLink:
                 if self._ser.is_open:
                     if not skip_home and home_pan is not None and home_tilt is not None:
                         if home_arm0 is not None and home_arm1 is not None and home_arm2 is not None and home_arm3 is not None:
-                            self.send_line(f"P{home_pan:.1f} T{home_tilt:.1f} U{home_arm0:.1f} V{home_arm1:.1f} W{home_arm2:.1f} Y{home_arm3:.1f}", wait_ack=True)
+                            self.send_line(
+                                f"P{home_pan:.1f} T{home_tilt:.1f} "
+                                f"{ArduinoServoLink._format_arm_cmd(home_arm0, home_arm1, home_arm2, home_arm3)}",
+                                wait_ack=True,
+                            )
                         else:
                             self.send_line(f"P{home_pan:.1f} T{home_tilt:.1f}", wait_ack=True)
                         time.sleep(0.25)

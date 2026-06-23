@@ -8,7 +8,7 @@ voice-agentv4.  The only non-stdlib import is arduino_servo.
 SERVO LIMITS & HOME
   head_tilt : home = 110, min = 100, max = 120
   head_pan  : home =  85, min =  40, max = 120
-  arms      : home positions defined by ARM_HOMES, range 0-180
+  arms      : home positions defined by ARM_HOMES, per-arm limits in _DEG_RANGE
 """
 
 from __future__ import annotations
@@ -26,16 +26,16 @@ PAN_HOME  = 85.0
 TILT_HOME = 110.0
 PAN_MIN,  PAN_MAX  = 40.0,  120.0
 TILT_MIN, TILT_MAX = 100.0, 120.0
-ARM_HOMES = {"arm_0": 0.0, "arm_1": 180.0, "arm_2": 90.0, "arm_3": 90.0}
+ARM_HOMES = {"arm_0": 47.0, "arm_1": 65.0, "arm_2": 64.0, "arm_3": 87.0}
 
 # Degree range used when converting raw Bottango 0-1 movement → degrees.
 _DEG_RANGE = {
     "head_pan":  (40.0, 130.0),   
     "head_tilt": (100.0, 120.0),  
-    "arm_0":     (0.0,  180.0),
-    "arm_1":     (0.0,  180.0),
-    "arm_2":     (0.0,  180.0),
-    "arm_3":     (0.0,  180.0),
+    "arm_0":     (47.0,  124.0),
+    "arm_1":     (0.0,   65.0),
+    "arm_2":     (44.0,  78.0),
+    "arm_3":     (70.0,  102.0),
 }
 
 # Bottango effector_id → servo name
@@ -228,10 +228,10 @@ def _play_clip(clip: _Clip, seconds: float, hz: float,
 
         pan_target  = _clamp(sample.get("head_pan",  PAN_HOME),  PAN_MIN,  PAN_MAX)
         tilt_target = _clamp(sample.get("head_tilt", TILT_HOME), TILT_MIN, TILT_MAX)
-        a0 = _clamp(sample.get("arm_0", ARM_HOMES["arm_0"]), 0.0, 180.0)
-        a1 = _clamp(sample.get("arm_1", ARM_HOMES["arm_1"]), 0.0, 180.0)
-        a2 = _clamp(sample.get("arm_2", ARM_HOMES["arm_2"]), 0.0, 180.0)
-        a3 = _clamp(sample.get("arm_3", ARM_HOMES["arm_3"]), 0.0, 180.0)
+        a0 = _clamp(sample.get("arm_0", ARM_HOMES["arm_0"]), *_DEG_RANGE["arm_0"])
+        a1 = _clamp(sample.get("arm_1", ARM_HOMES["arm_1"]), *_DEG_RANGE["arm_1"])
+        a2 = _clamp(sample.get("arm_2", ARM_HOMES["arm_2"]), *_DEG_RANGE["arm_2"])
+        a3 = _clamp(sample.get("arm_3", ARM_HOMES["arm_3"]), *_DEG_RANGE["arm_3"])
 
         print(
             f"arm_0={a0:.1f}, arm_1={a1:.1f}, arm_2={a2:.1f}, arm_3={a3:.1f}, "

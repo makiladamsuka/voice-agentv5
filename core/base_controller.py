@@ -168,7 +168,7 @@ class BaseController:
 
         # ── Sustained head-on-base hold → base follows with neck lock ─────────
         self.sustained_follow_enabled = bool(b.get("sustained_head_follow_enabled", True))
-        self.sustained_hold_sec = float(b.get("sustained_head_hold_sec", 30.0))
+        self.sustained_hold_sec = float(b.get("sustained_head_hold_sec", 10.0))
         self.sustained_hold_min_mech = float(b.get("sustained_head_min_mech_deg", 12.0))
         self.sustained_cooldown_sec = float(b.get("sustained_head_cooldown_sec", 4.0))
         self.sustained_comp_gain = float(b.get("sustained_head_compensation_gain", 0.95))

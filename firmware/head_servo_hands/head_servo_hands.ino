@@ -6,7 +6,7 @@
  * Base: GPIO35/34 encoder, GPIO25 PWM, GPIO26/27 -> TB6612FNG -> N20 motor.
  *
  * Protocol: all head_servo commands plus:
- *   A0=0.0 A1=180.0 A2=90.0 A3=90.0  -> arm servos (Pi-driven; PWM on demand)
+ *   A0=47.0 A1=65.0 A2=64.0 A3=87.0  -> arm home (see ARM_*_DEG below)
  *   AO                               -> detach all arm PWM (idle / quiet hands)
  *   V                                -> print arm home pose (HOME A0=...)
  *
@@ -40,9 +40,14 @@ const int PULSE_MAX_US = 2600;
 
 const uint8_t ARM_CH_COUNT = 4;
 const uint8_t ARM_CH[ARM_CH_COUNT] = {0, 2, 8, 9};
-const float ARM_MIN = 0.0f;
-const float ARM_MAX = 180.0f;
-const float ARM_HOME_DEG[ARM_CH_COUNT] = {0.0f, 180.0f, 90.0f, 90.0f};
+const float ARM_MIN_DEG[ARM_CH_COUNT] = {47.0f, 0.0f, 44.0f, 70.0f};
+const float ARM_MAX_DEG[ARM_CH_COUNT] = {124.0f, 65.0f, 78.0f, 102.0f};
+const float ARM_HOME_DEG[ARM_CH_COUNT] = {47.0f, 65.0f, 64.0f, 87.0f};
+// MG996R raise (A0,A1) use full pulse span; SG90 sweep (A2,A3) use typical 1–2 ms.
+const int ARM_PULSE_MIN_US[ARM_CH_COUNT] = {450, 450, 1000, 1000};
+const int ARM_PULSE_MAX_US[ARM_CH_COUNT] = {2600, 2600, 2000, 2000};
+// Left sweep (A3): logical angle matches pulse direction (outward = higher deg → 102).
+const bool ARM_INVERT[ARM_CH_COUNT] = {false, false, false, false};
 const unsigned long ARM_IDLE_DETACH_MS = 1500UL;
 
 const int ENC_A_PIN = 35;
@@ -310,9 +315,17 @@ void printArmHomePose() {
 
 void writeArmAngle(uint8_t idx, float deg) {
   if (idx >= ARM_CH_COUNT || !pcaReady) return;
-  float a = clampf(deg, ARM_MIN, ARM_MAX);
+  float lo = ARM_MIN_DEG[idx];
+  float hi = ARM_MAX_DEG[idx];
+  float a = clampf(deg, lo, hi);
   armAngles[idx] = a;
-  setServoPulseUs(ARM_CH[idx], mapAngleToUs(a, ARM_MIN, ARM_MAX));
+  float span = hi - lo;
+  float t = (span > 0.0f) ? (a - lo) / span : 0.0f;
+  t = clampf(t, 0.0f, 1.0f);
+  if (ARM_INVERT[idx]) t = 1.0f - t;
+  int pmin = ARM_PULSE_MIN_US[idx];
+  int pmax = ARM_PULSE_MAX_US[idx];
+  setServoPulseUs(ARM_CH[idx], pmin + (int)(t * (float)(pmax - pmin)));
   armChannelActive[idx] = true;
   touchArmCommandClock();
 }
@@ -754,7 +767,7 @@ void setup() {
   panAngle = PAN_CENTER;
   tiltAngle = TILT_CENTER;
   zeroOffset = 0;
-  Serial.println(F("FW head_servo_hands_v5"));
+  Serial.println(F("FW head_servo_hands_v9"));
   Serial.println(F("READY"));
   Serial.flush();
 }

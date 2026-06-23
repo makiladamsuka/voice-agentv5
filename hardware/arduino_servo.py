@@ -82,6 +82,24 @@ class ArduinoServoLink:
         self.base_move_timeout_sec = BASE_MOVE_TIMEOUT_SEC
         self.last_base_error: Optional[str] = None
         self._error_logged = False
+        self._boot_banner = ""
+
+    def firmware_banner(self) -> str:
+        return self._boot_banner
+
+    def arm_firmware_hint(self) -> str:
+        banner = self._boot_banner
+        if "head_servo_hands" in banner:
+            return ""
+        if "head_servo_v5_base" in banner:
+            return (
+                "Detected head-only firmware (FW head_servo_v5_base). "
+                "Flash firmware/head_servo_hands/ for arm servos."
+            )
+        return (
+            "ESP32 did not answer V with HOME A0=... "
+            "(wrong sketch, serial noise, or retry after reboot)."
+        )
 
     @property
     def connected(self) -> bool:
@@ -114,6 +132,7 @@ class ArduinoServoLink:
                     buf += chunk.decode("utf-8", errors="ignore")
                     if len(buf) > 2048:
                         buf = buf[-1024:]
+                    self._boot_banner = buf
                     if "READY" in buf or "FW head_servo" in buf:
                         return True
                 time.sleep(0.02)
@@ -280,9 +299,17 @@ class ArduinoServoLink:
 
     def has_arm_firmware(self) -> bool:
         """True if ESP32 responds to V with HOME A0= (head_servo_hands sketch)."""
-        if not self.send_line("V", drain_after=False):
-            return False
-        return self._read_line_matching(ACK_TIMEOUT_SEC, _ARM_HOME_RE) is not None
+        if "head_servo_hands" not in self._boot_banner:
+            if "head_servo_v5_base" in self._boot_banner:
+                return False
+        for _ in range(3):
+            if not self.send_line("V", drain_after=False):
+                time.sleep(0.1)
+                continue
+            if self._read_line_matching(ACK_TIMEOUT_SEC, _ARM_HOME_RE) is not None:
+                return True
+            time.sleep(0.12)
+        return False
 
     def write_arms(
         self,

@@ -14,6 +14,17 @@
 | 8 | A2 | SG90_R — right arm sweep |
 | 9 | A3 | SG90_L — left arm sweep |
 
+## Arm limits (deg) and home
+
+| Servo | Min | Max | Home |
+|-------|-----|-----|------|
+| A0 (R raise) | 47 | 124 | 47 |
+| A1 (L raise) | 0 | 65 | 65 |
+| A2 (R sweep) | 44 | 78 | 64 |
+| A3 (L sweep) | 70 | 102 | 87 |
+
+Home = captured **raise low + min sweep** pose (`tests/captured_arm_limits.json`).
+
 I2C: SDA=21, SCL=22, address `0x40`, 115200 baud USB serial.
 
 ## Flash

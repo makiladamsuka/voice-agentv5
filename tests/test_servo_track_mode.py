@@ -89,7 +89,8 @@ def test_face_low_in_frame_targets_tilt_down():
     loop._mode = "track"
     loop._tilt = loop.tilt_center
     loop._pan = loop.pan_center
-    loop.tilt_sign = -1.0
+    loop.tilt_track_sign = -1.0
+    loop._tilt_track_norm = 0.45
     loop.tilt_center_norm_y = 0.08
 
     loop._tick_track(now=100.0, dt=0.05, effective_tilt_center=loop.tilt_center)

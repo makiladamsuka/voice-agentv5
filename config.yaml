@@ -190,7 +190,7 @@ servo:
   baud: 115200
   pan_min: 25.0
   pan_max: 150.0
-  tilt_min: 100.0
+  tilt_min: 75.0
   tilt_max: 150.0
   pan_center: 100.0
   tilt_center: 110.0  # mechanical upright (0°)
@@ -205,10 +205,16 @@ servo:
   pan_center_hysteresis: 0.03    # extra |norm_x| before leaving center band (anti-flicker)
   pan_track_alpha: 0.28         # smooth pan bearing — damps bbox jitter, still follows motion
   pan_track_sign: -1.0            # flip to 1.0 if pan follows face the wrong way
+  tilt_track_sign: -1.0           # flip to 1.0 if face below center but head tilts up
+  tilt_track_alpha: 0.38          # vertical bearing filter during track (faster than face_alpha_y)
   pan_max_step_deg: 0.75  # hard cap per loop tick (prevents overshoot on fast moves)
-  tilt_track_range: 28.0
+  tilt_max_step_deg: 1.8          # max tilt command change per track tick
+  tilt_track_slew_dps: 28.0       # max tilt speed (cmd deg/s) at full PID correction
+  tilt_track_range: 35.0
   pan_error_full_scale: 0.42
   pan_track_min_gain: 0.32
+  tilt_error_full_scale: 0.35
+  tilt_track_min_gain: 0.45
   pan_sign: -1.0
   tilt_sign: -1.0
   deadzone_x: 0.05
@@ -223,7 +229,7 @@ servo:
   pan_pid_kp: 0.7
   pan_pid_ki: 0.065
   pan_pid_kd: 0.3
-  tilt_pid_kp: 0.48
+  tilt_pid_kp: 0.65
   tilt_pid_ki: 0
   tilt_pid_kd: 0.06
   pid_integral_limit: 0.5

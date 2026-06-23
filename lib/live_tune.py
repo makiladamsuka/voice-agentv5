@@ -37,6 +37,8 @@ TUNE_PARAMS: tuple[TuneParam, ...] = (
     TuneParam("face_alpha_y", "servo", "Face alpha Y", 0.02, 0.8, 0.02),
     # Head step sizes
     TuneParam("pan_max_step_deg", "servo", "Track pan max step °", 0.1, 5.0, 0.05),
+    TuneParam("tilt_max_step_deg", "servo", "Track tilt max step °", 0.1, 5.0, 0.05),
+    TuneParam("tilt_track_alpha", "servo", "Tilt track alpha", 0.05, 0.9, 0.02),
     TuneParam("wander_step_min_deg", "servo", "Wander head min step °", 1.0, 30.0, 0.5),
     TuneParam("wander_step_max_deg", "servo", "Wander head max step °", 2.0, 40.0, 0.5),
     # Base rotation step sizes
@@ -132,7 +134,8 @@ def apply_servo_tune(loop: Any, tune: dict[str, Any]) -> None:
         "target_smooth_hz", "pan_track_smooth_hz", "tilt_smooth_hz",
         "wander_pan_smooth_hz", "wander_tilt_smooth_hz",
         "face_alpha_x", "face_alpha_y",
-        "pan_max_step_deg", "wander_step_min_deg", "wander_step_max_deg",
+        "pan_max_step_deg", "tilt_max_step_deg", "tilt_track_alpha",
+        "wander_step_min_deg", "wander_step_max_deg",
     }
     for key in float_keys:
         if key not in tune:

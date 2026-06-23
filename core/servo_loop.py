@@ -204,12 +204,18 @@ class ServoLoop:
         self.pan_max_step_deg = float(s.get("pan_max_step_deg", 1.2))
         self.pan_track_alpha = float(s.get("pan_track_alpha", 0.25))
         self.pan_track_sign = float(s.get("pan_track_sign", -1.0))
+        self.tilt_track_sign = float(s.get("tilt_track_sign", s.get("tilt_sign", -1.0)))
+        self.tilt_track_alpha = float(s.get("tilt_track_alpha", 0.38))
         self.tilt_track_range = min(
             float(s.get("tilt_track_range", 28.0)),
             max(self.tilt_max - self.tilt_min, 1.0) * 0.55,
         )
+        self.tilt_max_step_deg = float(s.get("tilt_max_step_deg", 1.8))
+        self.tilt_track_slew_dps = float(s.get("tilt_track_slew_dps", 28.0))
         self.pan_error_full_scale = float(s.get("pan_error_full_scale", 0.40))
         self.pan_track_min_gain = float(s.get("pan_track_min_gain", 0.35))
+        self.tilt_error_full_scale = float(s.get("tilt_error_full_scale", 0.35))
+        self.tilt_track_min_gain = float(s.get("tilt_track_min_gain", 0.45))
 
         # ── Servo smoothing (only place these constants exist) ────────────────
         self.deadzone_x = float(s.get("deadzone_x", 0.04))
@@ -330,6 +336,7 @@ class ServoLoop:
         self._filtered_norm_x = 0.0
         self._filtered_norm_y = 0.0
         self._pan_track_norm = 0.0
+        self._tilt_track_norm = 0.0
         self._prev_pan_err_x = 0.0
         self._pan_in_center_band = True
         self._off_forward_since: Optional[float] = None
@@ -597,6 +604,7 @@ class ServoLoop:
             self._filtered_norm_x = nx
             self._filtered_norm_y = ny
             self._pan_track_norm = nx
+            self._tilt_track_norm = ny
             self._prev_face_x = nx
             self._prev_face_y = ny
             self._prev_face_raw_x = nx
@@ -606,6 +614,7 @@ class ServoLoop:
             self._filtered_norm_x = 0.0
             self._filtered_norm_y = 0.0
             self._pan_track_norm = 0.0
+            self._tilt_track_norm = 0.0
             self._prev_face_x = 0.0
             self._prev_face_y = 0.0
             self._prev_face_raw_x = 0.0
@@ -619,6 +628,12 @@ class ServoLoop:
         if old_mode == "track" and new_mode != "track":
             self._effective_tilt_center_smooth = self._tilt
             self._no_face_since = time.time()
+
+    def _tilt_track_travel(self, norm_y: float) -> float:
+        """Servo command span available toward centering face vertically."""
+        if norm_y > 0.0:
+            return max(0.0, self.tilt_center - self.tilt_min)
+        return max(0.0, self.tilt_max - self.tilt_center)
 
     def _pan_center_band_active(self, norm_x: float) -> bool:
         """True when face is close enough to frame center to hold pan steady."""
@@ -677,6 +692,7 @@ class ServoLoop:
             pan_alpha = min(0.58, pan_alpha + (vel_x - 2.0) * 0.05)
             self._pan_pid.soften(0.55)
         self._pan_track_norm += (norm_x - self._pan_track_norm) * pan_alpha
+        self._tilt_track_norm += (norm_y - self._tilt_track_norm) * self.tilt_track_alpha * glide_y_scale
         pan_err_x = _apply_deadzone(self._pan_track_norm, self.deadzone_x)
 
         if self._prev_pan_err_x * pan_err_x < 0.0 and abs(pan_err_x) < 0.30:
@@ -710,20 +726,33 @@ class ServoLoop:
         )
 
         # Tilt: face-relative on fixed center (IMU horizon applies in wander/idle only).
-        if abs(self._filtered_norm_y) <= self.tilt_center_norm_y:
+        if abs(self._tilt_track_norm) <= self.tilt_center_norm_y:
             self._tilt_pid.reset()
             tilt_target = self._tilt
         else:
-            err_y = _apply_deadzone(self._filtered_norm_y, self.deadzone_y)
+            err_y = _apply_deadzone(self._tilt_track_norm, self.deadzone_y)
             tilt_corr = clamp(self._tilt_pid.tick(err_y, dt), -1.0, 1.0)
+            tilt_gain = _track_error_gain(
+                self._tilt_track_norm,
+                self.tilt_error_full_scale,
+                self.tilt_track_min_gain,
+            )
+            tilt_range = min(
+                self.tilt_track_range,
+                self._tilt_track_travel(self._tilt_track_norm),
+            )
             tilt_target = clamp(
-                self.tilt_center + self.tilt_sign * tilt_corr * self.tilt_track_range,
-                self.tilt_min, self.tilt_max,
+                self.tilt_center
+                + self.tilt_track_sign * tilt_corr * tilt_range * tilt_gain,
+                self.tilt_min,
+                self.tilt_max,
             )
 
-        self._tilt = smooth_toward(
+        tilt_max_step = min(self.tilt_max_step_deg, self.tilt_track_slew_dps * max(dt, 0.001))
+        self._tilt = _smooth_toward_stepped(
             self._tilt, tilt_target, dt,
             smooth_hz=self.tilt_smooth_hz, lo=self.tilt_min, hi=self.tilt_max,
+            max_step=tilt_max_step,
         )
 
         return "track"

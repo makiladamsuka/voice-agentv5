@@ -12,6 +12,7 @@ Requires ``firmware/head_servo_hands`` and ``captured_arm_limits.json``.
   H     home all arms
   B     save pose (prompt for name)
   N     recall pose (prompt for name)
+  , / . cycle saved poses (smooth blend)
   0     list saved poses
   P     print pose + safe zones
   Q     quit
@@ -20,6 +21,7 @@ Requires ``firmware/head_servo_hands`` and ``captured_arm_limits.json``.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import select
 import sys
 import termios
@@ -29,7 +31,7 @@ from typing import Optional
 
 import _bootstrap  # noqa: F401
 
-from arm_pose_presets import DEFAULT_PRESETS_PATH, ArmPosePresets
+from arm_pose_presets import DEFAULT_PRESETS_PATH, ArmPosePresets, normalize_pose_name
 from arm_safety_envelope import DEFAULT_LIMITS_PATH, ArmSafetyEnvelope
 from arduino_servo import ArduinoServoLink
 from test_servo_manual import load_servo_cfg
@@ -38,6 +40,11 @@ STEP_CHOICES = (1.0, 2.0, 5.0, 10.0, 15.0)
 HOLD_RELEASE_SEC = 0.25
 POLL_SEC = 0.033
 JOG_HZ = 30.0
+DEFAULT_BLEND_SEC = 0.6
+
+_JOG_ACTIONS = frozenset(
+    {"a0_up", "a0_down", "a2_left", "a2_right", "a1_up", "a1_down", "a3_left", "a3_right"}
+)
 
 _AXIS_PAIRS = (
     ("a0_down", "a0_up", 0),
@@ -138,6 +145,10 @@ def _map_key(key: str) -> Optional[str]:
         return "save_pose"
     if key in ("n", "N"):
         return "recall_pose"
+    if key in (",", "<"):
+        return "preset_prev"
+    if key in (".", ">"):
+        return "preset_next"
     if key == "0":
         return "list_poses"
     if key in ("p", "P"):
@@ -214,6 +225,47 @@ def _print_pose(arms: list[float], envelope: ArmSafetyEnvelope) -> None:
     )
 
 
+@dataclasses.dataclass
+class PresetBlend:
+    start: tuple[float, float, float, float]
+    target: tuple[float, float, float, float]
+    t0: float
+    duration: float
+    name: str
+
+
+def _smoothstep(t: float) -> float:
+    t = max(0.0, min(1.0, t))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _lerp_pose(
+    start: tuple[float, float, float, float],
+    target: tuple[float, float, float, float],
+    t: float,
+    envelope: ArmSafetyEnvelope,
+) -> tuple[float, float, float, float]:
+    e = _smoothstep(t)
+    raw = tuple(start[i] + (target[i] - start[i]) * e for i in range(4))
+    return envelope.clamp_arms(*raw)
+
+
+def _tick_blend(
+    blend: PresetBlend,
+    now: float,
+    arms: list[float],
+    envelope: ArmSafetyEnvelope,
+) -> bool:
+    """Advance blend; return True when finished."""
+    t = (now - blend.t0) / blend.duration if blend.duration > 0 else 1.0
+    if t >= 1.0:
+        arms[:] = list(blend.target)
+        return True
+    blended = _lerp_pose(blend.start, blend.target, t, envelope)
+    arms[:] = list(blended)
+    return False
+
+
 def _print_pose_list(presets: ArmPosePresets) -> None:
     names = presets.list_names()
     if not names:
@@ -242,6 +294,12 @@ def main() -> int:
     parser.add_argument("--step", type=float, default=1.0, help="Degrees per jog tick while held")
     parser.add_argument("--limits", default=str(DEFAULT_LIMITS_PATH), help="captured_arm_limits.json path")
     parser.add_argument("--poses", default=str(DEFAULT_PRESETS_PATH), help="arm_pose_presets.json path")
+    parser.add_argument(
+        "--blend",
+        type=float,
+        default=DEFAULT_BLEND_SEC,
+        help="Seconds to smooth between preset poses (0 = instant)",
+    )
     parser.add_argument("--no-home", action="store_true", help="Do not move arms home on exit")
     args = parser.parse_args()
 
@@ -278,11 +336,59 @@ def main() -> int:
     last_print_ts = 0.0
     quit_requested = False
     last_clamped = False
+    blend: PresetBlend | None = None
+    blend_sec = max(0.0, args.blend)
+    preset_names = presets.list_names()
+    preset_idx = preset_names.index("home") if "home" in preset_names else -1
+
+    def _refresh_preset_names() -> list[str]:
+        nonlocal preset_names, preset_idx
+        preset_names = presets.list_names()
+        if preset_idx >= len(preset_names):
+            preset_idx = -1
+        return preset_names
+
+    def _start_preset_blend(name: str) -> None:
+        nonlocal blend, preset_idx
+        held.clear()
+        target = envelope.clamp_arms(*presets.get(name))
+        preset_idx = preset_names.index(name)
+        if blend_sec <= 0.0:
+            arms[:] = list(target)
+            link.write_arms(*arms, force=True)
+            _sync_arms_from_link(link, arms)
+            blend = None
+            print(
+                f"preset [{preset_idx + 1}/{len(preset_names)}] {name}",
+                flush=True,
+            )
+            _print_pose(arms, envelope)
+            return
+        blend = PresetBlend(
+            start=tuple(arms),
+            target=target,
+            t0=time.time(),
+            duration=blend_sec,
+            name=name,
+        )
+        print(
+            f"blending → [{preset_idx + 1}/{len(preset_names)}] {name} ({blend_sec:.1f}s)",
+            flush=True,
+        )
+
+    def _nav_preset(delta: int) -> None:
+        names = _refresh_preset_names()
+        if not names:
+            print("No saved poses.", flush=True)
+            return
+        idx = preset_idx if preset_idx >= 0 else 0
+        idx = (idx + delta) % len(names)
+        _start_preset_blend(names[idx])
 
     print(
         "Safe-zone arm jogger — sweep clamped to raise-dependent limits\n"
         "Right WASD: W/S=A0 raise, A/D=A2 sweep  |  Left IJKL: I/K=A1, J=in L=out (A3)\n"
-        "B=save pose  N=recall  0=list poses  H=home  P=print  +/-=step  Q=quit"
+        "B=save  N=recall  ,/.=prev/next pose  0=list  H=home  P=print  +/-=step  Q=quit"
     )
     link.write_arms(*envelope.clamp_arms(*arms), force=True)
     _sync_arms_from_link(link, arms)
@@ -312,17 +418,23 @@ def main() -> int:
                     if action == "print_pose":
                         _print_pose(arms, envelope)
                         continue
+                    if action in ("preset_prev", "preset_next"):
+                        _nav_preset(-1 if action == "preset_prev" else 1)
+                        continue
                     if action == "home":
+                        blend = None
                         arms = list(homes)
                         arms = list(envelope.clamp_arms(*arms))
                         link.write_arms(*arms, force=True)
                         _sync_arms_from_link(link, arms)
+                        preset_idx = preset_names.index("home") if "home" in preset_names else -1
                         _print_pose(arms, envelope)
                         continue
                     if action == "list_poses":
                         _print_pose_list(presets)
                         continue
                     if action == "save_pose":
+                        blend = None
                         held.clear()
                         _sync_arms_from_link(link, arms)
                         arms[:] = list(envelope.clamp_arms(*arms))
@@ -332,6 +444,8 @@ def main() -> int:
                             continue
                         try:
                             key = presets.save(raw, *arms)
+                            _refresh_preset_names()
+                            preset_idx = preset_names.index(key)
                             print(
                                 f"saved {key!r} → A0={arms[0]:.1f} A1={arms[1]:.1f} "
                                 f"A2={arms[2]:.1f} A3={arms[3]:.1f}",
@@ -347,24 +461,36 @@ def main() -> int:
                             print("recall cancelled", flush=True)
                             continue
                         try:
-                            pose = presets.get(raw)
-                        except KeyError as e:
+                            key = normalize_pose_name(raw)
+                            presets.get(key)
+                            _refresh_preset_names()
+                            _start_preset_blend(key)
+                        except (KeyError, ValueError) as e:
                             print(e, flush=True)
-                            continue
-                        arms[:] = list(envelope.clamp_arms(*pose))
-                        link.write_arms(*arms, force=True)
-                        _sync_arms_from_link(link, arms)
-                        print(f"recalled {raw!r}", flush=True)
-                        _print_pose(arms, envelope)
                         continue
+                    if action in _JOG_ACTIONS and blend is not None:
+                        blend = None
+                        print("blend cancelled", flush=True)
                     if action in _OPPOSITE:
                         held.pop(_OPPOSITE[action], None)
                     held[action] = now
 
                 step = STEP_CHOICES[step_idx]
                 if now - last_jog_ts >= jog_interval:
-                    before = tuple(arms)
-                    if _apply_held(arms, held, now, step, envelope):
+                    if blend is not None:
+                        done = _tick_blend(blend, now, arms, envelope)
+                        link.write_arms(*arms, force=True)
+                        _sync_arms_from_link(link, arms)
+                        last_jog_ts = now
+                        if done:
+                            print(f"→ {blend.name}", flush=True)
+                            _print_pose(arms, envelope)
+                            blend = None
+                        elif now - last_print_ts > 0.25:
+                            _print_pose(arms, envelope)
+                            last_print_ts = now
+                    elif _apply_held(arms, held, now, step, envelope):
+                        before = tuple(arms)
                         link.write_arms(*arms, force=True)
                         _sync_arms_from_link(link, arms)
                         last_jog_ts = now

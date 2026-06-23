@@ -93,6 +93,16 @@ class Blackboard:
     emotion_intensity: float = 1.0
     manual_emotion: str = None     # set via terminal/API override
 
+    # ── Voice / Conversation (written by VoiceService) ────────────────────────
+    # Layer 2 priority: overrides surroundings emotion when voice session active.
+    voice_session_active: bool = False       # True when LiveKit room is connected
+    conv_state: str = "idle"                 # "idle"|"listening"|"speaking"|"thinking"|"nodding"|"waiting"|"remembering"
+    conv_emotion: str = None                 # VADER-derived emotion (overrides surroundings when set)
+    amplitude_fast: float = 0.0              # TTS RMS fast signal (syllable punches)
+    amplitude_slow: float = 0.0              # TTS RMS slow signal (emotional momentum)
+    user_speaking: bool = False              # True when user VAD triggers
+    agent_speaking: bool = False             # True when agent TTS is playing
+
     # ── Debug manual control (written by viz POST /api/control) ───────────────
     manual_control_enabled: bool = False
     debug_control_cmd: str = ""

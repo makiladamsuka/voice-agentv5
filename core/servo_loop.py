@@ -756,6 +756,28 @@ class ServoLoop:
                 self.tilt_max,
             )
 
+        # ── Layer 2 Priority: Conversation Gesture Overlays ──
+        conv_state = state.get("conv_state", "idle")
+        voice_active = state.get("voice_session_active", False)
+        amp_fast = state.get("amplitude_fast", 0.0)
+
+        overlay_tilt = 0.0
+        if voice_active:
+            if conv_state == "nodding":
+                # Explicit nod: full amplitude
+                t = now * self._servo_cfg.get("conv_nod_hz", 5.5) * math.pi * 2
+                overlay_tilt = math.sin(t) * self._servo_cfg.get("conv_nod_deg", 6.0)
+            elif conv_state == "speaking" and amp_fast > 0.1:
+                # Speech nod: driven by amplitude punches
+                t = now * self._servo_cfg.get("conv_nod_hz", 5.5) * math.pi * 2
+                overlay_tilt = math.sin(t) * self._servo_cfg.get("conv_nod_deg", 6.0) * amp_fast * 0.4
+            elif conv_state == "thinking":
+                # Think bob: slower, gentler
+                t = now * self._servo_cfg.get("conv_think_bob_hz", 2.2) * math.pi * 2
+                overlay_tilt = math.sin(t) * self._servo_cfg.get("conv_think_bob_deg", 3.0)
+
+        tilt_target = clamp(tilt_target + overlay_tilt, self.tilt_min, self.tilt_max)
+
         tilt_max_step = min(self.tilt_max_step_deg, self.tilt_track_slew_dps * max(dt, 0.001))
         self._tilt = _smooth_toward_stepped(
             self._tilt, tilt_target, dt,

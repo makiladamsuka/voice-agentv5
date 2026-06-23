@@ -273,9 +273,11 @@ class EyeRenderer:
 
         while self.bb.read("running")["running"]:
             now = time.time()
-            state = self.bb.read("emotion", "emotion_intensity", "running")
+            state = self.bb.read("emotion", "emotion_intensity", "running", "amplitude_fast", "amplitude_slow")
             emotion   = state["emotion"]
             intensity = state["emotion_intensity"]
+            amp_fast  = state.get("amplitude_fast", 0.0)
+            amp_slow  = state.get("amplitude_slow", 0.0)
 
             if emotion != current_emotion:
                 left_eye.set_emotion(emotion, intensity)
@@ -286,8 +288,17 @@ class EyeRenderer:
                 eye.target_pos[0] = cx
                 eye.target_pos[1] = cy
                 eye.target_rotation = 0.0
+                
+                # ── Layer 2 Priority: Amplitude-Driven Animation ──
+                # Enhance scale and lid openness slightly based on amplitude
+                if amp_slow > 0.05:
+                    eye.target_scale_h = min(1.3, eye.target_scale_h + amp_slow * 0.15)
+                if amp_fast > 0.1:
+                    eye.target_top_lid = max(0.0, eye.target_top_lid - amp_fast * 0.15)
+                    eye.target_bottom_lid = max(0.0, eye.target_bottom_lid - amp_fast * 0.1)
 
-            if now >= next_blink:
+            # Suppress blinks if amplitude is high (agent is speaking)
+            if now >= next_blink and amp_fast < 0.2:
                 speed = random.uniform(self.blink_speed_min, self.blink_speed_max)
                 avg_y = (left_eye.current_pos[1] + right_eye.current_pos[1]) * 0.5
                 avg_w = (left_eye.current_w + right_eye.current_w) * 0.5

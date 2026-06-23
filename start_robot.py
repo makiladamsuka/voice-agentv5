@@ -403,6 +403,19 @@ def main():
             )
         )
 
+    # ── Phase 3: Voice / LiveKit Agent (Optional) ───────────────────────────
+    voice_cfg = cfg.get("voice", {}) or {}
+    if voice_cfg.get("enabled", False):
+        from voice.voice_service import run_voice_service
+        threads.append(
+            threading.Thread(
+                target=run_voice_service,
+                args=(bb,),
+                daemon=True,
+                name="VoiceService",
+            )
+        )
+
     for t in threads:
         t.start()
 

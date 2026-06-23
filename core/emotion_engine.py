@@ -103,6 +103,8 @@ class EmotionEngine:
 
             state = self.bb.read(
                 "manual_emotion",
+                "voice_session_active",
+                "conv_emotion",
                 "face_detected",
                 "face_area_ratio",
                 "face_norm_x",
@@ -114,6 +116,13 @@ class EmotionEngine:
             manual = state["manual_emotion"]
             if manual is not None:
                 self._set(manual)
+                time.sleep(loop_delay)
+                continue
+
+            voice_active = state.get("voice_session_active", False)
+            conv_emotion = state.get("conv_emotion")
+            if voice_active and conv_emotion is not None:
+                self._set(conv_emotion)
                 time.sleep(loop_delay)
                 continue
 

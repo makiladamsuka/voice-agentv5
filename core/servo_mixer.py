@@ -279,13 +279,29 @@ class ServoMixer:
         if self._link is None:
             return
         try:
-            self._link.write_angles_and_arms(
-                self._pan_for_send(pan),
-                self._tilt_for_send(tilt),
-                a0, a1, a2, a3
+            p_send = self._pan_for_send(pan)
+            t_send = self._tilt_for_send(tilt)
+            
+            # Check if arms are basically at home/neutral
+            arms_home = (
+                abs(a0 - 0.0) < 1.0 and 
+                abs(a1 - 180.0) < 1.0 and 
+                abs(a2 - 90.0) < 1.0 and 
+                abs(a3 - 90.0) < 1.0
             )
+            
+            # If arms are at home, we just send pan/tilt so the ESP32 can detach the arm servos
+            if arms_home:
+                self._link.write_angles(p_send, t_send)
+                # But also update the link's internal state so it knows they are home
+                self._link._last_a0 = a0
+                self._link._last_a1 = a1
+                self._link._last_a2 = a2
+                self._link._last_a3 = a3
+            else:
+                self._link.write_angles_and_arms(p_send, t_send, a0, a1, a2, a3)
         except Exception as e:
-            print(f"[ServoMixer] write_angles_and_arms failed: {e}")
+            print(f"[ServoMixer] write_angles failed: {e}")
 
     def _refresh_head_during_spin(self) -> None:
         """Keep head tracking while base L/R spin is in progress."""

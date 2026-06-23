@@ -80,59 +80,38 @@ class GestureEngine:
             self.time_offset += dt
 
             # Read BB state
-            state = self.bb.read("servo_pan", "servo_mode", "hand_priority")
+            state = self.bb.read("servo_pan", "servo_mode", "hand_priority", "base_motion_busy")
             
             # If an external agent took over hands, skip updating living gestures
             if state["hand_priority"] != "living":
                 time.sleep(loop_delay)
                 continue
 
-            pan = state["servo_pan"]
-            mode = state["servo_mode"]
+            base_busy = state.get("base_motion_busy", False)
 
+            # Default home positions
             a0_target = 0.0
             a1_target = 180.0
             a2_target = 90.0
             a3_target = 90.0
 
-            if mode == "track":
-                # Attentiveness: arms raised slightly
-                a0_target = 15.0
-                a1_target = 165.0
+            if base_busy:
+                # When the base rotates, the robot swings its arms to keep balance!
+                # Raise arms slightly
+                a0_target = 35.0
+                a1_target = 145.0  # 180 - 35
                 
-                # Weight shifting based on pan deviation
-                # If pan goes right (+), one arm sweeps forward, the other backward
-                offset = (pan - self.pan_center) / 20.0  # normalize
-                offset = clamp(offset, -1.0, 1.0)
-                
-                # Exaggerate sweep based on pan offset
-                a2_target = 90.0 + (offset * 25.0)
-                a3_target = 90.0 + (offset * 25.0)
+                # Swing arms back and forth quickly
+                swing = math.sin(self.time_offset * 15.0) * 45.0
+                a2_target = 90.0 + swing
+                a3_target = 90.0 - swing
 
-            elif mode == "wander":
-                # Relaxed arms, slightly lifted
-                a0_target = 5.0
-                a1_target = 175.0
-                
-                # Organic breathing / fidgeting (slow sine waves)
-                breath_cycle = math.sin(self.time_offset * 1.5)
-                a2_target = 90.0 + breath_cycle * 8.0
-                a3_target = 90.0 + breath_cycle * 8.0
-                
-                # Small raise variations
-                a0_target += math.sin(self.time_offset * 0.8) * 3.0
-                a1_target -= math.sin(self.time_offset * 0.8 + math.pi) * 3.0
-                
-            else:
-                # Default (last_seen, etc.) - return to neutral
-                a0_target = 5.0
-                a1_target = 175.0
-
-            # Smooth towards target
-            self.a0 = smooth_toward(self.a0, a0_target, dt, smooth_hz=self.smooth_hz, lo=0.0, hi=180.0)
-            self.a1 = smooth_toward(self.a1, a1_target, dt, smooth_hz=self.smooth_hz, lo=0.0, hi=180.0)
-            self.a2 = smooth_toward(self.a2, a2_target, dt, smooth_hz=self.smooth_hz, lo=0.0, hi=180.0)
-            self.a3 = smooth_toward(self.a3, a3_target, dt, smooth_hz=self.smooth_hz, lo=0.0, hi=180.0)
+            # Smooth towards target (faster smoothing when reacting to base)
+            hz = self.smooth_hz if not base_busy else 8.0
+            self.a0 = smooth_toward(self.a0, a0_target, dt, smooth_hz=hz, lo=0.0, hi=180.0)
+            self.a1 = smooth_toward(self.a1, a1_target, dt, smooth_hz=hz, lo=0.0, hi=180.0)
+            self.a2 = smooth_toward(self.a2, a2_target, dt, smooth_hz=hz, lo=0.0, hi=180.0)
+            self.a3 = smooth_toward(self.a3, a3_target, dt, smooth_hz=hz, lo=0.0, hi=180.0)
 
             # Write to Blackboard
             self.bb.write(

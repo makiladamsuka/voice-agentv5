@@ -400,7 +400,7 @@ class ServoLoop:
     def _tick_forward_return(self, now: float, dt: float, tilt_center: float) -> str:
         """Glide head back to forward-facing pan/tilt center."""
         pan_goal = self.pan_center
-        tilt_goal = tilt_center
+        tilt_goal = self._wander_tilt_ref(tilt_center)
         self._wander.pan_goal = pan_goal
         self._wander.tilt_goal = tilt_goal
         self._wander.moving = True
@@ -626,7 +626,15 @@ class ServoLoop:
             self._wander.tilt_goal = self._tilt
             self._wander.pan_goal = self._pan
         if old_mode == "track" and new_mode != "track":
-            self._effective_tilt_center_smooth = self._tilt
+            imu_state = self.bb.read(
+                "imu_available", "imu_horizon_ok", "imu_effective_tilt_center",
+            )
+            if imu_state["imu_available"] and imu_state["imu_horizon_ok"]:
+                self._effective_tilt_center_smooth = float(
+                    imu_state["imu_effective_tilt_center"]
+                )
+            else:
+                self._effective_tilt_center_smooth = self.tilt_center
             self._no_face_since = time.time()
 
     def _tilt_track_travel(self, norm_y: float) -> float:
@@ -835,6 +843,21 @@ class ServoLoop:
         self._tilt = smooth_toward(
             self._tilt, tilt_target, dt, smooth_hz=tilt_hz, lo=self.tilt_min, hi=self.tilt_max,
         )
+        # Gentle IMU horizon relevel between wander glances (not during motion or post-track hold).
+        if (
+            not self._wander.moving
+            and not holding_track_pose
+            and not self._forward_return_active
+        ):
+            horizon_ref = self._wander_tilt_ref(effective_tilt_center)
+            self._tilt = smooth_toward(
+                self._tilt,
+                horizon_ref,
+                dt,
+                smooth_hz=self.imu_horizon_smooth * 0.35,
+                lo=self.tilt_min,
+                hi=self.tilt_max,
+            )
         return "wander"
 
     # ── Last-seen mode ─────────────────────────────────────────────────────────

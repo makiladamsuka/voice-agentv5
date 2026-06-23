@@ -72,6 +72,29 @@ def test_effective_tilt_drifts_toward_imu_even_while_tracking():
     assert updated >= 110.0
 
 
+def test_wander_tilt_ref_blends_imu_horizon():
+    loop = ServoLoop(Blackboard())
+    loop.tilt_center = 110.0
+    loop.wander_imu_tilt_blend = 0.18
+    ref = loop._wander_tilt_ref(112.0)
+    assert abs(ref - 110.36) < 0.01
+
+
+def test_leaving_track_resets_tilt_smooth_to_imu_not_track_pose():
+    bb = Blackboard()
+    bb.write(
+        running=True,
+        imu_available=True,
+        imu_horizon_ok=True,
+        imu_effective_tilt_center=112.0,
+    )
+    loop = ServoLoop(bb)
+    loop._mode = "track"
+    loop._tilt = 98.0
+    loop._on_mode_change("track", "wander")
+    assert loop._effective_tilt_center_smooth == 112.0
+
+
 def test_face_low_in_frame_targets_tilt_down():
     """norm_y > 0 (face low) should command tilt below center with tilt_sign=-1."""
     bb = Blackboard()

@@ -23,6 +23,20 @@ def _scaled_timeout(plate_deg: float, timeout_sec: float) -> float:
     return min(timeout_sec, step_budget)
 
 
+def expected_encoder_delta(plate_deg: float, encoder_sign: float = 1.0) -> float:
+    """Encoder DEG change expected for a commanded plate step (firmware POS DEG axis)."""
+    sign = 1.0 if encoder_sign >= 0.0 else -1.0
+    return plate_deg * sign
+
+
+def encoder_delta_wrong_dir(plate_deg: float, delta: float, *, encoder_sign: float = 1.0) -> bool:
+    """True when encoder motion clearly opposes the commanded step."""
+    expected = expected_encoder_delta(plate_deg, encoder_sign)
+    if abs(expected) < 0.05 or abs(delta) <= 0.25:
+        return False
+    return (expected > 0.0) != (delta > 0.0)
+
+
 def write_base_step_spin(
     link: SpinLink,
     plate_deg: float,
@@ -31,6 +45,7 @@ def write_base_step_spin(
     timeout_sec: float = 12.0,
     poll_hz: float = 25.0,
     positive_uses_left: bool = True,
+    encoder_sign: float = 1.0,
     stall_sec: float = 0.28,
     min_progress_counts: int = 4,
     on_poll=None,
@@ -50,6 +65,7 @@ def write_base_step_spin(
 
     start_deg = st0.degrees
     start_count = st0.encoder_count
+    enc_target = expected_encoder_delta(plate_deg, encoder_sign)
     want_left = plate_deg > 0 if positive_uses_left else plate_deg < 0
     started = link.write_base_spin_left() if want_left else link.write_base_spin_right()
     if not started:
@@ -75,19 +91,17 @@ def write_base_step_spin(
                     last_progress_ts = time.time()
                     last_count = st.encoder_count
 
-                if abs_delta >= abs(plate_deg) - tolerance_deg:
+                if abs_delta >= abs(enc_target) - tolerance_deg:
                     ok = True
                     reason = "target"
                     break
 
                 elapsed = time.time() - spin_start
-                if elapsed > 0.22:
-                    if plate_deg > 0 and delta < -0.25:
-                        reason = "wrong_dir"
-                        break
-                    if plate_deg < 0 and delta > 0.25:
-                        reason = "wrong_dir"
-                        break
+                if elapsed > 0.22 and encoder_delta_wrong_dir(
+                    plate_deg, delta, encoder_sign=encoder_sign
+                ):
+                    reason = "wrong_dir"
+                    break
 
                 if elapsed > 0.18 and (time.time() - last_progress_ts) >= stall_sec:
                     reason = "stall"
@@ -103,7 +117,7 @@ def write_base_step_spin(
     if st1 is not None:
         delta = st1.degrees - start_deg
         if not ok and reason == "timeout":
-            if abs(delta) >= abs(plate_deg) * 0.35:
+            if abs(delta) >= abs(enc_target) * 0.35:
                 ok = True
                 reason = "target_partial"
     return ok, delta, reason

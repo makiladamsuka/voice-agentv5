@@ -79,6 +79,7 @@ class ServoMixer:
         self.spin_timeout_sec = float(b.get("spin_timeout_sec", 12.0))
         self.spin_stall_sec = float(b.get("spin_stall_sec", 0.35))
         self.spin_positive_uses_left = bool(b.get("spin_positive_uses_left", False))
+        self.encoder_sign = float(b.get("encoder_sign", 1.0))
         self._gate = gate if gate is not None else BaseMotionGate(
             backoff_sec=float(b.get("error_backoff_sec", 45.0))
         )
@@ -294,6 +295,7 @@ class ServoMixer:
                 tolerance_deg=self.spin_tolerance_deg,
                 timeout_sec=self.spin_timeout_sec,
                 positive_uses_left=self.spin_positive_uses_left,
+                encoder_sign=self.encoder_sign,
                 stall_sec=self.spin_stall_sec,
                 on_poll=self._refresh_head_during_spin,
             )

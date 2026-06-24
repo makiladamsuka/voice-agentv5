@@ -25,7 +25,7 @@
 #include <Wire.h>
 #include <Adafruit_VL53L0X.h>
 
-const bool ENABLE_CENTER = false;
+const bool ENABLE_CENTER = true;
 
 // VL53L0X: ~1.2 m in HIGH_ACCURACY, ~2 m in LONG_RANGE (not 3 m — needs VL53L1X).
 // Readings stuck at 30–80 mm with nothing nearby = housing crosstalk / wrong aim.

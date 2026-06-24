@@ -196,9 +196,10 @@ class ServoLoop:
         self.tilt_center = float(s.get("tilt_center", (self.tilt_min + self.tilt_max) * 0.5))
         self.pan_sign = float(s.get("pan_sign", 1.0))
         self.tilt_sign = float(s.get("tilt_sign", -1.0))
+        pan_travel = min(self.pan_center - self.pan_min, self.pan_max - self.pan_center)
         self.pan_track_range = min(
-            float(s.get("pan_track_range", 26.0)),
-            max(self.pan_max - self.pan_min, 1.0) * 0.5,
+            float(s.get("pan_track_range", pan_travel)),
+            pan_travel,
         )
         self.pan_track_slew_dps = float(s.get("pan_track_slew_dps", 55.0))
         self.pan_recenter_hz = float(s.get("pan_recenter_hz", 1.5))
@@ -653,6 +654,12 @@ class ServoLoop:
             return max(0.0, self.tilt_center - self.tilt_min)
         return max(0.0, self.tilt_max - self.tilt_center)
 
+    def _pan_track_travel(self, norm_x: float) -> float:
+        """Servo command span available toward centering face horizontally."""
+        if norm_x > 0.0:
+            return max(0.0, self.pan_center - self.pan_min)
+        return max(0.0, self.pan_max - self.pan_center)
+
     def _pan_center_band_active(self, norm_x: float) -> bool:
         """True when face is close enough to frame center to hold pan steady."""
         raw_mag = abs(norm_x)
@@ -730,13 +737,26 @@ class ServoLoop:
                 self.pan_error_full_scale,
                 self.pan_track_min_gain,
             )
-            # Absolute pan aim: center + correction * range * track sign.
-            pan_target = clamp(
+            travel = min(self.pan_track_range, self._pan_track_travel(self._pan_track_norm))
+            # PID near center; proportional aim at frame edges (full available pan travel).
+            pan_target_pid = clamp(
                 self.pan_center
-                + pan_corr * self.pan_track_range * self.pan_track_sign * pan_gain,
+                + pan_corr * travel * self.pan_track_sign * pan_gain,
                 self.pan_min,
                 self.pan_max,
             )
+            pan_target_direct = clamp(
+                self.pan_center
+                + self._pan_track_norm * travel * self.pan_track_sign * pan_gain,
+                self.pan_min,
+                self.pan_max,
+            )
+            edge_blend = clamp(
+                (abs(self._pan_track_norm) - self.pan_error_full_scale) / 0.40,
+                0.0,
+                1.0,
+            )
+            pan_target = pan_target_pid * (1.0 - edge_blend) + pan_target_direct * edge_blend
 
         pan_max_step = min(self.pan_max_step_deg, self.pan_track_slew_dps * max(dt, 0.001))
         self._pan = _smooth_toward_stepped(

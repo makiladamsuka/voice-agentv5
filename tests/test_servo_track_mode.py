@@ -336,6 +336,29 @@ def test_forward_return_timer_resets_while_tracking_face():
     assert loop._off_forward_since is None
 
 
+def test_edge_face_pans_far_enough_to_center():
+    """Face at frame edge must use most of available pan travel, not stall near center."""
+    bb = Blackboard()
+    bb.write(
+        running=True,
+        face_detected=True,
+        body_detected=False,
+        face_norm_x=0.92,
+        face_norm_y=0.0,
+        face_count=1,
+        track_kind="face",
+        face_candidates=[],
+    )
+    loop = ServoLoop(bb)
+    loop._mode = "track"
+    loop._pan = loop.pan_center
+    loop._pan_in_center_band = False
+    for i in range(400):
+        loop._tick_track(now=100.0 + i * 0.02, dt=0.02, effective_tilt_center=loop.tilt_center)
+    assert _mech(loop._pan, loop) > 20.0
+    assert loop._pan < loop.pan_center - 30.0
+
+
 def test_track_pan_step_capped_per_tick():
     """Fast face offset must not jump pan more than pan_max_step per tick."""
     bb = Blackboard()

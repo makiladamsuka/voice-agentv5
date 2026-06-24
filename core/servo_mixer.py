@@ -253,6 +253,8 @@ class ServoMixer:
 
         while self.bb.read("running")["running"]:
             now = time.time()
+            if self._link is not None:
+                self._link._poll_prox_lines()
             if self._handle_debug_commands(now):
                 time.sleep(loop_delay)
                 continue
@@ -312,7 +314,7 @@ class ServoMixer:
         if self.bb.read("base_motion_busy")["base_motion_busy"]:
             return
 
-        from arduino_servo import (
+        from hardware.arduino_servo import (
             _PROX_EVENT_RE, _PROX_DEPART_RE, _PROX_CLEAR_RE, _ZONE_RE,
         )
 

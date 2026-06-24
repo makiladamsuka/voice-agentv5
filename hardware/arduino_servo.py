@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import deque
 import os
 import re
 import time
@@ -92,6 +93,37 @@ class ArduinoServoLink:
         self._error_logged = False
         self._boot_banner = ""
         self._prox_callback = None  # callable(line: str) for PROX/ZONE events
+        self._rx_lines: deque[str] = deque(maxlen=64)
+
+    def _route_or_queue_line(self, line: str) -> Optional[str]:
+        """Route PROX/ZONE to callback; queue other complete lines for ack readers."""
+        if not line:
+            return None
+        if (line.startswith("PROX") or line.startswith("ZONE")) and self._prox_callback:
+            try:
+                self._prox_callback(line)
+            except Exception:
+                pass
+            return None
+        self._rx_lines.append(line)
+        return line
+
+    def _poll_prox_lines(self) -> None:
+        """Non-blocking read: deliver PROX/ZONE events without flushing servo acks."""
+        if self._ser is None:
+            return
+        old_timeout = self._ser.timeout
+        try:
+            self._ser.timeout = 0
+            while self._ser.in_waiting:
+                line = self._ser.readline().decode("utf-8", errors="ignore").strip()
+                if not line:
+                    break
+                self._route_or_queue_line(line)
+        except Exception:
+            pass
+        finally:
+            self._ser.timeout = old_timeout
 
     def firmware_banner(self) -> str:
         return self._boot_banner
@@ -117,16 +149,11 @@ class ArduinoServoLink:
     def _drain_rx(self) -> None:
         if self._ser is None:
             return
+        self._rx_lines.clear()
         try:
-            while self._ser.in_waiting:
-                line = self._ser.readline().decode("utf-8", errors="ignore").strip()
-                if not line:
-                    break
-                if (line.startswith("PROX") or line.startswith("ZONE")) and self._prox_callback:
-                    try:
-                        self._prox_callback(line)
-                    except Exception:
-                        pass
+            if self._ser.in_waiting:
+                # Fast flush before commands — avoids readline stalls on PROX flood.
+                self._ser.reset_input_buffer()
         except Exception:
             pass
 
@@ -198,15 +225,18 @@ class ArduinoServoLink:
             return None
         deadline = time.time() + timeout
         while time.time() < deadline:
-            line = self._ser.readline().decode("utf-8", errors="ignore").strip()
-            if not line:
-                continue
-            if (line.startswith("PROX") or line.startswith("ZONE")) and self._prox_callback:
-                try:
-                    self._prox_callback(line)
-                except Exception:
-                    pass
-                continue
+            if self._rx_lines:
+                line = self._rx_lines.popleft()
+            else:
+                line = self._ser.readline().decode("utf-8", errors="ignore").strip()
+                if not line:
+                    continue
+                if (line.startswith("PROX") or line.startswith("ZONE")) and self._prox_callback:
+                    try:
+                        self._prox_callback(line)
+                    except Exception:
+                        pass
+                    continue
             if line.startswith("ERR B"):
                 self.last_base_error = line
                 print(line)

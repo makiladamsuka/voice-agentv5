@@ -312,7 +312,7 @@ class ServoMixer:
         if self.bb.read("base_motion_busy")["base_motion_busy"]:
             return
 
-        from hardware.arduino_servo import (
+        from arduino_servo import (
             _PROX_EVENT_RE, _PROX_DEPART_RE, _PROX_CLEAR_RE, _ZONE_RE,
         )
 

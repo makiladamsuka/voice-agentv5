@@ -343,3 +343,13 @@ proximity:
   cooldown_sec: 5.0
   # Counter-rotate neck to keep gaze during turn
   compensation_gain: 0.90
+  # Ignore PROX after any base motion ends
+  post_motion_blanking_sec: 1.5
+  # How long to hold forward-search after prox turn
+  search_timeout_sec: 3.0
+  # How long to glance toward approach (during voice)
+  glance_toward_sec: 0.8
+  # How long to return gaze to person
+  glance_return_sec: 0.6
+  # How far to turn head during glance (0=none, 1=full)
+  glance_blend: 0.4

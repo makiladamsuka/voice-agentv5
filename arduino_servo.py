@@ -202,6 +202,13 @@ class ArduinoServoLink:
             line = self._ser.readline().decode("utf-8", errors="ignore").strip()
             if not line:
                 continue
+            # Route PROX / ZONE events to registered callback even while waiting for ACK
+            if (line.startswith("PROX") or line.startswith("ZONE")) and self._prox_callback:
+                try:
+                    self._prox_callback(line)
+                except Exception:
+                    pass
+                continue
             if line.startswith("ERR B"):
                 self.last_base_error = line
                 print(line)
@@ -211,6 +218,12 @@ class ArduinoServoLink:
                 if pattern.match(line):
                     return line
         return None
+
+    def mute_tof(self) -> bool:
+        return self.send_line("TM", drain_after=False)
+
+    def unmute_tof(self) -> bool:
+        return self.send_line("TU", drain_after=False)
 
     def _read_ack(self, timeout: float = ACK_TIMEOUT_SEC) -> Optional[Tuple[int, int]]:
         line = self._read_line_matching(timeout, _SERVO_ACK_RE)

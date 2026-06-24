@@ -103,6 +103,13 @@ class Blackboard:
     prox_zone_right: bool = False
     prox_zone_count: int = 0             # how many zones occupied (0-3)
     prox_post_turn_lockout_ts: float = 0.0  # suppress prox turns until this time
+    prox_search_active: bool = False
+    prox_search_since: float = 0.0
+    prox_search_zone: str = ""
+    prox_glance_active: bool = False
+    prox_glance_target_pan: float = 0.0
+    prox_glance_phase: str = ""
+    prox_glance_since: float = 0.0
 
     # ── Emotion (written by EmotionEngine) ───────────────────────────────────
     emotion: str = "idle"

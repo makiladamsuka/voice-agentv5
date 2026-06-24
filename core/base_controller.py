@@ -198,6 +198,7 @@ class BaseController:
         self.prox_turn_step = float(prox.get("turn_step_deg", 35.0))
         self.prox_comp_gain = float(prox.get("compensation_gain", 0.90))
         self.prox_cooldown_sec = float(prox.get("cooldown_sec", 5.0))
+        self.prox_post_motion_blanking_sec = float(prox.get("post_motion_blanking_sec", 1.5))
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self._last_nudge_ts = 0.0
@@ -220,6 +221,8 @@ class BaseController:
         self._last_tune_seq = 0
         self._last_prox_ts = 0.0
         self._prox_turn_timestamps: list[float] = []
+        self._last_base_motion_done_ts = 0.0
+        self._was_base_busy = False
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -605,6 +608,9 @@ class BaseController:
         # Post-turn lockout
         if now < state.get("prox_post_turn_lockout_ts", 0.0):
             return None, "", 0.0
+        # Post-motion blanking
+        if (now - self._last_base_motion_done_ts) < self.prox_post_motion_blanking_sec:
+            return None, "", 0.0
         # Cooldown
         if (now - self._last_prox_ts) < self.prox_cooldown_sec:
             return None, "", 0.0
@@ -617,12 +623,32 @@ class BaseController:
             return None, "", 0.0
 
         zone = state.get("prox_approach_zone", "")
+        
+        # Voice conversation: glance instead of base turn
+        if state.get("voice_session_active", False):
+            if zone in ("L", "R"):
+                sign = -1.0 if zone == "L" else 1.0
+                pan_offset = sign * self.prox_turn_step * 0.4
+                glance_pan = state["servo_pan"] + pan_offset
+                self.bb.write(
+                    prox_glance_active=True,
+                    prox_glance_target_pan=glance_pan,
+                    prox_glance_phase="toward",
+                    prox_glance_since=now,
+                )
+            return None, "", 0.0
+
         if zone == "L":
             step_sign = -1.0
         elif zone == "R":
             step_sign = 1.0
         elif zone == "C":
-            return None, "", 0.0  # center = already facing
+            self.bb.write(
+                prox_search_active=True,
+                prox_search_since=now,
+                prox_search_zone="C",
+            )
+            return None, "", 0.0
         else:
             return None, "", 0.0
 
@@ -639,7 +665,12 @@ class BaseController:
         self._last_prox_ts = now
         self._prox_turn_timestamps = [t for t in self._prox_turn_timestamps if now - t < self.prox_window_sec]
         self._prox_turn_timestamps.append(now)
-        self.bb.write(prox_post_turn_lockout_ts=now + self.prox_lockout_sec)
+        self.bb.write(
+            prox_post_turn_lockout_ts=now + self.prox_lockout_sec,
+            prox_search_active=True,
+            prox_search_since=now,
+            prox_search_zone=zone,
+        )
 
         comp_pan = self._comp_pan_for_step(step, pan, self.prox_comp_gain)
         return step, "proximity", comp_pan
@@ -687,6 +718,10 @@ class BaseController:
             if self._gate.allowed(now):
                 self.bb.write(base_motion_allowed=True)
             self.bb.write(base_fault_reason=self._gate.last_reason)
+
+            if not state["base_motion_busy"] and self._was_base_busy:
+                self._last_base_motion_done_ts = now
+            self._was_base_busy = state["base_motion_busy"]
 
             if not state["yaw_reference_locked"]:
                 time.sleep(loop_delay)

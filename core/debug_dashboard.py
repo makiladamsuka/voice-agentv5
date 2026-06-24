@@ -177,6 +177,16 @@ def build_debug_snapshot(
         servo_connected=True,
         person_memories=state.get("person_snapshots") or [],
         active_memory_id=0,
+        prox_approach_active=bool(state.get("prox_approach_active", False)),
+        prox_approach_zone=str(state.get("prox_approach_zone", "")),
+        prox_approach_velocity=float(state.get("prox_approach_velocity", 0.0)),
+        prox_approach_distance=int(state.get("prox_approach_distance", 0)),
+        prox_approach_confidence=int(state.get("prox_approach_confidence", 0)),
+        prox_zone_left=bool(state.get("prox_zone_left", False)),
+        prox_zone_center=bool(state.get("prox_zone_center", False)),
+        prox_zone_right=bool(state.get("prox_zone_right", False)),
+        prox_search_active=bool(state.get("prox_search_active", False)),
+        prox_glance_active=bool(state.get("prox_glance_active", False)),
     )
     result = asdict(snap)
     result["manual_control_enabled"] = bool(state.get("manual_control_enabled", False))

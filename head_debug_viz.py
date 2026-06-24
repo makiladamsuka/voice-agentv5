@@ -150,6 +150,16 @@ class HeadDebugSnapshot:
     person_memories: list[dict[str, Any]] = field(default_factory=list)
     active_memory_id: int = 0
     limits: dict[str, float] = field(default_factory=dict)
+    prox_approach_active: bool = False
+    prox_approach_zone: str = ""
+    prox_approach_velocity: float = 0.0
+    prox_approach_distance: int = 0
+    prox_approach_confidence: int = 0
+    prox_zone_left: bool = False
+    prox_zone_center: bool = False
+    prox_zone_right: bool = False
+    prox_search_active: bool = False
+    prox_glance_active: bool = False
 
 
 class HeadDebugState:
@@ -594,13 +604,23 @@ function setFusionStats(s) {
 function setModeBanner(s) {
   const el = document.getElementById('mode-banner');
   if (!el) return;
-  const label = s.mode_label || s.mode || 'Unknown';
+  let label = s.mode_label || s.mode || 'Unknown';
   const mode = s.mode || '';
   let cls = 'mode-wander';
-  if (s.forward_return_active) cls = 'mode-return';
-  else if (mode === 'track') cls = 'mode-track';
-  else if (mode === 'last_seen') cls = 'mode-lastseen';
-  else if (mode === 'manual' || mode === 'manual_test') cls = 'mode-manual';
+  if (s.prox_search_active) {
+    label += ' (prox search)';
+    cls = 'mode-return';
+  } else if (s.prox_glance_active) {
+    label += ' (prox glance)';
+  } else if (s.forward_return_active) {
+    cls = 'mode-return';
+  } else if (mode === 'track') {
+    cls = 'mode-track';
+  } else if (mode === 'last_seen') {
+    cls = 'mode-lastseen';
+  } else if (mode === 'manual' || mode === 'manual_test') {
+    cls = 'mode-manual';
+  }
   const temp = (s.cpu_temp_c !== undefined && s.cpu_temp_c !== null)
     ? `${Number(s.cpu_temp_c).toFixed(1)}°C` : '-';
   const t = Number(s.cpu_temp_c);
@@ -639,6 +659,27 @@ function setStats(s) {
     <div class="row"><span class="k">horizon</span><span class="${cls(s.imu_horizon_ok)}">${s.imu_horizon_ok ? 'updating' : 'held'}</span></div>
     <div class="row"><span class="k">servo link</span><span class="${cls(s.servo_connected)}">${s.servo_connected ? 'connected' : 'off'}</span></div>
     <div class="row"><span class="k">CPU temp</span><span class="${(Number(s.cpu_temp_c) >= 80) ? 'bad' : ((Number(s.cpu_temp_c) >= 70) ? 'warn' : '')}">${(s.cpu_temp_c !== undefined && s.cpu_temp_c !== null) ? Number(s.cpu_temp_c).toFixed(1) + '°C' : '-'}</span></div>
+  `;
+
+  const proxApproach = s.prox_approach_active;
+  const proxZL = s.prox_zone_left;
+  const proxZC = s.prox_zone_center;
+  const proxZR = s.prox_zone_right;
+  const zDot = (on) => on ? '🟢' : '⚫';
+  
+  stats.innerHTML += `
+    <div class="row" style="margin-top:6px;border-top:1px solid #2a3142;padding-top:6px">
+      <span class="k">proximity</span>
+      <span class="${proxApproach ? 'warn' : ''}">
+        ${proxApproach ? \`APPROACH \${s.prox_approach_zone} \${s.prox_approach_distance}mm \${s.prox_approach_velocity}mm/s\` : 'clear'}
+      </span>
+    </div>
+    <div class="row"><span class="k">zones L C R</span>
+      <span>${zDot(proxZL)} ${zDot(proxZC)} ${zDot(proxZR)}</span>
+    </div>
+    <div class="row"><span class="k">prox state</span>
+      <span>${s.prox_search_active ? 'SEARCHING' : s.prox_glance_active ? 'GLANCING' : '-'}</span>
+    </div>
   `;
 }
 

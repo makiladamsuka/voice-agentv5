@@ -146,6 +146,7 @@ unsigned long lastTofReprobeMs = 0;
 unsigned long lastTofEventMs = 0;
 uint8_t lastZoneState = 0;
 bool tofSystemReady = false;
+bool tofMuted = false;
 uint8_t tofFailStreak[TOF_COUNT] = {0, 0, 0};
 const unsigned long TOF_REPROBE_MS = 2500;
 const uint8_t TOF_FAIL_STREAK_MAX = 20;
@@ -546,6 +547,18 @@ void handleLine() {
   if (lineLen == 2 && lineBuffer[0] == 'A' && lineBuffer[1] == 'O') {
     detachAllArmChannels();
     Serial.println(F("OK AO"));
+    lineLen = 0;
+    return;
+  }
+
+  if (lineLen == 2 && lineBuffer[0] == 'T') {
+    if (lineBuffer[1] == 'M') {
+      tofMuted = true;
+      Serial.println(F("OK TM"));
+    } else if (lineBuffer[1] == 'U') {
+      tofMuted = false;
+      Serial.println(F("OK TU"));
+    }
     lineLen = 0;
     return;
   }
@@ -1085,6 +1098,11 @@ void readAndProcessTof() {
             ch.presence_active = false;
             ch.presence_since_ms = 0;
         }
+    }
+
+    if (tofMuted) {
+        lastTofEventMs = now;
+        return;
     }
 
     // ── Emit PROX approach event ──

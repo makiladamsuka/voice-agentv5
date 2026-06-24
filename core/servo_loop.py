@@ -658,6 +658,8 @@ class ServoLoop:
             "face_detected", "face_norm_x", "face_norm_y",
             "face_count", "track_kind", "face_candidates",
             "body_detected",
+            "conv_state", "voice_session_active", "amplitude_fast",
+            "prox_glance_active", "prox_glance_phase", "prox_glance_since", "prox_glance_target_pan"
         )
         face_detected = state["face_detected"]
         norm_x = state["face_norm_x"]
@@ -733,6 +735,25 @@ class ServoLoop:
             max_step=pan_max_step,
         )
 
+        # ── Prox Glance Overlay ──
+        if state.get("prox_glance_active", False):
+            elapsed = now - state.get("prox_glance_since", 0.0)
+            phase = state.get("prox_glance_phase", "")
+            toward_sec = float(self._servo_cfg.get("glance_toward_sec", 0.8))
+            return_sec = float(self._servo_cfg.get("glance_return_sec", 0.6))
+            blend = float(self._servo_cfg.get("glance_blend", 0.4))
+            
+            if phase == "toward":
+                mix = min(1.0, elapsed / max(0.001, toward_sec))
+                glance_target = state.get("prox_glance_target_pan", self._pan)
+                blend_pan = self._pan + (glance_target - self._pan) * mix * blend
+                self._pan = clamp(blend_pan, self.pan_min, self.pan_max)
+                if elapsed > toward_sec:
+                    self.bb.write(prox_glance_phase="return", prox_glance_since=now)
+            elif phase == "return":
+                if elapsed > return_sec:
+                    self.bb.write(prox_glance_active=False, prox_glance_phase="")
+
         # Tilt: face-relative on fixed center (IMU horizon applies in wander/idle only).
         if abs(self._tilt_track_norm) <= self.tilt_center_norm_y:
             self._tilt_pid.reset()
@@ -793,7 +814,7 @@ class ServoLoop:
         if self._forward_return_active:
             return self._tick_forward_return(now, dt, effective_tilt_center)
 
-        state = self.bb.read("face_detected", "body_detected", "last_seen_world_yaw")
+        state = self.bb.read("face_detected", "body_detected", "last_seen_world_yaw", "prox_search_active", "prox_search_since")
         if state["face_detected"] or state["body_detected"]:
             if state["face_detected"]:
                 self._last_face_ts = now
@@ -803,10 +824,34 @@ class ServoLoop:
                 self._no_face_since = None
             self._lss_active = False
             self._forward_return_active = False
+            self.bb.write(prox_search_active=False)
             self._pan_pid.soften()
             self._tilt_pid.soften()
             self._target_glide.soften()
             return "track"
+
+        if state.get("prox_search_active", False):
+            elapsed = now - state.get("prox_search_since", 0.0)
+            prox_search_timeout_sec = float(self._servo_cfg.get("prox_search_timeout_sec", 3.0))
+            if elapsed > prox_search_timeout_sec:
+                self.bb.write(prox_search_active=False)
+            else:
+                pan_goal = self.pan_center
+                tilt_goal = effective_tilt_center
+                pan_max_step = min(self.pan_max_step_deg, self.pan_wander_slew_dps * max(dt, 0.001))
+                tilt_max_step = min(self.tilt_max_step_deg, self.tilt_wander_slew_dps * max(dt, 0.001))
+                self._pan = _smooth_toward_stepped(
+                    self._pan, pan_goal, dt,
+                    smooth_hz=self.pan_wander_smooth_hz, lo=self.pan_min, hi=self.pan_max,
+                    max_step=pan_max_step,
+                )
+                self._tilt = _smooth_toward_stepped(
+                    self._tilt, tilt_goal, dt,
+                    smooth_hz=self.tilt_smooth_hz, lo=self.tilt_min, hi=self.tilt_max,
+                    max_step=tilt_max_step,
+                )
+                self.bb.write(wander_moving=True, wander_last_step_deg=0.0)
+                return "wander"
 
         # Only search last-seen shortly after we were tracking (avoid stale memory hijack).
         last_yaw = state["last_seen_world_yaw"]

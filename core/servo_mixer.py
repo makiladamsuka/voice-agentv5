@@ -308,6 +308,10 @@ class ServoMixer:
 
     def _handle_prox_line(self, line: str) -> None:
         """Called from ArduinoServoLink._drain_rx for PROX/ZONE serial lines."""
+        # Suppress ToF events during base rotation (sensors sweep room -> false PROX)
+        if self.bb.read("base_motion_busy")["base_motion_busy"]:
+            return
+
         from arduino_servo import (
             _PROX_EVENT_RE, _PROX_DEPART_RE, _PROX_CLEAR_RE, _ZONE_RE,
         )
@@ -419,6 +423,7 @@ class ServoMixer:
                     pan_offset_deg=pan_mech,
                 )
             self._send_angles(pan, tilt)
+            self._link.mute_tof()
             self.bb.write(base_motion_busy=True)
             from base_spin_motion import write_base_step_spin
 
@@ -432,6 +437,9 @@ class ServoMixer:
                 stall_sec=self.spin_stall_sec,
                 on_poll=self._refresh_during_spin,
             )
+            self._link.unmute_tof()
+            # Let sensors restabilize
+            time.sleep(0.5)
             if self._watchdog is not None:
                 self._watchdog.finish_move()
             pan = self._quantize(self.bb.read("servo_pan")["servo_pan"])

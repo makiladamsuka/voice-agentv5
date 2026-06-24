@@ -627,7 +627,7 @@ class BaseController:
         # Voice conversation: glance instead of base turn
         if state.get("voice_session_active", False):
             if zone in ("L", "R"):
-                sign = -1.0 if zone == "L" else 1.0
+                sign = 1.0 if zone == "L" else -1.0
                 pan_offset = sign * self.prox_turn_step * 0.4
                 glance_pan = state["servo_pan"] + pan_offset
                 self.bb.write(

@@ -1,166 +1,154 @@
 #!/usr/bin/env python3
-"""Bench test for v5 ESP32 ToF telemetry (L/C/R)."""
+"""
+ToF Sensor Test Monitor — run on the Pi while tof_test.ino is flashed.
+
+Usage:
+    python3 tests/test_tof_sensors.py              # auto-detect port
+    python3 tests/test_tof_sensors.py /dev/ttyUSB0  # specific port
+
+What it does:
+    1. Connects to ESP32 serial
+    2. Parses TOF readings
+    3. Shows a live dashboard with distance bars + velocity
+    4. Validates sensor health (out-of-range, dropouts)
+"""
 
 from __future__ import annotations
 
-import argparse
+import re
 import sys
 import time
 
-import _bootstrap  # noqa: F401
+try:
+    import serial
+except ImportError:
+    print("Install pyserial: pip install pyserial")
+    sys.exit(1)
 
-from arduino_servo import ArduinoServoLink
-from tof_presence import (
-    TofPresenceTracker,
-    TofSnapshotFilter,
-    format_tof_channel,
+DEFAULT_PORTS = ("/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM0")
+BAUD = 115200
+
+_TOF_RE = re.compile(
+    r"TOF\s+L=(-?\d+)\s+C=(-?\d+)\s+R=(-?\d+)"
+    r"\s+VL=(-?\d+)\s+VC=(-?\d+)\s+VR=(-?\d+)"
 )
 
 
-def _print_reading(snap, tracker, *, tof_filter: TofSnapshotFilter) -> None:
-    snap = tof_filter.apply(snap)
-    presence = tracker.update(snap)
-    print(
-        f"L={format_tof_channel(snap.left_mm, snap.left_valid):>8} "
-        f"C={format_tof_channel(snap.center_mm, snap.center_valid):>8} "
-        f"R={format_tof_channel(snap.right_mm, snap.right_valid):>8} "
-        f"present L={presence.left} C={presence.center} R={presence.right} "
-        f"count={presence.count_present}"
-    )
+def find_port(hint: str = "") -> str:
+    import os
+    if hint and os.path.exists(hint):
+        return hint
+    for p in DEFAULT_PORTS:
+        if os.path.exists(p):
+            return p
+    print(f"No serial port found. Tried: {', '.join(DEFAULT_PORTS)}")
+    sys.exit(1)
 
 
-def _snap_key(snap) -> tuple:
-    return (
-        snap.left_mm,
-        snap.center_mm,
-        snap.right_mm,
-        snap.left_valid,
-        snap.center_valid,
-        snap.right_valid,
-    )
+def distance_bar(mm: int, max_mm: int = 2000, width: int = 30) -> str:
+    if mm < 0:
+        return "?" * width
+    filled = int(min(mm / max_mm, 1.0) * width)
+    return "#" * filled + "." * (width - filled)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Poll/stream ESP32 ToF telemetry")
-    parser.add_argument("--port", default="", help="Serial port (default: auto)")
-    parser.add_argument("--baud", type=int, default=115200)
-    parser.add_argument("--hz", type=float, default=3.0, help="Poll/stream cadence")
-    parser.add_argument("--poll", action="store_true", help="Use Pi F polls instead of stream")
-    parser.add_argument("--present-max-mm", type=float, default=1500.0)
-    parser.add_argument("--absent-min-mm", type=float, default=1800.0)
-    parser.add_argument("--min-valid-mm", type=int, default=30)
-    parser.add_argument("--max-valid-mm", type=int, default=800)
-    parser.add_argument("--max-jump-mm", type=int, default=100)
-    parser.add_argument("--hold-sec", type=float, default=0.35)
-    args = parser.parse_args()
-
-    tof_filter = TofSnapshotFilter(
-        min_valid_mm=args.min_valid_mm,
-        max_valid_mm=args.max_valid_mm,
-        max_jump_mm=args.max_jump_mm,
-        hold_sec=args.hold_sec,
-    )
-    tracker = TofPresenceTracker(
-        present_max_mm=args.present_max_mm,
-        absent_min_mm=args.absent_min_mm,
-        debounce_present_sec=0.10,
-        debounce_absent_sec=0.20,
-    )
-
-    link = ArduinoServoLink(port=args.port, baud=args.baud)
-    if not link.connect():
-        print("Could not connect to ESP32.")
-        return 1
-
-    if link.boot_lines:
-        print("Boot log:")
-        seen: set[str] = set()
-        for line in link.boot_lines[-12:]:
-            if line in seen:
-                continue
-            seen.add(line)
-            print(f"  {line}")
-
-    if not link.tof_capable:
-        print(
-            "Note: ToF not seen in boot log — will probe on first read. "
-            "If no data, check mux/VL53 wiring and reflash firmware."
-        )
-
-    use_stream = not args.poll
-    interval = 1.0 / max(0.5, args.hz)
-    # Single-shot mux sweep on ESP32 can take ~1s; allow headroom over stream interval.
-    stream_timeout = max(2.0, interval * 4.0)
-    if use_stream:
-        if not link.set_tof_stream(True, args.hz):
-            print("Failed to enable ToF stream mode.")
-            return 1
-        print(f"ToF stream enabled at ~{args.hz:.1f} Hz")
-        prime = link.read_tof_stream(timeout=stream_timeout)
-        if prime is None:
-            prime = link.poll_tof(timeout=stream_timeout)
-        if prime is not None:
-            _print_reading(prime, tracker, tof_filter=tof_filter)
+def velocity_arrow(v: int) -> str:
+    if v < -100:
+        return "<<< APPROACH"
+    elif v < -30:
+        return "<<  approaching"
+    elif v < -10:
+        return "<   drifting closer"
+    elif v > 100:
+        return ">>>  LEAVING"
+    elif v > 30:
+        return ">>  departing"
+    elif v > 10:
+        return ">   drifting away"
     else:
-        print(f"ToF polling at {args.hz:.1f} Hz")
+        return ".   still"
 
-    misses = 0
-    last_key: tuple | None = None
-    started = time.time()
-    warmup_sec = 20.0
+
+def main():
+    port = find_port(sys.argv[1] if len(sys.argv) > 1 else "")
+    print(f"Connecting to {port}@{BAUD}...")
+
+    ser = serial.Serial(port, BAUD, timeout=0.5)
+    time.sleep(2)  # wait for ESP32 boot
+
+    # Drain boot messages
+    boot_lines = []
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
+        line = ser.readline().decode("utf-8", errors="ignore").strip()
+        if line:
+            boot_lines.append(line)
+            print(f"  {line}")
+        if "Streaming readings" in line:
+            break
+
+    if not boot_lines:
+        print("No response from ESP32. Check connection.")
+        ser.close()
+        sys.exit(1)
+
+    print()
+    print("=" * 70)
+    print("  ToF Sensor Live Monitor  (Ctrl+C to exit)")
+    print("=" * 70)
+    print()
+
+    labels = ["LEFT ", "CENTER", "RIGHT"]
+    sample_count = 0
+    errors = [0, 0, 0]
+
     try:
-        miss_streak = 0
         while True:
-            loop_start = time.time()
-            if use_stream:
-                snap = link.read_tof_stream(timeout=stream_timeout)
-            else:
-                snap = link.poll_tof(timeout=min(0.45, interval * 0.7))
-
-            if snap is None:
-                misses += 1
-                miss_streak += 1
-                if miss_streak <= 5 or miss_streak % 10 == 0:
-                    print(f"(no TOF response, misses={misses})")
-                if miss_streak >= 12 and (time.time() - started) > warmup_sec:
-                    print("Attempting ToF recovery (USB reset)...")
-                    try:
-                        link.set_tof_stream(False)
-                        link._esp32_reset()
-                        time.sleep(0.8)
-                        link._boot_lines = []
-                        if link._wait_for_ready(6.0):
-                            link._probe_tof()
-                        if use_stream:
-                            link.set_tof_stream(True, args.hz)
-                        last_key = None
-                    except Exception:
-                        pass
-                    miss_streak = 0
-                time.sleep(0.03)
+            line = ser.readline().decode("utf-8", errors="ignore").strip()
+            if not line:
                 continue
 
-            miss_streak = 0
-            key = _snap_key(snap)
-            if key == last_key and any((snap.left_valid, snap.center_valid, snap.right_valid)):
-                if use_stream:
-                    elapsed = time.time() - loop_start
-                    time.sleep(max(0.0, interval - elapsed))
+            m = _TOF_RE.search(line)
+            if not m:
+                if line:
+                    print(f"  [{line}]")
                 continue
-            last_key = key
-            _print_reading(snap, tracker, tof_filter=tof_filter)
-            if use_stream:
-                elapsed = time.time() - loop_start
-                time.sleep(max(0.0, interval - elapsed))
-            else:
-                time.sleep(interval)
+
+            sample_count += 1
+            mm = [int(m.group(1)), int(m.group(2)), int(m.group(3))]
+            vel = [int(m.group(4)), int(m.group(5)), int(m.group(6))]
+
+            for i in range(3):
+                if mm[i] < 0:
+                    errors[i] += 1
+                bar = distance_bar(mm[i])
+                v_label = velocity_arrow(vel[i])
+                mm_str = f"{mm[i]:5d}mm" if mm[i] >= 0 else "  N/A  "
+                vel_str = f"{vel[i]:+5d}mm/s" if mm[i] >= 0 else "        "
+                print(
+                    f"  {labels[i]:7s} {bar} {mm_str} {vel_str}  {v_label}"
+                )
+
+            ok_count = sum(1 for d in mm if d >= 0)
+            print(
+                f"  --- samples: {sample_count}  |  "
+                f"sensors OK: {ok_count}/3  |  "
+                f"dropouts: L={errors[0]} C={errors[1]} R={errors[2]}"
+            )
+            print()
+
     except KeyboardInterrupt:
-        print("\nDone.")
+        print()
+        print("-" * 70)
+        print(f"Total samples: {sample_count}")
+        for i in range(3):
+            err_pct = (errors[i] / max(1, sample_count)) * 100
+            status = "GOOD" if err_pct < 5 else "WARNING" if err_pct < 20 else "BAD"
+            print(f"  {labels[i]:7s}  dropouts: {errors[i]:4d} ({err_pct:.1f}%)  [{status}]")
+        print("-" * 70)
     finally:
-        link.set_tof_stream(False)
-        link.close()
-    return 0
+        ser.close()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

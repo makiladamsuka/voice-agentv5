@@ -104,6 +104,9 @@ class ServoMixer:
         self._encoder_poll_hz = 2.0
         self._last_debug_cmd_seq = 0
 
+        prox = _cfg(cfg, "proximity", default={}) or {}
+        self._prox_swap_lr = bool(prox.get("swap_left_right", False))
+
         a = _cfg(cfg, "arms", default={}) or {}
         self._arms_enabled = bool(a.get("enabled", False))
         if self._arms_enabled and link is not None and link.connected:
@@ -308,6 +311,12 @@ class ServoMixer:
 
     # ── Proximity event routing ────────────────────────────────────────────
 
+    def _map_prox_zone(self, zone: str) -> str:
+        """Mirror L/R when mux channels are wired opposite physical mounting."""
+        if self._prox_swap_lr and zone in ("L", "R"):
+            return "R" if zone == "L" else "L"
+        return zone
+
     def _handle_prox_line(self, line: str) -> None:
         """Called from ArduinoServoLink._drain_rx for PROX/ZONE serial lines."""
         # Suppress ToF events during base rotation (sensors sweep room -> false PROX)
@@ -321,7 +330,7 @@ class ServoMixer:
         m = _PROX_EVENT_RE.match(line)
         if m:
             self.bb.write(
-                prox_approach_zone=m.group(1),
+                prox_approach_zone=self._map_prox_zone(m.group(1)),
                 prox_approach_velocity=float(m.group(2)),
                 prox_approach_distance=int(m.group(3)),
                 prox_approach_confidence=int(m.group(4)),
@@ -333,7 +342,7 @@ class ServoMixer:
         m = _PROX_DEPART_RE.match(line)
         if m:
             self.bb.write(
-                prox_depart_zone=m.group(1),
+                prox_depart_zone=self._map_prox_zone(m.group(1)),
                 prox_depart_active=True,
                 prox_depart_ts=time.time(),
             )
@@ -354,6 +363,8 @@ class ServoMixer:
             zl = m.group(1) == "1"
             zc = m.group(2) == "1"
             zr = m.group(3) == "1"
+            if self._prox_swap_lr:
+                zl, zr = zr, zl
             self.bb.write(
                 prox_zone_left=zl,
                 prox_zone_center=zc,

@@ -330,6 +330,9 @@ voice:
 
 proximity:
   enabled: true
+  # Mirror L/R when side ToF sensors are swapped vs mux labels (set false if you
+  # reflash firmware with TOF_MUX_CH {2,1,0} instead of {0,1,2})
+  swap_left_right: true
   # Post-turn suppression: ignore PROX events for this long after a proximity turn
   post_turn_lockout_sec: 2.0
   # ESP32 approach confidence count before reacting

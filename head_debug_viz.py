@@ -215,6 +215,28 @@ _DEBUG_HTML = """<!DOCTYPE html>
     #ground-hud .title { color: #88c0d0; margin-bottom: 4px; font-size: 11px; letter-spacing: 0.04em; }
     #ground-hud .grow { display: flex; justify-content: space-between; gap: 10px; }
     #ground-hud .gk { color: #6b7280; }
+    #prox-hud {
+      position: absolute; right: 10px; bottom: 10px; width: 220px;
+      background: rgba(15,17,23,0.9); border: 1px solid #334155; border-radius: 8px;
+      padding: 10px 12px; font-size: 12px; line-height: 1.45; pointer-events: none;
+    }
+    #prox-hud .title { color: #f97316; margin-bottom: 8px; font-size: 11px; letter-spacing: 0.06em; font-weight: 600; }
+    #prox-hud .prox-bars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 8px; }
+    #prox-hud .prox-cell {
+      text-align: center; padding: 6px 4px; border-radius: 6px;
+      border: 1px solid #2a3142; background: #11151d; transition: background 0.15s, border-color 0.15s;
+    }
+    #prox-hud .prox-cell .lbl { font-size: 10px; color: #6b7280; letter-spacing: 0.08em; }
+    #prox-hud .prox-cell .state { font-size: 11px; margin-top: 2px; color: #94a3b8; }
+    #prox-hud .prox-cell.presence { border-color: #0891b2; background: rgba(8,145,178,0.12); }
+    #prox-hud .prox-cell.presence .state { color: #22d3ee; }
+    #prox-hud .prox-cell.approach { border-color: #ea580c; background: rgba(234,88,12,0.18); }
+    #prox-hud .prox-cell.approach .state { color: #fb923c; font-weight: 600; }
+    #prox-hud .approach-line {
+      padding: 6px 8px; border-radius: 6px; background: #0f172a; border: 1px solid #2a3142;
+      font-size: 11px; color: #94a3b8;
+    }
+    #prox-hud .approach-line.active { border-color: #ea580c; color: #fdba74; }
     #hud {
       padding: 12px 14px; overflow: auto; border-left: 1px solid #2a3142;
       background: #151922;
@@ -283,7 +305,18 @@ _DEBUG_HTML = """<!DOCTYPE html>
       <div><span style="background:#f472b6"></span>head on body (IMU − body)</div>
       <div><span style="background:#fbbf24"></span>world aim (body + head)</div>
       <div><span style="background:#4ade80"></span>head mesh</div>
+      <div><span style="background:#22d3ee"></span>ToF presence (L/C/R)</div>
+      <div><span style="background:#f97316"></span>ToF approach beam</div>
       <div style="margin-top:4px;color:#8899aa">servo pan cross-check: HUD only</div>
+    </div>
+    <div id="prox-hud">
+      <div class="title">ToF PROXIMITY</div>
+      <div class="prox-bars">
+        <div class="prox-cell" id="prox-cell-L"><div class="lbl">LEFT</div><div class="state">—</div></div>
+        <div class="prox-cell" id="prox-cell-C"><div class="lbl">CENTER</div><div class="state">—</div></div>
+        <div class="prox-cell" id="prox-cell-R"><div class="lbl">RIGHT</div><div class="state">—</div></div>
+      </div>
+      <div class="approach-line" id="prox-approach-line">No approach</div>
     </div>
   </div>
   <div id="hud">
@@ -486,6 +519,159 @@ panNode.add(limitTilt);
 const memoryGroup = new THREE.Group();
 scene.add(memoryGroup);
 
+const proxGroup = new THREE.Group();
+base.add(proxGroup);
+
+const PROX_COL = { idle: 0x334155, presence: 0x22d3ee, approach: 0xf97316 };
+const TOF_MOUNT_Z = 0.24;
+const TOF_BEAM_LEN = 0.95;
+
+function makeProxZone(label, angleDeg) {
+  const g = new THREE.Group();
+  g.rotation.y = deg(angleDeg);
+  const puck = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.035, 0.04, 0.028, 14),
+    new THREE.MeshStandardMaterial({ color: PROX_COL.idle, emissive: 0x000000, metalness: 0.2, roughness: 0.65 })
+  );
+  puck.position.set(0, 0.085, TOF_MOUNT_Z);
+  g.add(puck);
+  const beamGeom = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0.085, TOF_MOUNT_Z),
+    new THREE.Vector3(0, 0.06, TOF_BEAM_LEN),
+  ]);
+  const beam = new THREE.Line(
+    beamGeom,
+    new THREE.LineBasicMaterial({ color: PROX_COL.idle, transparent: true, opacity: 0.25 })
+  );
+  g.add(beam);
+  const beamTip = new THREE.Mesh(
+    new THREE.ConeGeometry(0.035, 0.09, 10),
+    new THREE.MeshBasicMaterial({ color: PROX_COL.idle, transparent: true, opacity: 0.35 })
+  );
+  beamTip.rotation.x = -Math.PI / 2;
+  beamTip.position.set(0, 0.06, TOF_BEAM_LEN);
+  g.add(beamTip);
+  const arcPts = [];
+  const arcSpan = deg(18);
+  const arcRad = 0.72;
+  const steps = 14;
+  for (let i = 0; i <= steps; i++) {
+    const t = -arcSpan * 0.5 + (arcSpan * i) / steps;
+    arcPts.push(new THREE.Vector3(Math.sin(t) * arcRad, 0.014, Math.cos(t) * arcRad));
+  }
+  const floorArc = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(arcPts),
+    new THREE.LineBasicMaterial({ color: PROX_COL.idle, transparent: true, opacity: 0.45 })
+  );
+  g.add(floorArc);
+  const distRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.08, 0.11, 24),
+    new THREE.MeshBasicMaterial({ color: PROX_COL.approach, transparent: true, opacity: 0, side: THREE.DoubleSide })
+  );
+  distRing.rotation.x = -Math.PI / 2;
+  distRing.position.set(0, 0.015, TOF_BEAM_LEN * 0.55);
+  g.add(distRing);
+  const tag = makeTextSprite(label, '#94a3b8');
+  tag.position.set(0, 0.14, TOF_MOUNT_Z + 0.06);
+  tag.scale.set(0.18, 0.067, 1);
+  g.add(tag);
+  proxGroup.add(g);
+  return { group: g, puck, beam, beamTip, floorArc, distRing, tag, label };
+}
+
+const proxZones = {
+  L: makeProxZone('L', -42),
+  C: makeProxZone('C', 0),
+  R: makeProxZone('R', 42),
+};
+
+let proxPulse = 0;
+
+function setProxZoneVisual(zone, mode, distMm, pulse, updateLabel) {
+  const z = proxZones[zone];
+  if (!z) return;
+  const col = mode === 'approach' ? PROX_COL.approach : (mode === 'presence' ? PROX_COL.presence : PROX_COL.idle);
+  const emissive = mode === 'approach' ? 0x7c2d12 : (mode === 'presence' ? 0x164e63 : 0x000000);
+  const emissiveInt = mode === 'approach' ? 0.35 + 0.25 * pulse : (mode === 'presence' ? 0.15 : 0);
+  z.puck.material.color.setHex(col);
+  z.puck.material.emissive.setHex(emissive);
+  z.puck.material.emissiveIntensity = emissiveInt;
+  z.beam.material.color.setHex(col);
+  z.beam.material.opacity = mode === 'approach' ? 0.75 + 0.2 * pulse : (mode === 'presence' ? 0.42 : 0.2);
+  z.beamTip.material.color.setHex(col);
+  z.beamTip.material.opacity = mode === 'approach' ? 0.85 : (mode === 'presence' ? 0.5 : 0.15);
+  z.floorArc.material.color.setHex(col);
+  z.floorArc.material.opacity = mode === 'approach' ? 0.9 : (mode === 'presence' ? 0.65 : 0.3);
+  const dist = Math.max(0, Number(distMm) || 0);
+  const t = dist > 0 ? THREE.MathUtils.clamp(1 - dist / 1800, 0.15, 1) : 0;
+  z.distRing.material.opacity = mode === 'approach' ? 0.25 + 0.45 * pulse * t : 0;
+  z.distRing.scale.setScalar(0.6 + t * 1.4);
+  if (updateLabel) {
+    const labelText = mode === 'approach' && dist > 0 ? `${zone} ${Math.round(dist)}mm` : zone;
+    const labelColor = mode === 'approach' ? '#fb923c' : (mode === 'presence' ? '#22d3ee' : '#94a3b8');
+    if (z._labelText !== labelText || z._labelColor !== labelColor) {
+      z._labelText = labelText;
+      z._labelColor = labelColor;
+      if (z.tag.material.map) z.tag.material.map.dispose();
+      z.tag.material.map = makeTextSprite(labelText, labelColor).material.map;
+      z.tag.material.needsUpdate = true;
+    }
+  }
+}
+
+function updateProxHud(s) {
+  const zones = {
+    L: !!s.prox_zone_left,
+    C: !!s.prox_zone_center,
+    R: !!s.prox_zone_right,
+  };
+  const approachZone = (s.prox_approach_active && s.prox_approach_zone) ? s.prox_approach_zone : '';
+  for (const key of ['L', 'C', 'R']) {
+    const cell = document.getElementById(`prox-cell-${key}`);
+    if (!cell) continue;
+    const st = cell.querySelector('.state');
+    let mode = '';
+    let text = 'clear';
+    if (approachZone === key) {
+      mode = 'approach';
+      text = `${s.prox_approach_distance || '?'}mm`;
+    } else if (zones[key]) {
+      mode = 'presence';
+      text = 'occupied';
+    }
+    cell.className = 'prox-cell' + (mode ? ` ${mode}` : '');
+    if (st) st.textContent = text;
+  }
+  const line = document.getElementById('prox-approach-line');
+  if (line) {
+    if (s.prox_approach_active) {
+      line.className = 'approach-line active';
+      line.textContent = `APPROACH ${s.prox_approach_zone} · ${s.prox_approach_distance}mm · ${fmt(s.prox_approach_velocity, 0)} mm/s · conf ${s.prox_approach_confidence || 0}`;
+    } else if (s.prox_search_active) {
+      line.className = 'approach-line active';
+      line.textContent = 'Searching after prox turn…';
+    } else if (s.prox_glance_active) {
+      line.className = 'approach-line active';
+      line.textContent = 'Glancing (voice session)';
+    } else {
+      line.className = 'approach-line';
+      line.textContent = 'No approach';
+    }
+  }
+}
+
+function updateProxMarkers(s, pulse, updateLabel) {
+  const zones = { L: !!s.prox_zone_left, C: !!s.prox_zone_center, R: !!s.prox_zone_right };
+  const approachZone = (s.prox_approach_active && s.prox_approach_zone) ? s.prox_approach_zone : '';
+  const dist = s.prox_approach_distance || 0;
+  for (const key of ['L', 'C', 'R']) {
+    let mode = '';
+    if (approachZone === key) mode = 'approach';
+    else if (zones[key]) mode = 'presence';
+    setProxZoneVisual(key, mode, approachZone === key ? dist : 0, pulse, !!updateLabel);
+  }
+}
+
 let latest = {};
 let lastLimitYaw = null;
 
@@ -665,13 +851,13 @@ function setStats(s) {
   const proxZL = s.prox_zone_left;
   const proxZC = s.prox_zone_center;
   const proxZR = s.prox_zone_right;
-  const zDot = (on) => on ? '🟢' : '⚫';
+  const zDot = (on) => on ? '●' : '○';
   
   stats.innerHTML += `
     <div class="row" style="margin-top:6px;border-top:1px solid #2a3142;padding-top:6px">
       <span class="k">proximity</span>
       <span class="${proxApproach ? 'warn' : ''}">
-        ${proxApproach ? 'APPROACH ' + s.prox_approach_zone + ' ' + s.prox_approach_distance + 'mm ' + s.prox_approach_velocity + 'mm/s' : 'clear'}
+        ${proxApproach ? 'APPROACH ' + s.prox_approach_zone + ' ' + s.prox_approach_distance + 'mm' : 'clear'}
       </span>
     </div>
     <div class="row"><span class="k">zones L C R</span>
@@ -680,6 +866,7 @@ function setStats(s) {
     <div class="row"><span class="k">prox state</span>
       <span>${s.prox_search_active ? 'SEARCHING' : s.prox_glance_active ? 'GLANCING' : '-'}</span>
     </div>
+    <div class="row"><span class="k">3D prox HUD</span><span class="ok">bottom-right on model</span></div>
   `;
 }
 
@@ -811,6 +998,8 @@ async function poll() {
     imuGroup.rotation.z = deg(latest.imu_roll_deg || 0);
     imuGroup.rotation.x = deg(latest.imu_pitch_deg || 0) * imuPitchSign;
     updateMemoryMarkers(latest);
+    updateProxHud(latest);
+    updateProxMarkers(latest, proxPulse, true);
     const nearTiltMax = latest.tilt_mech_deg >= (latest.tilt_mech_up_deg - 1);
     const nearTiltMin = latest.tilt_mech_deg <= (latest.tilt_mech_down_deg + 1);
     headMesh.material.color.setHex(nearTiltMax || nearTiltMin ? 0xbf616a : 0x4ade80);
@@ -976,6 +1165,10 @@ poll();
 
 function animate() {
   requestAnimationFrame(animate);
+  proxPulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.008);
+  if (latest && Object.keys(latest).length) {
+    updateProxMarkers(latest, proxPulse, false);
+  }
   controls.update();
   renderer.render(scene, camera);
 }

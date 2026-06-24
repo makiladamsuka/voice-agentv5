@@ -188,6 +188,17 @@ class BaseController:
         )
         self._yaw_state = BaseYawState(max_yaw_deg=self.max_yaw_deg)
 
+        # ── Proximity sensing (ToF approach detection) ────────────────────────
+        prox = _cfg(cfg, "proximity", default={}) or {}
+        self.prox_enabled = bool(prox.get("enabled", True))
+        self.prox_lockout_sec = float(prox.get("post_turn_lockout_sec", 2.0))
+        self.prox_min_confidence = int(prox.get("min_confidence", 4))
+        self.prox_max_turns = int(prox.get("max_turns_per_window", 2))
+        self.prox_window_sec = float(prox.get("turn_window_sec", 30.0))
+        self.prox_turn_step = float(prox.get("turn_step_deg", 35.0))
+        self.prox_comp_gain = float(prox.get("compensation_gain", 0.90))
+        self.prox_cooldown_sec = float(prox.get("cooldown_sec", 5.0))
+
         # ── Runtime state ─────────────────────────────────────────────────────
         self._last_nudge_ts = 0.0
         self._last_fast_ts = 0.0
@@ -207,6 +218,8 @@ class BaseController:
         self._sustained_sign = 0.0
         self._last_sustained_ts = 0.0
         self._last_tune_seq = 0
+        self._last_prox_ts = 0.0
+        self._prox_turn_timestamps: list[float] = []
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -578,6 +591,59 @@ class BaseController:
         comp_pan = self._comp_pan_for_step(step, pan, self.lss_base_comp)
         return step, "last_seen", comp_pan
 
+    def _plan_proximity_step(
+        self, now: float, state: dict,
+    ) -> tuple[Optional[float], str, float]:
+        """Turn base toward an approaching person detected by ToF sensors."""
+        if not self.prox_enabled:
+            return None, "", 0.0
+        if not state.get("prox_approach_active", False):
+            return None, "", 0.0
+        # Suppress while face tracking is active (already engaged)
+        if state.get("face_detected", False):
+            return None, "", 0.0
+        # Post-turn lockout
+        if now < state.get("prox_post_turn_lockout_ts", 0.0):
+            return None, "", 0.0
+        # Cooldown
+        if (now - self._last_prox_ts) < self.prox_cooldown_sec:
+            return None, "", 0.0
+        # Confidence gate
+        if state.get("prox_approach_confidence", 0) < self.prox_min_confidence:
+            return None, "", 0.0
+        # Budget: max turns per window
+        recent = [t for t in self._prox_turn_timestamps if now - t < self.prox_window_sec]
+        if len(recent) >= self.prox_max_turns:
+            return None, "", 0.0
+
+        zone = state.get("prox_approach_zone", "")
+        if zone == "L":
+            step_sign = -1.0
+        elif zone == "R":
+            step_sign = 1.0
+        elif zone == "C":
+            return None, "", 0.0  # center = already facing
+        else:
+            return None, "", 0.0
+
+        step = step_sign * self.prox_turn_step * self.base_sign
+        pan = state["servo_pan"]
+        step = self._apply_gate(
+            step, pan, state["base_encoder_deg"], state,
+            require_head_lead=False,
+        )
+        if abs(step) < self.min_step:
+            return None, "", 0.0
+
+        # Commit: set lockout and record in budget
+        self._last_prox_ts = now
+        self._prox_turn_timestamps = [t for t in self._prox_turn_timestamps if now - t < self.prox_window_sec]
+        self._prox_turn_timestamps.append(now)
+        self.bb.write(prox_post_turn_lockout_ts=now + self.prox_lockout_sec)
+
+        comp_pan = self._comp_pan_for_step(step, pan, self.prox_comp_gain)
+        return step, "proximity", comp_pan
+
     # ── Main loop ──────────────────────────────────────────────────────────────
 
     def run(self) -> None:
@@ -604,6 +670,8 @@ class BaseController:
                 "imu_available", "imu_gyro_dps", "imu_gyro_z_dps",
                 "imu_yaw_integral_deg",
                 "yaw_reference_locked",
+                "prox_approach_active", "prox_approach_zone",
+                "prox_approach_confidence", "prox_post_turn_lockout_ts",
             )
 
             pan_offset = self._head_pan_offset(state["servo_pan"])
@@ -650,6 +718,10 @@ class BaseController:
 
             if step is None and mode in ("wander", "track", "last_seen"):
                 step, source, comp_pan = self._plan_sustained_follow(now, state)
+
+            # Proximity approach: react in any mode when not already tracking
+            if step is None and self.prox_enabled:
+                step, source, comp_pan = self._plan_proximity_step(now, state)
 
             if step is not None and abs(step) >= self.min_step:
                 self._last_nudge_ts = now

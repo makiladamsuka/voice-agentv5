@@ -88,6 +88,22 @@ class Blackboard:
     person_snapshots: list = None  # list[dict] from PersonMemory.snapshots()
     last_seen_world_yaw: float = None  # world yaw of last-seen-at-edge position
 
+    # ── Proximity Sensing (written by ServoMixer from ESP32 PROX lines) ───
+    prox_approach_zone: str = ""          # "" | "L" | "C" | "R"
+    prox_approach_velocity: float = 0.0   # mm/s (negative = approaching)
+    prox_approach_distance: int = 0       # mm
+    prox_approach_confidence: int = 0     # consecutive confirm frames
+    prox_approach_active: bool = False    # True when valid approach detected
+    prox_approach_ts: float = 0.0        # timestamp of last PROX event
+    prox_depart_zone: str = ""           # zone someone departed from
+    prox_depart_active: bool = False
+    prox_depart_ts: float = 0.0
+    prox_zone_left: bool = False         # someone lingering in left zone
+    prox_zone_center: bool = False
+    prox_zone_right: bool = False
+    prox_zone_count: int = 0             # how many zones occupied (0-3)
+    prox_post_turn_lockout_ts: float = 0.0  # suppress prox turns until this time
+
     # ── Emotion (written by EmotionEngine) ───────────────────────────────────
     emotion: str = "idle"
     emotion_intensity: float = 1.0

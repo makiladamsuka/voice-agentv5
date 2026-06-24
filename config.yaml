@@ -327,3 +327,19 @@ surroundings_emotion:
 
 voice:
   enabled: true
+
+proximity:
+  enabled: true
+  # Post-turn suppression: ignore PROX events for this long after a proximity turn
+  post_turn_lockout_sec: 2.0
+  # ESP32 approach confidence count before reacting
+  min_confidence: 4
+  # Budget: max proximity-triggered base turns in a time window
+  max_turns_per_window: 2
+  turn_window_sec: 30.0
+  # How far to turn toward a side sensor (~45° mounting angle)
+  turn_step_deg: 35.0
+  # Min time between proximity turns
+  cooldown_sec: 5.0
+  # Counter-rotate neck to keep gaze during turn
+  compensation_gain: 0.90

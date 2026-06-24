@@ -16,6 +16,7 @@
 
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
+#include <VL53L1X.h>
 #include <string.h>
 
 const int I2C_SDA_PIN = 21;
@@ -78,12 +79,64 @@ const unsigned long MOVE_KICK_MS = 260;
 const int MOVE_KICK_PWM = 150;
 const unsigned long JOG_MAX_MS = 3000;
 
+// ── ToF Proximity Sensing (VL53L1X × 3 via TCA9548A) ──────────────────
+const uint8_t TCA_ADDR = 0x70;
+const uint8_t TOF_COUNT = 3;
+const uint8_t TOF_MUX_CH[TOF_COUNT] = {0, 1, 2};   // L, C, R
+const char    TOF_LABEL[TOF_COUNT]  = {'L', 'C', 'R'};
+const float   TOF_SAMPLE_HZ = 10.0f;
+const int     TOF_MAX_RANGE_MM = 1200;
+const int     TOF_MIN_RANGE_MM = 30;
+const float   BASELINE_ALPHA = 0.05f;
+const int     BASELINE_DRIFT_MM = 50;
+const int     APPROACH_THRESHOLD_MM = 80;
+const float   APPROACH_VEL_THRESHOLD = -30.0f;    // mm/s (negative = closer)
+const int     APPROACH_CONFIRM_FRAMES = 3;
+const unsigned long APPROACH_DWELL_MS = 800;       // walk-by filter
+const unsigned long BASELINE_FORCE_RELEARN_MS = 10000;
+const unsigned long TOF_EVENT_COOLDOWN_MS = 300;
+const float   DEPART_VEL_THRESHOLD = 50.0f;       // mm/s (positive = leaving)
+const int     DEPART_CONFIRM_FRAMES = 4;
+const int     DEPART_MIN_START_MM = 600;
+const int     PRESENCE_ENTER_MM = 800;
+const int     PRESENCE_EXIT_MM = 1000;
+const unsigned long PRESENCE_DEBOUNCE_MS = 500;
+
 const int LEDC_FREQ_HZ = 20000;
 const int LEDC_RES_BITS = 8;
 const int LEDC_PWM_CHANNEL = 0;
 
 Adafruit_PWMServoDriver pwm(0x40);
 portMUX_TYPE encoderMux = portMUX_INITIALIZER_UNLOCKED;
+
+// ── ToF state ─────────────────────────────────────────────────────────
+struct TofChannel {
+    VL53L1X sensor;
+    float baseline_mm;
+    bool  baseline_valid;
+    unsigned long baseline_age_ms;
+    int   readings[3];
+    uint8_t ring_idx;
+    int   approach_count;
+    bool  approach_active;
+    bool  dwell_confirmed;
+    unsigned long below_baseline_since_ms;
+    float velocity_mm_s;
+    int   last_valid_mm;
+    bool  initialized;
+    int   depart_count;
+    bool  depart_active;
+    float min_recent_mm;
+    unsigned long min_recent_ts;
+    bool  presence_active;
+    unsigned long presence_since_ms;
+};
+
+TofChannel tofChannels[TOF_COUNT];
+unsigned long lastTofReadMs = 0;
+unsigned long lastTofEventMs = 0;
+uint8_t lastZoneState = 0;
+bool tofSystemReady = false;
 
 char lineBuffer[LINE_BUF_SIZE];
 uint8_t lineLen = 0;
@@ -734,6 +787,228 @@ void updateBaseMotor() {
   motorDrive(out);
 }
 
+// ── ToF Proximity Functions ───────────────────────────────────────────
+
+void tcaSelect(uint8_t channel) {
+    Wire.beginTransmission(TCA_ADDR);
+    Wire.write(1 << channel);
+    Wire.endTransmission();
+}
+
+void initTofSensors() {
+    // Probe TCA9548A first
+    Wire.beginTransmission(TCA_ADDR);
+    if (Wire.endTransmission() != 0) {
+        Serial.println(F("WARN TCA9548A not found at 0x70 — ToF disabled"));
+        return;
+    }
+    int okCount = 0;
+    for (int i = 0; i < TOF_COUNT; i++) {
+        tcaSelect(TOF_MUX_CH[i]);
+        TofChannel &ch = tofChannels[i];
+        ch.sensor.setTimeout(100);
+        if (ch.sensor.init()) {
+            ch.sensor.setDistanceMode(VL53L1X::Long);
+            ch.sensor.setMeasurementTimingBudget(50000);
+            ch.sensor.startContinuous(100);
+            ch.initialized = true;
+            ch.baseline_valid = false;
+            ch.approach_count = 0;
+            ch.approach_active = false;
+            ch.dwell_confirmed = false;
+            ch.below_baseline_since_ms = 0;
+            ch.ring_idx = 0;
+            ch.depart_count = 0;
+            ch.depart_active = false;
+            ch.min_recent_mm = 9999.0f;
+            ch.min_recent_ts = 0;
+            ch.presence_active = false;
+            ch.presence_since_ms = 0;
+            memset(ch.readings, 0, sizeof(ch.readings));
+            okCount++;
+        } else {
+            ch.initialized = false;
+            Serial.print(F("WARN TOF "));
+            Serial.print(TOF_LABEL[i]);
+            Serial.println(F(" init fail"));
+        }
+    }
+    if (okCount > 0) {
+        tofSystemReady = true;
+        Serial.print(F("TOF ready: "));
+        Serial.print(okCount);
+        Serial.println(F("/3 sensors"));
+    }
+}
+
+void readAndProcessTof() {
+    unsigned long now = millis();
+    if (now - lastTofReadMs < (unsigned long)(1000.0f / TOF_SAMPLE_HZ))
+        return;
+    lastTofReadMs = now;
+
+    float dt = 1.0f / TOF_SAMPLE_HZ;
+    bool anyApproach = false;
+    int bestZone = -1;
+    float bestVelocity = 0.0f;
+
+    for (int i = 0; i < TOF_COUNT; i++) {
+        TofChannel &ch = tofChannels[i];
+        if (!ch.initialized) continue;
+
+        tcaSelect(TOF_MUX_CH[i]);
+
+        if (!ch.sensor.dataReady()) continue;
+        int mm = ch.sensor.read(false);
+        uint8_t status = ch.sensor.ranging_data.range_status;
+
+        if (status != 0 || mm < TOF_MIN_RANGE_MM || mm > TOF_MAX_RANGE_MM) {
+            continue;
+        }
+
+        ch.last_valid_mm = mm;
+
+        // Ring buffer for velocity (central difference)
+        ch.readings[ch.ring_idx] = mm;
+        uint8_t prev_idx = (ch.ring_idx + 1) % 3;
+        ch.ring_idx = (ch.ring_idx + 1) % 3;
+        ch.velocity_mm_s = (float)(mm - ch.readings[prev_idx]) / (2.0f * dt);
+
+        // ── Baseline management ──
+        if (!ch.baseline_valid) {
+            ch.baseline_mm = (float)mm;
+            ch.baseline_valid = true;
+            ch.baseline_age_ms = now;
+        } else if (
+            abs(mm - (int)ch.baseline_mm) < BASELINE_DRIFT_MM
+            && fabs(ch.velocity_mm_s) < 15.0f
+        ) {
+            ch.baseline_mm = ch.baseline_mm * (1.0f - BASELINE_ALPHA)
+                           + (float)mm * BASELINE_ALPHA;
+            ch.baseline_age_ms = now;
+        } else if (
+            !ch.approach_active
+            && (now - ch.baseline_age_ms > BASELINE_FORCE_RELEARN_MS)
+        ) {
+            ch.baseline_mm = (float)mm;
+            ch.baseline_age_ms = now;
+        }
+
+        // ── Approach detection with dwell gate ──
+        float delta_from_baseline = (float)mm - ch.baseline_mm;
+        bool is_closer = delta_from_baseline < -APPROACH_THRESHOLD_MM;
+        bool is_moving = ch.velocity_mm_s < APPROACH_VEL_THRESHOLD;
+
+        if (is_closer && is_moving) {
+            ch.approach_count++;
+            if (ch.below_baseline_since_ms == 0)
+                ch.below_baseline_since_ms = now;
+            ch.dwell_confirmed = (now - ch.below_baseline_since_ms) >= APPROACH_DWELL_MS;
+        } else if (is_closer && !is_moving) {
+            if (ch.below_baseline_since_ms == 0)
+                ch.below_baseline_since_ms = now;
+            ch.dwell_confirmed = (now - ch.below_baseline_since_ms) >= APPROACH_DWELL_MS;
+            ch.approach_count = max(0, ch.approach_count - 1);
+        } else {
+            ch.approach_count = max(0, ch.approach_count - 1);
+            ch.below_baseline_since_ms = 0;
+            ch.dwell_confirmed = false;
+        }
+
+        ch.approach_active = (ch.approach_count >= APPROACH_CONFIRM_FRAMES)
+                             && ch.dwell_confirmed;
+
+        if (ch.approach_active) {
+            anyApproach = true;
+            if (ch.velocity_mm_s < bestVelocity) {
+                bestVelocity = ch.velocity_mm_s;
+                bestZone = i;
+            }
+        }
+
+        // ── Departure detection ──
+        bool was_close = ch.min_recent_mm < DEPART_MIN_START_MM;
+        bool is_departing = ch.velocity_mm_s > DEPART_VEL_THRESHOLD;
+        bool is_far_now = (float)mm > ch.baseline_mm * 0.85f;
+
+        if (was_close && is_departing && is_far_now) {
+            ch.depart_count++;
+        } else {
+            ch.depart_count = max(0, ch.depart_count - 1);
+        }
+        ch.depart_active = (ch.depart_count >= DEPART_CONFIRM_FRAMES);
+
+        if (mm < (int)ch.min_recent_mm || (now - ch.min_recent_ts) > 5000) {
+            ch.min_recent_mm = (float)mm;
+            ch.min_recent_ts = now;
+        }
+
+        // ── Presence zone (lingering) ──
+        if (mm <= PRESENCE_ENTER_MM && !ch.presence_active) {
+            if (ch.presence_since_ms == 0) ch.presence_since_ms = now;
+            if ((now - ch.presence_since_ms) >= PRESENCE_DEBOUNCE_MS) {
+                ch.presence_active = true;
+            }
+        } else if (mm > PRESENCE_EXIT_MM && ch.presence_active) {
+            ch.presence_active = false;
+            ch.presence_since_ms = 0;
+        }
+    }
+
+    // ── Emit PROX approach event ──
+    if (anyApproach && bestZone >= 0 && (now - lastTofEventMs) > TOF_EVENT_COOLDOWN_MS) {
+        TofChannel &best = tofChannels[bestZone];
+        Serial.print(F("PROX A="));
+        Serial.print(TOF_LABEL[bestZone]);
+        Serial.print(F(" V="));
+        Serial.print((int)best.velocity_mm_s);
+        Serial.print(F(" D="));
+        Serial.print(best.last_valid_mm);
+        Serial.print(F(" C="));
+        Serial.println(best.approach_count);
+        lastTofEventMs = now;
+    }
+
+    // ── Emit PROX depart events ──
+    for (int i = 0; i < TOF_COUNT; i++) {
+        TofChannel &ch = tofChannels[i];
+        if (ch.depart_active && (now - lastTofEventMs) > TOF_EVENT_COOLDOWN_MS) {
+            Serial.print(F("PROX D="));
+            Serial.print(TOF_LABEL[i]);
+            Serial.print(F(" V="));
+            Serial.print((int)ch.velocity_mm_s);
+            Serial.print(F(" D="));
+            Serial.print(ch.last_valid_mm);
+            Serial.print(F(" C="));
+            Serial.println(ch.depart_count);
+            lastTofEventMs = now;
+            ch.depart_count = 0;
+            ch.depart_active = false;
+        }
+    }
+
+    // ── Emit debounced PROX CLEAR ──
+    if (!anyApproach && lastTofEventMs > 0 && (now - lastTofEventMs) > 2000) {
+        Serial.println(F("PROX CLEAR"));
+        lastTofEventMs = 0;
+    }
+
+    // ── Emit ZONE state changes ──
+    uint8_t zoneState = 0;
+    for (int i = 0; i < TOF_COUNT; i++) {
+        if (tofChannels[i].presence_active) zoneState |= (1 << i);
+    }
+    if (zoneState != lastZoneState) {
+        Serial.print(F("ZONE L="));
+        Serial.print((zoneState & 1) ? 1 : 0);
+        Serial.print(F(" C="));
+        Serial.print((zoneState & 2) ? 1 : 0);
+        Serial.print(F(" R="));
+        Serial.println((zoneState & 4) ? 1 : 0);
+        lastZoneState = zoneState;
+    }
+}
+
 void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
@@ -767,7 +1042,11 @@ void setup() {
   panAngle = PAN_CENTER;
   tiltAngle = TILT_CENTER;
   zeroOffset = 0;
-  Serial.println(F("FW head_servo_hands_v14"));
+
+  // Initialize ToF sensors via TCA9548A mux (non-blocking, graceful fail)
+  initTofSensors();
+
+  Serial.println(F("FW head_servo_hands_v15_prox"));
   Serial.println(F("READY"));
   Serial.flush();
 }
@@ -787,6 +1066,11 @@ void loop() {
   updateBaseMotor();
   updateBaseJog();
   updateArmPower();
+
+  // ToF proximity sensing (non-blocking, ~3ms every 100ms)
+  if (tofSystemReady) {
+    readAndProcessTof();
+  }
 
   if (spinPwm != 0) {
     motorDrive(spinPwm);

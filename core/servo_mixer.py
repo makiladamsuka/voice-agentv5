@@ -9,6 +9,7 @@ This is the hardware boundary — all other modules work with BB fields only.
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -246,6 +247,10 @@ class ServoMixer:
 
         loop_delay = 1.0 / max(1.0, self.loop_hz)
 
+        # Register proximity event handler on the serial link
+        if self._link is not None:
+            self._link._prox_callback = self._handle_prox_line
+
         while self.bb.read("running")["running"]:
             now = time.time()
             if self._handle_debug_commands(now):
@@ -298,6 +303,58 @@ class ServoMixer:
             time.sleep(loop_delay)
 
         print("[ServoMixer] Stopped.")
+
+    # ── Proximity event routing ────────────────────────────────────────────
+
+    def _handle_prox_line(self, line: str) -> None:
+        """Called from ArduinoServoLink._drain_rx for PROX/ZONE serial lines."""
+        from arduino_servo import (
+            _PROX_EVENT_RE, _PROX_DEPART_RE, _PROX_CLEAR_RE, _ZONE_RE,
+        )
+
+        m = _PROX_EVENT_RE.match(line)
+        if m:
+            self.bb.write(
+                prox_approach_zone=m.group(1),
+                prox_approach_velocity=float(m.group(2)),
+                prox_approach_distance=int(m.group(3)),
+                prox_approach_confidence=int(m.group(4)),
+                prox_approach_active=True,
+                prox_approach_ts=time.time(),
+            )
+            return
+
+        m = _PROX_DEPART_RE.match(line)
+        if m:
+            self.bb.write(
+                prox_depart_zone=m.group(1),
+                prox_depart_active=True,
+                prox_depart_ts=time.time(),
+            )
+            return
+
+        if _PROX_CLEAR_RE.match(line):
+            self.bb.write(
+                prox_approach_active=False,
+                prox_approach_zone="",
+                prox_approach_confidence=0,
+                prox_depart_active=False,
+                prox_depart_zone="",
+            )
+            return
+
+        m = _ZONE_RE.match(line)
+        if m:
+            zl = m.group(1) == "1"
+            zc = m.group(2) == "1"
+            zr = m.group(3) == "1"
+            self.bb.write(
+                prox_zone_left=zl,
+                prox_zone_center=zc,
+                prox_zone_right=zr,
+                prox_zone_count=int(zl) + int(zc) + int(zr),
+            )
+
 
     def _tilt_for_send(self, tilt: float) -> float:
         dt = 1.0 / max(1.0, self.loop_hz)

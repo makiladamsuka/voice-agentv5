@@ -3,6 +3,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+voice/event_db/
 .env
 .DS_Store
 *.log

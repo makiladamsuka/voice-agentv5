@@ -87,7 +87,11 @@ const char    TOF_LABEL[TOF_COUNT]  = {'L', 'C', 'R'};
 const float   TOF_SAMPLE_HZ = 10.0f;
 const int     TOF_MAX_RANGE_MM = 2200;
 const int     TOF_MIN_RANGE_MM = 80;
+const int     TOF_TRUST_MAX_MM = 1800;   // above: unreliable max-range jitter
+const int     APPROACH_MAX_MM = 1500;    // only detect approach below this
 const uint32_t TOF_TIMING_BUDGET_US = 66000;
+const float   FILTER_ALPHA = 0.25f;
+const unsigned long FILTER_HOLD_MS = 400;
 const float   BASELINE_ALPHA = 0.05f;
 const int     BASELINE_DRIFT_MM = 50;
 const int     APPROACH_THRESHOLD_MM = 80;
@@ -131,6 +135,9 @@ struct TofChannel {
     unsigned long min_recent_ts;
     bool  presence_active;
     unsigned long presence_since_ms;
+    float filtered_mm;
+    bool  filtered_valid;
+    unsigned long last_good_ms;
 };
 
 TofChannel tofChannels[TOF_COUNT];
@@ -835,6 +842,9 @@ void resetTofChannelState(TofChannel &ch) {
     ch.presence_active = false;
     ch.presence_since_ms = 0;
     ch.last_valid_mm = -1;
+    ch.filtered_mm = 0.0f;
+    ch.filtered_valid = false;
+    ch.last_good_ms = 0;
     memset(ch.readings, 0, sizeof(ch.readings));
 }
 
@@ -956,61 +966,89 @@ void readAndProcessTof() {
                 Serial.print(F("TOF stale, will reinit: "));
                 Serial.println(TOF_LABEL[i]);
             }
+            if (!ch.filtered_valid || (now - ch.last_good_ms) > FILTER_HOLD_MS) {
+                ch.filtered_valid = false;
+                ch.approach_count = max(0, ch.approach_count - 1);
+            }
             continue;
         }
 
         tofFailStreak[i] = 0;
-        ch.last_valid_mm = mm;
 
-        // Ring buffer for velocity (central difference)
-        ch.readings[ch.ring_idx] = mm;
+        bool raw_trusted = (mm <= TOF_TRUST_MAX_MM);
+        if (raw_trusted) {
+            if (!ch.filtered_valid) {
+                ch.filtered_mm = (float)mm;
+                ch.filtered_valid = true;
+            } else {
+                ch.filtered_mm = ch.filtered_mm * (1.0f - FILTER_ALPHA) + (float)mm * FILTER_ALPHA;
+            }
+            ch.last_good_ms = now;
+        } else if (!ch.filtered_valid || (now - ch.last_good_ms) > FILTER_HOLD_MS) {
+            continue;
+        }
+
+        int fm = (int)(ch.filtered_mm + 0.5f);
+        ch.last_valid_mm = fm;
+
+        ch.readings[ch.ring_idx] = fm;
         uint8_t prev_idx = (ch.ring_idx + 1) % 3;
         ch.ring_idx = (ch.ring_idx + 1) % 3;
-        ch.velocity_mm_s = (float)(mm - ch.readings[prev_idx]) / (2.0f * dt);
+        ch.velocity_mm_s = (float)(fm - ch.readings[prev_idx]) / (2.0f * dt);
+        if (fabs(ch.velocity_mm_s) > 300.0f) {
+            ch.velocity_mm_s = (ch.velocity_mm_s > 0.0f) ? 300.0f : -300.0f;
+        }
 
-        // ── Baseline management ──
+        // ── Baseline management (averaged distance) ──
         if (!ch.baseline_valid) {
-            ch.baseline_mm = (float)mm;
+            ch.baseline_mm = ch.filtered_mm;
             ch.baseline_valid = true;
             ch.baseline_age_ms = now;
         } else if (
-            abs(mm - (int)ch.baseline_mm) < BASELINE_DRIFT_MM
+            fabs(ch.filtered_mm - ch.baseline_mm) < (float)BASELINE_DRIFT_MM
             && fabs(ch.velocity_mm_s) < 15.0f
         ) {
             ch.baseline_mm = ch.baseline_mm * (1.0f - BASELINE_ALPHA)
-                           + (float)mm * BASELINE_ALPHA;
+                           + ch.filtered_mm * BASELINE_ALPHA;
             ch.baseline_age_ms = now;
         } else if (
             !ch.approach_active
             && (now - ch.baseline_age_ms > BASELINE_FORCE_RELEARN_MS)
         ) {
-            ch.baseline_mm = (float)mm;
+            ch.baseline_mm = ch.filtered_mm;
             ch.baseline_age_ms = now;
         }
 
-        // ── Approach detection with dwell gate ──
-        float delta_from_baseline = (float)mm - ch.baseline_mm;
-        bool is_closer = delta_from_baseline < -APPROACH_THRESHOLD_MM;
-        bool is_moving = ch.velocity_mm_s < APPROACH_VEL_THRESHOLD;
-
-        if (is_closer && is_moving) {
-            ch.approach_count++;
-            if (ch.below_baseline_since_ms == 0)
-                ch.below_baseline_since_ms = now;
-            ch.dwell_confirmed = (now - ch.below_baseline_since_ms) >= APPROACH_DWELL_MS;
-        } else if (is_closer && !is_moving) {
-            if (ch.below_baseline_since_ms == 0)
-                ch.below_baseline_since_ms = now;
-            ch.dwell_confirmed = (now - ch.below_baseline_since_ms) >= APPROACH_DWELL_MS;
-            ch.approach_count = max(0, ch.approach_count - 1);
-        } else {
+        // ── Approach: only in trusted near range, ignore jitter ──
+        if (fm > APPROACH_MAX_MM) {
             ch.approach_count = max(0, ch.approach_count - 1);
             ch.below_baseline_since_ms = 0;
             ch.dwell_confirmed = false;
-        }
+            ch.approach_active = false;
+        } else {
+            float delta_from_baseline = ch.filtered_mm - ch.baseline_mm;
+            bool is_closer = delta_from_baseline < -(float)APPROACH_THRESHOLD_MM;
+            bool is_moving = ch.velocity_mm_s < APPROACH_VEL_THRESHOLD;
 
-        ch.approach_active = (ch.approach_count >= APPROACH_CONFIRM_FRAMES)
-                             && ch.dwell_confirmed;
+            if (is_closer && is_moving) {
+                ch.approach_count++;
+                if (ch.below_baseline_since_ms == 0)
+                    ch.below_baseline_since_ms = now;
+                ch.dwell_confirmed = (now - ch.below_baseline_since_ms) >= APPROACH_DWELL_MS;
+            } else if (is_closer && !is_moving) {
+                if (ch.below_baseline_since_ms == 0)
+                    ch.below_baseline_since_ms = now;
+                ch.dwell_confirmed = (now - ch.below_baseline_since_ms) >= APPROACH_DWELL_MS;
+                ch.approach_count = max(0, ch.approach_count - 1);
+            } else {
+                ch.approach_count = max(0, ch.approach_count - 1);
+                ch.below_baseline_since_ms = 0;
+                ch.dwell_confirmed = false;
+            }
+
+            ch.approach_active = (ch.approach_count >= APPROACH_CONFIRM_FRAMES)
+                                 && ch.dwell_confirmed;
+        }
 
         if (ch.approach_active) {
             anyApproach = true;
@@ -1023,7 +1061,7 @@ void readAndProcessTof() {
         // ── Departure detection ──
         bool was_close = ch.min_recent_mm < DEPART_MIN_START_MM;
         bool is_departing = ch.velocity_mm_s > DEPART_VEL_THRESHOLD;
-        bool is_far_now = (float)mm > ch.baseline_mm * 0.85f;
+        bool is_far_now = ch.filtered_mm > ch.baseline_mm * 0.85f;
 
         if (was_close && is_departing && is_far_now) {
             ch.depart_count++;
@@ -1032,18 +1070,18 @@ void readAndProcessTof() {
         }
         ch.depart_active = (ch.depart_count >= DEPART_CONFIRM_FRAMES);
 
-        if (mm < (int)ch.min_recent_mm || (now - ch.min_recent_ts) > 5000) {
-            ch.min_recent_mm = (float)mm;
+        if (fm < (int)ch.min_recent_mm || (now - ch.min_recent_ts) > 5000) {
+            ch.min_recent_mm = (float)fm;
             ch.min_recent_ts = now;
         }
 
         // ── Presence zone (lingering) ──
-        if (mm <= PRESENCE_ENTER_MM && !ch.presence_active) {
+        if (fm <= PRESENCE_ENTER_MM && !ch.presence_active) {
             if (ch.presence_since_ms == 0) ch.presence_since_ms = now;
             if ((now - ch.presence_since_ms) >= PRESENCE_DEBOUNCE_MS) {
                 ch.presence_active = true;
             }
-        } else if (mm > PRESENCE_EXIT_MM && ch.presence_active) {
+        } else if (fm > PRESENCE_EXIT_MM && ch.presence_active) {
             ch.presence_active = false;
             ch.presence_since_ms = 0;
         }

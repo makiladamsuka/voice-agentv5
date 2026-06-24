@@ -21,7 +21,11 @@ import threading
 import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from tof_filter import MAX_TRUST_MM, TofFilterBank
 
 try:
     import serial
@@ -31,8 +35,9 @@ except ImportError:
 
 DEFAULT_PORTS = ("/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM0")
 BAUD = 115200
-MAX_MM = 2200
+MAX_MM = MAX_TRUST_MM
 HISTORY_LEN = 150
+FILTER_BANK = TofFilterBank(3)
 
 _TOF_RE = re.compile(
     r"TOF\s+L=(-?\d+)\s+C=(-?\d+)\s+R=(-?\d+)"
@@ -52,18 +57,27 @@ class TofState:
         self.sample_count = 0
         self.dropouts = [0, 0, 0]
         self.mm = [-1, -1, -1]
-        self.vel = [0, 0, 0]
+        self.vel: list[int | None] = [None, None, None]
+        self.open = [True, True, True]
         self.history: list[deque[int]] = [
             deque(maxlen=HISTORY_LEN) for _ in range(3)
         ]
         self.boot: deque[str] = deque(maxlen=40)
         self.last_ts = 0.0
 
-    def update_sample(self, mm: list[int], vel: list[int]) -> None:
+    def update_sample(
+        self,
+        mm: list[int],
+        vel: list[int | None],
+        *,
+        open_flags: list[bool] | None = None,
+    ) -> None:
         with self._lock:
             self.sample_count += 1
             self.mm = mm
             self.vel = vel
+            if open_flags is not None:
+                self.open = open_flags
             self.last_ts = time.time()
             for i in range(3):
                 if mm[i] < 0:
@@ -97,7 +111,8 @@ class TofState:
                 "ok_count": ok,
                 "dropouts": list(self.dropouts),
                 "mm": list(self.mm),
-                "vel": list(self.vel),
+                "vel": [v if v is None else int(v) for v in self.vel],
+                "open": list(self.open),
                 "history": [list(h) for h in self.history],
                 "boot": list(self.boot),
                 "last_ts": self.last_ts,
@@ -171,9 +186,9 @@ def serial_reader(port_hint: str) -> None:
                     continue
                 m = _TOF_RE.search(line)
                 if m:
-                    mm = [int(m.group(i)) for i in range(1, 4)]
-                    vel = [int(m.group(i)) for i in range(4, 7)]
-                    STATE.update_sample(mm, vel)
+                    raw = [int(m.group(i)) for i in range(1, 4)]
+                    mm, vel, open_flags = FILTER_BANK.update_all(raw)
+                    STATE.update_sample(mm, vel, open_flags=open_flags)
                 elif line and not line.startswith("TOF"):
                     STATE.add_boot(line)
         except Exception as exc:
@@ -329,7 +344,7 @@ HTML_PAGE = """<!DOCTYPE html>
   <div class="card">
     <h2>Boot log</h2>
     <div class="boot" id="boot"></div>
-    <p class="note">VL53L0X (GY-VL53L0XV2): max ~2&nbsp;m. Readings stuck at 30–80&nbsp;mm usually mean housing crosstalk — point sensors into open space.</p>
+    <p class="note">VL53L0X (GY-VL53L0XV2): trusted range 80–1800&nbsp;mm. Beyond ~1.8&nbsp;m readings jitter — shown as <em>open</em>. Velocity uses a 5-sample average so small noise does not look like approach.</p>
   </div>
 
   <script>
@@ -337,12 +352,13 @@ HTML_PAGE = """<!DOCTYPE html>
     const colors = ["#3b82f6", "#a855f7", "#22c55e"];
 
     function velLabel(v) {
-      if (v < -100) return "approaching fast";
-      if (v < -30) return "approaching";
-      if (v < -10) return "drifting closer";
-      if (v > 100) return "leaving fast";
-      if (v > 30) return "departing";
-      if (v > 10) return "drifting away";
+      if (v === null || v === undefined) return "—";
+      if (v < -120) return "approaching fast";
+      if (v < -45) return "approaching";
+      if (v < -15) return "drifting closer";
+      if (v > 120) return "leaving fast";
+      if (v > 45) return "departing";
+      if (v > 15) return "drifting away";
       return "still";
     }
 
@@ -360,7 +376,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="card" id="card-${i}">
           <h2>Sensor ${i}</h2>
           <div class="label" style="color:${colors[i]}">${name}</div>
-          <div class="distance na" id="dist-${i}">N/A</div>
+          <div class="distance na" id="dist-${i}">open</div>
           <div class="bar-wrap"><div class="bar-fill" id="bar-${i}" style="width:0"></div></div>
           <div class="vel" id="vel-${i}">velocity —</div>
           <canvas class="spark" id="spark-${i}" width="400" height="56"></canvas>
@@ -411,19 +427,24 @@ HTML_PAGE = """<!DOCTYPE html>
         const velEl = document.getElementById(`vel-${i}`);
         const spark = document.getElementById(`spark-${i}`);
 
-        if (mm < 0) {
-          dist.textContent = "N/A";
+        const isOpen = data.open && data.open[i];
+        if (mm < 0 || isOpen) {
+          dist.textContent = "open";
           dist.className = "distance na";
           bar.style.width = "0%";
           bar.style.background = "#4a5568";
-          velEl.innerHTML = "<strong>—</strong> (no valid reading)";
+          velEl.innerHTML = "<strong>—</strong> (open / beyond ~1.8&nbsp;m)";
         } else {
           dist.innerHTML = `${mm}<span class="unit"> mm</span>`;
           dist.className = "distance";
           const pct = Math.min(100, (mm / data.max_mm) * 100);
           bar.style.width = pct + "%";
           bar.style.background = barColor(mm, data.max_mm);
-          velEl.innerHTML = `<strong>${vel >= 0 ? "+" : ""}${vel} mm/s</strong> — ${velLabel(vel)}`;
+          if (vel === null || vel === undefined) {
+            velEl.innerHTML = "<strong>—</strong> (averaging…)";
+          } else {
+            velEl.innerHTML = `<strong>${vel >= 0 ? "+" : ""}${vel} mm/s</strong> — ${velLabel(vel)}`;
+          }
         }
         drawSpark(spark, data.history[i], colors[i], data.max_mm);
       });

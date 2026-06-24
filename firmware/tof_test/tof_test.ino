@@ -31,6 +31,7 @@ const bool ENABLE_CENTER = false;
 // Readings stuck at 30–80 mm with nothing nearby = housing crosstalk / wrong aim.
 const int MIN_VALID_MM = 80;    // below this, likely crosstalk on GY modules
 const int MAX_VALID_MM = 2200;  // VL53L0X long-range practical ceiling
+const int MAX_TRUST_MM = 1800;  // above this: unreliable — treat as open
 const uint32_t TOF_TIMING_BUDGET_US = 66000;  // longer budget → better max distance
 
 const int I2C_SDA_PIN = 21;
@@ -46,6 +47,11 @@ bool sensorOk[TOF_COUNT] = {false, false, false};
 int lastReading[TOF_COUNT] = {-1, -1, -1};
 int prevReading[TOF_COUNT] = {-1, -1, -1};
 uint8_t failStreak[TOF_COUNT] = {0, 0, 0};
+float filteredMm[TOF_COUNT] = {0, 0, 0};
+bool filteredValid[TOF_COUNT] = {false, false, false};
+unsigned long lastGoodMs[TOF_COUNT] = {0, 0, 0};
+const unsigned long FILTER_HOLD_MS = 400;
+const float FILTER_ALPHA = 0.25f;
 unsigned long lastReprobeMs = 0;
 const unsigned long REPROBE_MS = 2500;
 const uint8_t FAIL_STREAK_MAX = 20;
@@ -327,12 +333,25 @@ void loop() {
         uint16_t mm = sensors[i].readRangeResult();
         uint8_t status = sensors[i].readRangeStatus();
 
-        if (status == 0 && mm >= MIN_VALID_MM && mm <= MAX_VALID_MM) {
-            lastReading[i] = (int)mm;
+        if (status == 0 && mm >= MIN_VALID_MM && mm <= MAX_VALID_MM && mm <= MAX_TRUST_MM) {
+            unsigned long nowMs = millis();
+            if (!filteredValid[i]) {
+                filteredMm[i] = (float)mm;
+                filteredValid[i] = true;
+            } else {
+                filteredMm[i] = filteredMm[i] * (1.0f - FILTER_ALPHA) + (float)mm * FILTER_ALPHA;
+            }
+            lastGoodMs[i] = nowMs;
+            lastReading[i] = (int)(filteredMm[i] + 0.5f);
             failStreak[i] = 0;
+        } else if (filteredValid[i] && (millis() - lastGoodMs[i]) < FILTER_HOLD_MS) {
+            lastReading[i] = (int)(filteredMm[i] + 0.5f);
         } else {
             lastReading[i] = -1;
-            if (++failStreak[i] >= FAIL_STREAK_MAX) {
+            filteredValid[i] = false;
+            if (status == 0 && mm >= MIN_VALID_MM && mm <= MAX_VALID_MM) {
+                // above trust ceiling only — not a sensor fault
+            } else if (++failStreak[i] >= FAIL_STREAK_MAX) {
                 sensorOk[i] = false;
                 failStreak[i] = 0;
                 Serial.print("TOF stale, will reinit: ");
@@ -344,8 +363,11 @@ void loop() {
 
     int velocity[TOF_COUNT];
     for (int i = 0; i < TOF_COUNT; i++) {
-        if (lastReading[i] > 0 && prevReading[i] > 0) {
+        if (lastReading[i] > 0 && prevReading[i] > 0
+                && lastReading[i] <= MAX_TRUST_MM && prevReading[i] <= MAX_TRUST_MM) {
             velocity[i] = (lastReading[i] - prevReading[i]) * 5;
+            if (velocity[i] > 300) velocity[i] = 300;
+            if (velocity[i] < -300) velocity[i] = -300;
         } else {
             velocity[i] = 0;
         }

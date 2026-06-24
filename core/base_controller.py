@@ -622,8 +622,13 @@ class BaseController:
         if len(recent) >= self.prox_max_turns:
             return None, "", 0.0
 
+        # Do not perform proximity base turns if actively tracking a face,
+        # unless in a voice session (where it handles it gracefully via head glance).
+        is_tracking = state.get("face_detected", False) and state.get("servo_mode") == "track"
+        if is_tracking and not state.get("voice_session_active", False):
+            return None, "", 0.0
+
         zone = state.get("prox_approach_zone", "")
-        
         # Voice conversation: glance instead of base turn
         if state.get("voice_session_active", False):
             if zone in ("L", "R"):
@@ -639,9 +644,9 @@ class BaseController:
             return None, "", 0.0
 
         if zone == "L":
-            step_sign = 1.0
-        elif zone == "R":
             step_sign = -1.0
+        elif zone == "R":
+            step_sign = 1.0
         elif zone == "C":
             self.bb.write(
                 prox_search_active=True,

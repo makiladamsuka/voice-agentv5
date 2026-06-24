@@ -270,35 +270,58 @@ class EyeRenderer:
         next_blink = time.time() + random.uniform(3, 6)
         delay = 1.0 / max(1, self.render_fps)
         current_emotion = "idle"
+        amp_prev_fast = 0.0
 
         while self.bb.read("running")["running"]:
             now = time.time()
-            state = self.bb.read("emotion", "emotion_intensity", "running", "amplitude_fast", "amplitude_slow")
+            state = self.bb.read(
+                "emotion",
+                "emotion_intensity",
+                "running",
+                "amplitude_fast",
+                "amplitude_slow",
+                "voice_session_active",
+                "agent_speaking",
+                "conv_state",
+            )
             emotion   = state["emotion"]
             intensity = state["emotion_intensity"]
-            amp_fast  = state.get("amplitude_fast", 0.0)
-            amp_slow  = state.get("amplitude_slow", 0.0)
+            af        = float(state.get("amplitude_fast", 0.0) or 0.0)
+            da        = af - amp_prev_fast
+            amp_prev_fast = af
+
+            talk_active = bool(state.get("voice_session_active")) and (
+                state.get("agent_speaking")
+                or state.get("conv_state") in ("speaking", "nodding")
+                or af > 0.06
+            )
 
             if emotion != current_emotion:
                 left_eye.set_emotion(emotion, intensity)
                 right_eye.set_emotion(emotion, intensity)
                 current_emotion = emotion
 
+            punch_w = 0.0
+            punch_h = 0.0
+            if talk_active and af > 0.05:
+                punch_h = (da * 0.55) if da > 0.06 else (af * 0.22)
+                punch_w = punch_h * 0.10
+
             for eye in (left_eye, right_eye):
                 eye.target_pos[0] = cx
                 eye.target_pos[1] = cy
                 eye.target_rotation = 0.0
-                
-                # ── Layer 2 Priority: Amplitude-Driven Animation ──
-                # Enhance scale and lid openness slightly based on amplitude
-                if amp_slow > 0.05:
-                    eye.target_scale_h = min(1.3, eye.target_scale_h + amp_slow * 0.15)
-                if amp_fast > 0.1:
-                    eye.target_top_lid = max(0.0, eye.target_top_lid - amp_fast * 0.15)
-                    eye.target_bottom_lid = max(0.0, eye.target_bottom_lid - amp_fast * 0.1)
+                if punch_h > 0.0:
+                    eye.target_scale_w += punch_w
+                    eye.target_scale_h += punch_h
 
-            # Suppress blinks if amplitude is high (agent is speaking)
-            if now >= next_blink and amp_fast < 0.2:
+            can_blink = (
+                now >= next_blink
+                and left_eye.blink_state == "IDLE"
+                and right_eye.blink_state == "IDLE"
+                and (not talk_active or af < 0.04)
+            )
+            if can_blink:
                 speed = random.uniform(self.blink_speed_min, self.blink_speed_max)
                 avg_y = (left_eye.current_pos[1] + right_eye.current_pos[1]) * 0.5
                 avg_w = (left_eye.current_w + right_eye.current_w) * 0.5
@@ -313,10 +336,16 @@ class EyeRenderer:
                     eye.h = avg_h
                 left_eye.start_blink(speed, self.blink_speed_min, self.blink_speed_max)
                 right_eye.start_blink(speed, self.blink_speed_min, self.blink_speed_max)
-                next_blink = now + random.uniform(3, 7)
+                interval = (4.0, 6.5) if talk_active else (3.0, 7.0)
+                next_blink = now + random.uniform(*interval)
 
             left_eye.update()
             right_eye.update()
+
+            if punch_h > 0.0:
+                for eye in (left_eye, right_eye):
+                    eye.target_scale_w -= punch_w
+                    eye.target_scale_h -= punch_h
 
             if disp_l is not None or disp_r is not None:
                 try:

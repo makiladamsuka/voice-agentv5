@@ -72,33 +72,56 @@ def _process_chunk(pcm_bytes: bytes) -> None:
 
 async def _pacer_loop() -> None:
     """Consumes the audio buffer at real-time speed and writes to Blackboard."""
-    global _ampl_fast, _ampl_slow, _audio_buffer
+    global _ampl_fast, _ampl_slow, _audio_buffer, _pacer_task
 
-    while True:
-        chunk = b""
-        if len(_audio_buffer) >= _CHUNK_BYTES:
-            chunk = bytes(_audio_buffer[:_CHUNK_BYTES])
-            del _audio_buffer[:_CHUNK_BYTES]
+    idle_chunks = 0
+    last_bb_fast = 0.0
+    last_bb_slow = 0.0
+    try:
+        while True:
+            chunk = b""
+            if len(_audio_buffer) >= _CHUNK_BYTES:
+                chunk = bytes(_audio_buffer[:_CHUNK_BYTES])
+                del _audio_buffer[:_CHUNK_BYTES]
 
-        if chunk:
-            raw = _rms(chunk)
-        else:
-            raw = 0.0
+            if chunk:
+                idle_chunks = 0
+                raw = _rms(chunk)
+            else:
+                idle_chunks += 1
+                raw = 0.0
+                if idle_chunks > 2:
+                    _ampl_fast *= 0.45
+                    _ampl_slow *= 0.82
+                    if _ampl_fast < 0.008 and _ampl_slow < 0.008:
+                        _ampl_fast = 0.0
+                        _ampl_slow = 0.0
 
-        _ampl_fast = _ALPHA_FAST * raw + (1.0 - _ALPHA_FAST) * _ampl_fast
-        _ampl_slow = _ALPHA_SLOW * raw + (1.0 - _ALPHA_SLOW) * _ampl_slow
+            _ampl_fast = _ALPHA_FAST * raw + (1.0 - _ALPHA_FAST) * _ampl_fast
+            _ampl_slow = _ALPHA_SLOW * raw + (1.0 - _ALPHA_SLOW) * _ampl_slow
 
-        # Write to Blackboard instead of UDP
-        if _bb is not None:
-            try:
-                _bb.write(
-                    amplitude_fast=round(_ampl_fast, 4),
-                    amplitude_slow=round(_ampl_slow, 4),
+            if _bb is not None:
+                fast = round(_ampl_fast, 4)
+                slow = round(_ampl_slow, 4)
+                changed = (
+                    abs(fast - last_bb_fast) > 0.01
+                    or abs(slow - last_bb_slow) > 0.01
+                    or (fast == 0.0 and last_bb_fast != 0.0)
                 )
-            except Exception:
-                pass
+                if changed:
+                    try:
+                        _bb.write(amplitude_fast=fast, amplitude_slow=slow)
+                        last_bb_fast = fast
+                        last_bb_slow = slow
+                    except Exception:
+                        pass
 
-        await asyncio.sleep(_CHUNK_MS / 1000.0)
+            if idle_chunks >= 30 and _ampl_fast <= 0.0 and _ampl_slow <= 0.0:
+                break
+
+            await asyncio.sleep(_CHUNK_MS / 1000.0)
+    finally:
+        _pacer_task = None
 
 
 def _ensure_pacer() -> None:

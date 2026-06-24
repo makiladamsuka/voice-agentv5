@@ -80,6 +80,8 @@ class EmotionEngine:
         self._prev_norm_x = 0.0
         self._prev_norm_y = 0.0
         self._loop_hz = 24.0
+        self._conv_emotion_last: str | None = None
+        self._conv_emotion_hold_until = 0.0
 
     def _set(self, name: str, intensity_scale: float = 1.0) -> None:
         resolved = resolve_emotion_name(name)
@@ -122,9 +124,19 @@ class EmotionEngine:
             voice_active = state.get("voice_session_active", False)
             conv_emotion = state.get("conv_emotion")
             if voice_active and conv_emotion is not None:
+                if conv_emotion != self._conv_emotion_last:
+                    if (
+                        self._conv_emotion_last is not None
+                        and now < self._conv_emotion_hold_until
+                    ):
+                        conv_emotion = self._conv_emotion_last
+                    else:
+                        self._conv_emotion_last = conv_emotion
+                        self._conv_emotion_hold_until = now + 2.0
                 self._set(conv_emotion)
                 time.sleep(loop_delay)
                 continue
+            self._conv_emotion_last = None
 
             face = state["face_detected"]
             area = float(state["face_area_ratio"])

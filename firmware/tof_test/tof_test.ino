@@ -1,42 +1,175 @@
 /*
- * ToF Sensor Test Sketch — VL53L1X × 3 via TCA9548A
+ * ToF Sensor Test Sketch — VL53L0X × 3 via TCA9548A
+ *
+ * Hardware: ST GY-VL53L0XV2 (VL53L0X, NOT VL53L1X)
  *
  * Flash this INSTEAD of head_servo_hands to verify wiring.
  * Open Serial Monitor at 115200. You'll see:
  *
  *   TOF L=1234 C=567 R=890 VL=0 VC=-45 VR=12
  *
- * Once all 3 sensors read sane values, flash the real firmware.
- *
  * Wiring:
  *   ESP32 GPIO21 (SDA) → TCA9548A SDA + PCA9685 SDA
  *   ESP32 GPIO22 (SCL) → TCA9548A SCL + PCA9685 SCL
- *   TCA9548A Ch0 → VL53L1X LEFT   (0x29)
- *   TCA9548A Ch1 → VL53L1X CENTER  (0x29)
- *   TCA9548A Ch2 → VL53L1X RIGHT   (0x29)
- *   TCA9548A ADDR → GND (gives I2C address 0x70)
- *   All VL53L1X VIN → 3.3V, GND → GND
+ *   TCA9548A Ch0 → VL53L0X LEFT   (0x29)
+ *   TCA9548A Ch1 → VL53L0X CENTER (0x29)
+ *   TCA9548A Ch2 → VL53L0X RIGHT   (0x29)
+ *   TCA9548A ADDR → GND (address 0x70)
+ *   All VL53L0X: VIN → 3.3V, GND → GND
+ *
+ * Library: Adafruit VL53L0X (NOT Pololu VL53L1X)
+ *
+ * Set ENABLE_CENTER false to test LEFT + RIGHT only (skip mux ch1).
  */
 
 #include <Wire.h>
-#include <VL53L1X.h>
+#include <Adafruit_VL53L0X.h>
+
+const bool ENABLE_CENTER = false;
+
+// VL53L0X: ~1.2 m in HIGH_ACCURACY, ~2 m in LONG_RANGE (not 3 m — needs VL53L1X).
+// Readings stuck at 30–80 mm with nothing nearby = housing crosstalk / wrong aim.
+const int MIN_VALID_MM = 80;    // below this, likely crosstalk on GY modules
+const int MAX_VALID_MM = 2200;  // VL53L0X long-range practical ceiling
+const uint32_t TOF_TIMING_BUDGET_US = 66000;  // longer budget → better max distance
 
 const int I2C_SDA_PIN = 21;
 const int I2C_SCL_PIN = 22;
-const uint8_t TCA_ADDR = 0x70;
 const uint8_t TOF_COUNT = 3;
 const uint8_t TOF_MUX_CH[TOF_COUNT] = {0, 1, 2};
 const char*   TOF_LABEL[TOF_COUNT]  = {"LEFT", "CENTER", "RIGHT"};
 
-VL53L1X sensors[TOF_COUNT];
+uint8_t tcaAddr = 0;
+
+Adafruit_VL53L0X sensors[TOF_COUNT];
 bool sensorOk[TOF_COUNT] = {false, false, false};
 int lastReading[TOF_COUNT] = {-1, -1, -1};
 int prevReading[TOF_COUNT] = {-1, -1, -1};
+uint8_t failStreak[TOF_COUNT] = {0, 0, 0};
+unsigned long lastReprobeMs = 0;
+const unsigned long REPROBE_MS = 2500;
+const uint8_t FAIL_STREAK_MAX = 20;
+
+void i2cRecover() {
+    Wire.end();
+    delay(10);
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+    Wire.setClock(100000);
+    Wire.setTimeOut(500);
+    tcaAddr = findTcaAddr();
+}
+
+void tcaDeselect() {
+    if (tcaAddr == 0) return;
+    Wire.beginTransmission(tcaAddr);
+    Wire.write(0);
+    Wire.endTransmission();
+}
+
+bool pingTofOnChannel(uint8_t muxCh) {
+    tcaSelect(muxCh);
+    delay(20);
+    return pingTof();
+}
+
+bool initOneSensor(int i, bool announce) {
+    if (i == 1 && !ENABLE_CENTER) {
+        sensorOk[i] = false;
+        return false;
+    }
+    if (tcaAddr == 0) {
+        tcaAddr = findTcaAddr();
+        if (tcaAddr == 0) return false;
+    }
+
+    tcaSelect(TOF_MUX_CH[i]);
+    delay(50);
+
+    if (!pingTof()) {
+        sensorOk[i] = false;
+        failStreak[i] = 0;
+        return false;
+    }
+
+    if (sensors[i].begin(0x29, false, &Wire,
+            Adafruit_VL53L0X::VL53L0X_SENSE_LONG_RANGE)) {
+        sensors[i].setMeasurementTimingBudgetMicroSeconds(TOF_TIMING_BUDGET_US);
+        sensors[i].startRangeContinuous(70);
+        sensorOk[i] = true;
+        failStreak[i] = 0;
+        lastReading[i] = -1;
+        if (announce) {
+            Serial.print("TOF reinit OK: ");
+            Serial.println(TOF_LABEL[i]);
+        }
+        return true;
+    }
+
+    sensorOk[i] = false;
+    failStreak[i] = 0;
+    return false;
+}
+
+void reprobeSensors() {
+    unsigned long now = millis();
+    if (now - lastReprobeMs < REPROBE_MS) return;
+    lastReprobeMs = now;
+
+    if (tcaAddr == 0) {
+        tcaAddr = findTcaAddr();
+        if (tcaAddr == 0) return;
+    }
+
+    bool busGlitch = false;
+    for (int i = 0; i < TOF_COUNT; i++) {
+        if (i == 1 && !ENABLE_CENTER) continue;
+
+        bool ping = pingTofOnChannel(TOF_MUX_CH[i]);
+        if (sensorOk[i] && !ping) {
+            sensorOk[i] = false;
+            failStreak[i] = 0;
+            lastReading[i] = -1;
+            busGlitch = true;
+            Serial.print("TOF lost: ");
+            Serial.println(TOF_LABEL[i]);
+        } else if (!sensorOk[i] && ping) {
+            initOneSensor(i, true);
+        }
+    }
+    tcaDeselect();
+
+    if (busGlitch) {
+        i2cRecover();
+    }
+}
 
 void tcaSelect(uint8_t channel) {
-    Wire.beginTransmission(TCA_ADDR);
+    if (tcaAddr == 0) return;
+    Wire.beginTransmission(tcaAddr);
     Wire.write(1 << channel);
     Wire.endTransmission();
+}
+
+uint8_t findTcaAddr() {
+    for (uint8_t addr = 0x70; addr <= 0x77; addr++) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) return addr;
+    }
+    return 0;
+}
+
+bool pingTof() {
+    Wire.beginTransmission(0x29);
+    return Wire.endTransmission() == 0;
+}
+
+uint8_t readModelIdL0X() {
+    Wire.beginTransmission(0x29);
+    Wire.write(0x00);
+    Wire.write(0xC0);
+    if (Wire.endTransmission(false) != 0) return 0xFF;
+    if (Wire.requestFrom((uint8_t)0x29, (uint8_t)1) != 1) return 0xFF;
+    return Wire.read();
 }
 
 void i2cScan() {
@@ -49,8 +182,8 @@ void i2cScan() {
             if (addr < 16) Serial.print("0");
             Serial.print(addr, HEX);
             if (addr == 0x40) Serial.print(" (PCA9685)");
-            if (addr == 0x70) Serial.print(" (TCA9548A)");
-            if (addr == 0x29) Serial.print(" (VL53L1X - direct, shouldn't see this with mux)");
+            if (addr >= 0x70 && addr <= 0x77) Serial.print(" (TCA9548A?)");
+            if (addr == 0x29) Serial.print(" (VL53L0X visible — mux channel may be open)");
             Serial.println();
             found++;
         }
@@ -61,20 +194,24 @@ void i2cScan() {
 }
 
 void scanMuxChannels() {
+    if (tcaAddr == 0) {
+        Serial.println("--- TCA9548A Channel Scan ---");
+        Serial.println("  (mux not found — skipped)");
+        Serial.println("---");
+        return;
+    }
     Serial.println("--- TCA9548A Channel Scan ---");
     for (uint8_t ch = 0; ch < 8; ch++) {
         tcaSelect(ch);
-        delay(10);
-        Wire.beginTransmission(0x29);
-        uint8_t err = Wire.endTransmission();
-        if (err == 0) {
+        delay(50);
+        if (pingTof()) {
             Serial.print("  Ch");
             Serial.print(ch);
-            Serial.println(": VL53L1X found at 0x29");
+            Serial.print(": VL53L0X ping OK, model=0x");
+            Serial.println(readModelIdL0X(), HEX);
         }
     }
-    // Deselect all channels
-    Wire.beginTransmission(TCA_ADDR);
+    Wire.beginTransmission(tcaAddr);
     Wire.write(0);
     Wire.endTransmission();
     Serial.println("---");
@@ -85,31 +222,35 @@ void setup() {
     delay(500);
     Serial.println();
     Serial.println("=== ToF Sensor Test ===");
-    Serial.println("VL53L1X x3 via TCA9548A");
+    Serial.println("VL53L0X x3 via TCA9548A (GY-VL53L0XV2)");
+    Serial.println("Range: LONG_RANGE + 66ms budget, max ~2 m (VL53L0X cannot do 3 m)");
+    Serial.print("Rejecting readings < ");
+    Serial.print(MIN_VALID_MM);
+    Serial.println(" mm (typical crosstalk/housing false returns)");
+    if (!ENABLE_CENTER) {
+        Serial.println("Mode: LEFT + RIGHT only (center disabled)");
+    }
     Serial.println();
 
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     Wire.setClock(100000);
-    Wire.setTimeOut(50);
+    Wire.setTimeOut(500);
 
-    // Step 1: Scan I2C bus (should see 0x40 PCA9685 + 0x70 TCA9548A)
     i2cScan();
 
-    // Step 2: Check TCA9548A
-    Wire.beginTransmission(TCA_ADDR);
-    if (Wire.endTransmission() != 0) {
-        Serial.println("ERROR: TCA9548A not found at 0x70!");
-        Serial.println("Check wiring: SDA=21, SCL=22, ADDR pin to GND");
-        Serial.println("Halting.");
-        while (1) delay(1000);
+    tcaAddr = findTcaAddr();
+    if (tcaAddr == 0) {
+        Serial.println("WARN: TCA9548A not found at 0x70-0x77");
+        Serial.println("  Check mux power, SDA/SCL, ADDR pin to GND");
+    } else {
+        Serial.print("TCA9548A OK at 0x");
+        Serial.println(tcaAddr, HEX);
     }
-    Serial.println("TCA9548A OK at 0x70");
 
-    // Step 3: Scan all mux channels for VL53L1X
     scanMuxChannels();
 
-    // Step 4: Initialize each sensor
     int okCount = 0;
+    int expectedCount = ENABLE_CENTER ? TOF_COUNT : (TOF_COUNT - 1);
     for (int i = 0; i < TOF_COUNT; i++) {
         Serial.print("Initializing ");
         Serial.print(TOF_LABEL[i]);
@@ -117,50 +258,60 @@ void setup() {
         Serial.print(TOF_MUX_CH[i]);
         Serial.print(")... ");
 
-        tcaSelect(TOF_MUX_CH[i]);
-        delay(10);
+        if (i == 1 && !ENABLE_CENTER) {
+            Serial.println("SKIPPED (center disabled)");
+            continue;
+        }
 
-        sensors[i].setTimeout(200);
-        if (sensors[i].init()) {
-            sensors[i].setDistanceMode(VL53L1X::Long);
-            sensors[i].setMeasurementTimingBudget(50000);  // 50ms
-            sensors[i].startContinuous(100);               // 100ms interval
-            sensorOk[i] = true;
+        bool present = pingTofOnChannel(TOF_MUX_CH[i]);
+        uint8_t model = present ? readModelIdL0X() : 0xFF;
+        Serial.print("[ping=");
+        Serial.print(present ? "Y" : "N");
+        Serial.print(" model=0x");
+        Serial.print(model, HEX);
+        Serial.print("] ");
+
+        if (initOneSensor(i, false)) {
             okCount++;
             Serial.println("OK");
         } else {
             Serial.println("FAILED!");
-            Serial.print("  -> Check wiring on TCA9548A channel ");
-            Serial.println(TOF_MUX_CH[i]);
         }
     }
+    tcaDeselect();
 
     Serial.println();
     Serial.print("Result: ");
     Serial.print(okCount);
     Serial.print("/");
-    Serial.print(TOF_COUNT);
+    Serial.print(expectedCount);
     Serial.println(" sensors initialized");
 
     if (okCount == 0) {
         Serial.println("No sensors working. Check:");
-        Serial.println("  1. VL53L1X VIN connected to 3.3V (not 5V directly)");
-        Serial.println("  2. GND connected");
-        Serial.println("  3. SDA/SCL connected to TCA9548A SD0-SD2/SC0-SC2");
-        Serial.println("  4. Correct mux channel (0, 1, 2)");
-        Serial.println("Halting.");
-        while (1) delay(1000);
+        Serial.println("  1. Boards are VL53L0X (GY-VL53L0XV2), not VL53L1X");
+        Serial.println("  2. Adafruit VL53L0X library installed (not Pololu VL53L1X)");
+        Serial.println("  3. VIN -> 3.3V, GND connected");
+        Serial.println("  4. Each sensor SDA/SCL on its own mux channel only");
+        Serial.println("Streaming anyway (-1 = no reading)...");
     }
 
     Serial.println();
     Serial.println("Streaming readings every 200ms...");
+    Serial.println("Hot-plug: sensors re-detected every 2.5s (no ESP reset needed)");
     Serial.println("Format: TOF L=mm C=mm R=mm VL=mm/s VC=mm/s VR=mm/s");
-    Serial.println("(-1 = sensor not available or no valid reading)");
     Serial.println();
 }
 
 void loop() {
+    reprobeSensors();
+
+    if (!ENABLE_CENTER) {
+        lastReading[1] = -1;
+    }
+
     for (int i = 0; i < TOF_COUNT; i++) {
+        if (i == 1 && !ENABLE_CENTER) continue;
         prevReading[i] = lastReading[i];
 
         if (!sensorOk[i]) {
@@ -169,34 +320,37 @@ void loop() {
         }
 
         tcaSelect(TOF_MUX_CH[i]);
+        delay(5);
 
-        if (sensors[i].dataReady()) {
-            int mm = sensors[i].read(false);
-            uint8_t status = sensors[i].ranging_data.range_status;
+        if (!sensors[i].waitRangeComplete()) continue;
 
-            if (status == 0 && mm >= 20 && mm <= 4000) {
-                lastReading[i] = mm;
-            } else {
-                // Print status for debugging
-                if (status != 0 && lastReading[i] >= 0) {
-                    // Only print once when status goes bad
-                }
-                lastReading[i] = -1;
+        uint16_t mm = sensors[i].readRangeResult();
+        uint8_t status = sensors[i].readRangeStatus();
+
+        if (status == 0 && mm >= MIN_VALID_MM && mm <= MAX_VALID_MM) {
+            lastReading[i] = (int)mm;
+            failStreak[i] = 0;
+        } else {
+            lastReading[i] = -1;
+            if (++failStreak[i] >= FAIL_STREAK_MAX) {
+                sensorOk[i] = false;
+                failStreak[i] = 0;
+                Serial.print("TOF stale, will reinit: ");
+                Serial.println(TOF_LABEL[i]);
             }
         }
     }
+    tcaDeselect();
 
-    // Compute velocity (mm per 200ms → mm/s)
     int velocity[TOF_COUNT];
     for (int i = 0; i < TOF_COUNT; i++) {
         if (lastReading[i] > 0 && prevReading[i] > 0) {
-            velocity[i] = (lastReading[i] - prevReading[i]) * 5;  // * (1000/200)
+            velocity[i] = (lastReading[i] - prevReading[i]) * 5;
         } else {
             velocity[i] = 0;
         }
     }
 
-    // Print in parseable format
     Serial.print("TOF L=");
     Serial.print(lastReading[0]);
     Serial.print(" C=");
@@ -210,5 +364,5 @@ void loop() {
     Serial.print(" VR=");
     Serial.println(velocity[2]);
 
-    delay(200);
+    delay(100);
 }

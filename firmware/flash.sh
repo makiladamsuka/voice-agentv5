@@ -9,7 +9,7 @@
 # Prerequisites:
 #   arduino-cli core install esp32:esp32
 #   arduino-cli lib install "Adafruit PWM Servo Driver Library"
-#   arduino-cli lib install "VL53L1X"
+#   arduino-cli lib install "Adafruit VL53L0X"
 
 set -e
 
@@ -73,7 +73,7 @@ case "$MODE" in
         echo "Prerequisites:"
         echo "  arduino-cli core install esp32:esp32"
         echo "  arduino-cli lib install \"Adafruit PWM Servo Driver Library\""
-        echo "  arduino-cli lib install \"VL53L1X\""
+        echo "  arduino-cli lib install \"Adafruit VL53L0X\""
         exit 0
         ;;
     *)
@@ -99,9 +99,9 @@ fi
 echo "Checking libraries..."
 LIBS_OK=true
 
-if ! arduino-cli lib list 2>/dev/null | grep -qi "VL53L1X"; then
-    echo "  Installing VL53L1X library..."
-    arduino-cli lib install "VL53L1X"
+if ! arduino-cli lib list 2>/dev/null | grep -qi "VL53L0X"; then
+    echo "  Installing Adafruit VL53L0X library..."
+    arduino-cli lib install "Adafruit VL53L0X"
 fi
 
 if [ "$MODE" = "prod" ] || [ "$MODE" = "full" ] || [ "$MODE" = "main" ]; then
@@ -137,6 +137,6 @@ if [ "$MODE" = "test" ] || [ "$MODE" = "tof" ]; then
     echo "Next steps:"
     echo "  1. Open serial monitor:  arduino-cli monitor -p $PORT -c baudrate=115200"
     echo "  2. Or run Python monitor: python3 tests/test_tof_sensors.py $PORT"
-    echo "  3. Verify all 3 sensors show valid readings"
+    echo "  3. Verify sensors show valid readings (VL53L0X / GY-VL53L0XV2)"
     echo "  4. Then flash production:  $0 prod --port $PORT"
 fi

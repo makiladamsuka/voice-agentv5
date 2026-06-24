@@ -36,13 +36,15 @@ _TOF_RE = re.compile(
 
 def find_port(hint: str = "") -> str:
     import os
+    candidates = [p for p in DEFAULT_PORTS if os.path.exists(p)]
+    if not candidates:
+        print(f"No serial port found. Tried: {', '.join(DEFAULT_PORTS)}")
+        sys.exit(1)
     if hint and os.path.exists(hint):
         return hint
-    for p in DEFAULT_PORTS:
-        if os.path.exists(p):
-            return p
-    print(f"No serial port found. Tried: {', '.join(DEFAULT_PORTS)}")
-    sys.exit(1)
+    if hint:
+        print(f"Note: {hint} not found, using auto-detect...")
+    return candidates[-1]  # USB re-enumeration often lands on higher ttyUSBn
 
 
 def distance_bar(mm: int, max_mm: int = 2000, width: int = 30) -> str:

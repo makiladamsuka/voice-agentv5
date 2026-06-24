@@ -16,7 +16,7 @@
 
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
-#include <VL53L1X.h>
+#include <Adafruit_VL53L0X.h>
 #include <string.h>
 
 const int I2C_SDA_PIN = 21;
@@ -79,14 +79,15 @@ const unsigned long MOVE_KICK_MS = 260;
 const int MOVE_KICK_PWM = 150;
 const unsigned long JOG_MAX_MS = 3000;
 
-// ── ToF Proximity Sensing (VL53L1X × 3 via TCA9548A) ──────────────────
+// ── ToF Proximity Sensing (VL53L0X × 3 via TCA9548A) ──────────────────
 const uint8_t TCA_ADDR = 0x70;
 const uint8_t TOF_COUNT = 3;
 const uint8_t TOF_MUX_CH[TOF_COUNT] = {0, 1, 2};   // L, C, R
 const char    TOF_LABEL[TOF_COUNT]  = {'L', 'C', 'R'};
 const float   TOF_SAMPLE_HZ = 10.0f;
-const int     TOF_MAX_RANGE_MM = 1200;
-const int     TOF_MIN_RANGE_MM = 30;
+const int     TOF_MAX_RANGE_MM = 2200;
+const int     TOF_MIN_RANGE_MM = 80;
+const uint32_t TOF_TIMING_BUDGET_US = 66000;
 const float   BASELINE_ALPHA = 0.05f;
 const int     BASELINE_DRIFT_MM = 50;
 const int     APPROACH_THRESHOLD_MM = 80;
@@ -111,7 +112,7 @@ portMUX_TYPE encoderMux = portMUX_INITIALIZER_UNLOCKED;
 
 // ── ToF state ─────────────────────────────────────────────────────────
 struct TofChannel {
-    VL53L1X sensor;
+    Adafruit_VL53L0X sensor;
     float baseline_mm;
     bool  baseline_valid;
     unsigned long baseline_age_ms;
@@ -134,9 +135,13 @@ struct TofChannel {
 
 TofChannel tofChannels[TOF_COUNT];
 unsigned long lastTofReadMs = 0;
+unsigned long lastTofReprobeMs = 0;
 unsigned long lastTofEventMs = 0;
 uint8_t lastZoneState = 0;
 bool tofSystemReady = false;
+uint8_t tofFailStreak[TOF_COUNT] = {0, 0, 0};
+const unsigned long TOF_REPROBE_MS = 2500;
+const uint8_t TOF_FAIL_STREAK_MAX = 20;
 
 char lineBuffer[LINE_BUF_SIZE];
 uint8_t lineLen = 0;
@@ -795,6 +800,106 @@ void tcaSelect(uint8_t channel) {
     Wire.endTransmission();
 }
 
+void tcaDeselect() {
+    Wire.beginTransmission(TCA_ADDR);
+    Wire.write(0);
+    Wire.endTransmission();
+}
+
+void i2cRecoverTof() {
+    Wire.end();
+    delay(10);
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+    Wire.setClock(100000);
+    Wire.setTimeOut(500);
+}
+
+bool pingTofOnMux(uint8_t muxCh) {
+    tcaSelect(muxCh);
+    delay(20);
+    Wire.beginTransmission(0x29);
+    return Wire.endTransmission() == 0;
+}
+
+void resetTofChannelState(TofChannel &ch) {
+    ch.baseline_valid = false;
+    ch.approach_count = 0;
+    ch.approach_active = false;
+    ch.dwell_confirmed = false;
+    ch.below_baseline_since_ms = 0;
+    ch.ring_idx = 0;
+    ch.depart_count = 0;
+    ch.depart_active = false;
+    ch.min_recent_mm = 9999.0f;
+    ch.min_recent_ts = 0;
+    ch.presence_active = false;
+    ch.presence_since_ms = 0;
+    ch.last_valid_mm = -1;
+    memset(ch.readings, 0, sizeof(ch.readings));
+}
+
+bool initOneTofSensor(int i, bool announce) {
+    if (!pingTofOnMux(TOF_MUX_CH[i])) {
+        tofChannels[i].initialized = false;
+        tofFailStreak[i] = 0;
+        return false;
+    }
+
+    TofChannel &ch = tofChannels[i];
+    if (ch.sensor.begin(0x29, false, &Wire,
+            Adafruit_VL53L0X::VL53L0X_SENSE_LONG_RANGE)) {
+        ch.sensor.setMeasurementTimingBudgetMicroSeconds(TOF_TIMING_BUDGET_US);
+        ch.sensor.startRangeContinuous(70);
+        ch.initialized = true;
+        resetTofChannelState(ch);
+        tofFailStreak[i] = 0;
+        if (announce) {
+            Serial.print(F("TOF reinit OK: "));
+            Serial.println(TOF_LABEL[i]);
+        }
+        return true;
+    }
+
+    ch.initialized = false;
+    tofFailStreak[i] = 0;
+    return false;
+}
+
+void reprobeTofSensors() {
+    unsigned long now = millis();
+    if (now - lastTofReprobeMs < TOF_REPROBE_MS) return;
+    lastTofReprobeMs = now;
+
+    Wire.beginTransmission(TCA_ADDR);
+    if (Wire.endTransmission() != 0) {
+        i2cRecoverTof();
+        return;
+    }
+
+    bool busGlitch = false;
+    int okCount = 0;
+    for (int i = 0; i < TOF_COUNT; i++) {
+        bool ping = pingTofOnMux(TOF_MUX_CH[i]);
+        TofChannel &ch = tofChannels[i];
+        if (ch.initialized && !ping) {
+            ch.initialized = false;
+            tofFailStreak[i] = 0;
+            busGlitch = true;
+            Serial.print(F("TOF lost: "));
+            Serial.println(TOF_LABEL[i]);
+        } else if (!ch.initialized && ping) {
+            initOneTofSensor(i, true);
+        }
+        if (ch.initialized) okCount++;
+    }
+    tcaDeselect();
+
+    if (busGlitch) {
+        i2cRecoverTof();
+    }
+    tofSystemReady = (okCount > 0);
+}
+
 void initTofSensors() {
     // Probe TCA9548A first
     Wire.beginTransmission(TCA_ADDR);
@@ -804,35 +909,15 @@ void initTofSensors() {
     }
     int okCount = 0;
     for (int i = 0; i < TOF_COUNT; i++) {
-        tcaSelect(TOF_MUX_CH[i]);
-        TofChannel &ch = tofChannels[i];
-        ch.sensor.setTimeout(100);
-        if (ch.sensor.init()) {
-            ch.sensor.setDistanceMode(VL53L1X::Long);
-            ch.sensor.setMeasurementTimingBudget(50000);
-            ch.sensor.startContinuous(100);
-            ch.initialized = true;
-            ch.baseline_valid = false;
-            ch.approach_count = 0;
-            ch.approach_active = false;
-            ch.dwell_confirmed = false;
-            ch.below_baseline_since_ms = 0;
-            ch.ring_idx = 0;
-            ch.depart_count = 0;
-            ch.depart_active = false;
-            ch.min_recent_mm = 9999.0f;
-            ch.min_recent_ts = 0;
-            ch.presence_active = false;
-            ch.presence_since_ms = 0;
-            memset(ch.readings, 0, sizeof(ch.readings));
+        if (initOneTofSensor(i, false)) {
             okCount++;
         } else {
-            ch.initialized = false;
             Serial.print(F("WARN TOF "));
             Serial.print(TOF_LABEL[i]);
             Serial.println(F(" init fail"));
         }
     }
+    tcaDeselect();
     if (okCount > 0) {
         tofSystemReady = true;
         Serial.print(F("TOF ready: "));
@@ -842,6 +927,8 @@ void initTofSensors() {
 }
 
 void readAndProcessTof() {
+    reprobeTofSensors();
+
     unsigned long now = millis();
     if (now - lastTofReadMs < (unsigned long)(1000.0f / TOF_SAMPLE_HZ))
         return;
@@ -858,14 +945,21 @@ void readAndProcessTof() {
 
         tcaSelect(TOF_MUX_CH[i]);
 
-        if (!ch.sensor.dataReady()) continue;
-        int mm = ch.sensor.read(false);
-        uint8_t status = ch.sensor.ranging_data.range_status;
+        if (!ch.sensor.isRangeComplete()) continue;
+        int mm = (int)ch.sensor.readRangeResult();
+        uint8_t status = ch.sensor.readRangeStatus();
 
         if (status != 0 || mm < TOF_MIN_RANGE_MM || mm > TOF_MAX_RANGE_MM) {
+            if (++tofFailStreak[i] >= TOF_FAIL_STREAK_MAX) {
+                ch.initialized = false;
+                tofFailStreak[i] = 0;
+                Serial.print(F("TOF stale, will reinit: "));
+                Serial.println(TOF_LABEL[i]);
+            }
             continue;
         }
 
+        tofFailStreak[i] = 0;
         ch.last_valid_mm = mm;
 
         // Ring buffer for velocity (central difference)

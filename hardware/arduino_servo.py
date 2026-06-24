@@ -30,6 +30,14 @@ _OK_E_RE = re.compile(r"^OK\s+E(-?\d+)\s*$")
 _BASE_STATUS_RE = re.compile(
     r"^POS\s+(-?\d+)\s+DEG\s+(-?\d+(?:\.\d+)?)\s+CPD\s+(-?\d+(?:\.\d+)?)\s+BUSY\s+([01])\s*$"
 )
+_PROX_EVENT_RE = re.compile(
+    r"^PROX\s+A=([LCR])\s+V=(-?\d+)\s+D=(\d+)\s+C=(\d+)\s*$"
+)
+_PROX_DEPART_RE = re.compile(
+    r"^PROX\s+D=([LCR])\s+V=(-?\d+)\s+D=(\d+)\s+C=(\d+)\s*$"
+)
+_PROX_CLEAR_RE = re.compile(r"^PROX\s+CLEAR\s*$")
+_ZONE_RE = re.compile(r"^ZONE\s+L=([01])\s+C=([01])\s+R=([01])\s*$")
 
 
 @dataclass(frozen=True)
@@ -83,6 +91,7 @@ class ArduinoServoLink:
         self.last_base_error: Optional[str] = None
         self._error_logged = False
         self._boot_banner = ""
+        self._prox_callback = None  # callable(line: str) for PROX/ZONE events
 
     def firmware_banner(self) -> str:
         return self._boot_banner
@@ -109,9 +118,15 @@ class ArduinoServoLink:
         if self._ser is None:
             return
         try:
-            if self._ser.in_waiting:
-                # Non-blocking flush: avoids hanging if garbage bytes keep streaming.
-                self._ser.reset_input_buffer()
+            while self._ser.in_waiting:
+                line = self._ser.readline().decode("utf-8", errors="ignore").strip()
+                if not line:
+                    break
+                if (line.startswith("PROX") or line.startswith("ZONE")) and self._prox_callback:
+                    try:
+                        self._prox_callback(line)
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -186,6 +201,12 @@ class ArduinoServoLink:
             line = self._ser.readline().decode("utf-8", errors="ignore").strip()
             if not line:
                 continue
+            if (line.startswith("PROX") or line.startswith("ZONE")) and self._prox_callback:
+                try:
+                    self._prox_callback(line)
+                except Exception:
+                    pass
+                continue
             if line.startswith("ERR B"):
                 self.last_base_error = line
                 print(line)
@@ -195,6 +216,12 @@ class ArduinoServoLink:
                 if pattern.match(line):
                     return line
         return None
+
+    def mute_tof(self) -> bool:
+        return self.send_line("TM", drain_after=False)
+
+    def unmute_tof(self) -> bool:
+        return self.send_line("TU", drain_after=False)
 
     def _read_ack(self, timeout: float = ACK_TIMEOUT_SEC) -> Optional[Tuple[int, int]]:
         line = self._read_line_matching(timeout, _SERVO_ACK_RE)

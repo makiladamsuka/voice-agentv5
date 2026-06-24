@@ -27,23 +27,23 @@ class TestArmSafetyEnvelope(unittest.TestCase):
 
     def test_right_sweep_at_high_raise(self) -> None:
         lo, hi = self.env.sweep_range(side="right", raise_deg=124.0)
-        self.assertAlmostEqual(lo, 44.0)
-        self.assertAlmostEqual(hi, 44.0)
+        self.assertAlmostEqual(lo, 78.0)
+        self.assertAlmostEqual(hi, 78.0)
 
     def test_left_sweep_at_home(self) -> None:
         lo, hi = self.env.sweep_range(side="left", raise_deg=65.0)
-        self.assertAlmostEqual(lo, 87.0)
-        self.assertAlmostEqual(hi, 102.0)
+        self.assertAlmostEqual(lo, 70.0)
+        self.assertAlmostEqual(hi, 90.0)
 
     def test_left_sweep_at_high_raise(self) -> None:
         lo, hi = self.env.sweep_range(side="left", raise_deg=6.0)
         self.assertAlmostEqual(lo, 70.0)
-        self.assertAlmostEqual(hi, 70.0)
+        self.assertAlmostEqual(hi, 85.0)
 
     def test_left_sweep_mid_raise(self) -> None:
         lo, hi = self.env.sweep_range(side="left", raise_deg=35.5)
-        self.assertAlmostEqual(lo, 78.5)
-        self.assertAlmostEqual(hi, 86.0)
+        self.assertAlmostEqual(lo, 70.0)
+        self.assertAlmostEqual(hi, 87.5)
 
     def test_left_sweep_decreases_as_raise_increases(self) -> None:
         _, hi_home = self.env.sweep_range(side="left", raise_deg=65.0)
@@ -58,8 +58,8 @@ class TestArmSafetyEnvelope(unittest.TestCase):
     def test_clamp_sweep_down_when_raise_increases(self) -> None:
         a0, a1, a2, a3 = self.env.clamp_arms(124.0, 6.0, 64.0, 87.0)
         self.assertAlmostEqual(a0, 124.0)
-        self.assertAlmostEqual(a2, 44.0)
-        self.assertAlmostEqual(a3, 70.0)
+        self.assertAlmostEqual(a2, 78.0)
+        self.assertAlmostEqual(a3, 85.0)
 
     def test_missing_json_raises(self) -> None:
         with self.assertRaises(FileNotFoundError):

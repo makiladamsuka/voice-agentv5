@@ -148,6 +148,7 @@ class HeadDebugSnapshot:
     imu_horizon_ok: bool = True
     servo_connected: bool = False
     person_memories: list[dict[str, Any]] = field(default_factory=list)
+    motion_memories: list[dict[str, Any]] = field(default_factory=list)
     active_memory_id: int = 0
     limits: dict[str, float] = field(default_factory=dict)
     prox_approach_active: bool = False
@@ -160,6 +161,9 @@ class HeadDebugSnapshot:
     prox_zone_right: bool = False
     prox_search_active: bool = False
     prox_glance_active: bool = False
+    prox_investigate_active: bool = False
+    prox_investigate_phase: str = ""
+    prox_investigate_zone: str = ""
 
 
 class HeadDebugState:
@@ -307,6 +311,7 @@ _DEBUG_HTML = """<!DOCTYPE html>
       <div><span style="background:#4ade80"></span>head mesh</div>
       <div><span style="background:#22d3ee"></span>ToF presence (L/C/R)</div>
       <div><span style="background:#f97316"></span>ToF approach beam</div>
+      <div><span style="background:#ea580c"></span>ToF motion (fading)</div>
       <div style="margin-top:4px;color:#8899aa">servo pan cross-check: HUD only</div>
     </div>
     <div id="prox-hud">
@@ -517,7 +522,9 @@ base.add(limitPan);
 const limitTilt = new THREE.Group();
 panNode.add(limitTilt);
 const memoryGroup = new THREE.Group();
+const motionGroup = new THREE.Group();
 scene.add(memoryGroup);
+scene.add(motionGroup);
 
 const proxGroup = new THREE.Group();
 base.add(proxGroup);
@@ -647,12 +654,16 @@ function updateProxHud(s) {
     if (s.prox_approach_active) {
       line.className = 'approach-line active';
       line.textContent = `APPROACH ${s.prox_approach_zone} · ${s.prox_approach_distance}mm · ${fmt(s.prox_approach_velocity, 0)} mm/s · conf ${s.prox_approach_confidence || 0}`;
+    } else if (s.prox_investigate_active) {
+      line.className = 'approach-line active';
+      const phase = s.prox_investigate_phase || '?';
+      line.textContent = `Investigating ${s.prox_investigate_zone || '?'} (${phase})`;
     } else if (s.prox_search_active) {
       line.className = 'approach-line active';
       line.textContent = 'Searching after prox turn…';
     } else if (s.prox_glance_active) {
       line.className = 'approach-line active';
-      line.textContent = 'Glancing (voice session)';
+      line.textContent = 'Glancing toward approach';
     } else {
       line.className = 'approach-line';
       line.textContent = 'No approach';
@@ -793,7 +804,10 @@ function setModeBanner(s) {
   let label = s.mode_label || s.mode || 'Unknown';
   const mode = s.mode || '';
   let cls = 'mode-wander';
-  if (s.prox_search_active) {
+  if (s.prox_investigate_active) {
+    label += ` (prox investigate ${s.prox_investigate_phase || ''})`;
+    cls = 'mode-return';
+  } else if (s.prox_search_active) {
     label += ' (prox search)';
     cls = 'mode-return';
   } else if (s.prox_glance_active) {
@@ -864,7 +878,10 @@ function setStats(s) {
       <span>${zDot(proxZL)} ${zDot(proxZC)} ${zDot(proxZR)}</span>
     </div>
     <div class="row"><span class="k">prox state</span>
-      <span>${s.prox_search_active ? 'SEARCHING' : s.prox_glance_active ? 'GLANCING' : '-'}</span>
+      <span>${s.prox_investigate_active ? 'INVESTIGATE ' + (s.prox_investigate_phase || '') : s.prox_search_active ? 'SEARCHING' : s.prox_glance_active ? 'GLANCING' : '-'}</span>
+    </div>
+    <div class="row"><span class="k">motion ghosts</span>
+      <span>${(s.motion_memories || []).filter(m => !m.verified).length}</span>
     </div>
     <div class="row"><span class="k">3D prox HUD</span><span class="ok">bottom-right on model</span></div>
   `;
@@ -885,6 +902,46 @@ function makeTextSprite(text, color='#f8fafc') {
   const sprite = new THREE.Sprite(material);
   sprite.scale.set(0.28, 0.105, 1);
   return sprite;
+}
+
+function updateMotionMarkers(s, pulse=0.5) {
+  motionGroup.clear();
+  const mems = s.motion_memories || [];
+  const radius = 1.2;
+  const floorY = 0.025;
+  for (const m of mems) {
+    if (m.verified) continue;
+    const yaw = deg(m.world_yaw_deg || 0);
+    const freshness = Math.max(0.08, Math.min(1, m.freshness ?? 1));
+    const color = 0xf97316;
+    const marker = new THREE.Group();
+    marker.position.set(Math.sin(yaw) * radius, floorY, Math.cos(yaw) * radius);
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.075 + pulse * 0.012, 0.007, 8, 28),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: freshness * (0.55 + pulse * 0.35) })
+    );
+    ring.rotation.x = Math.PI / 2;
+    marker.add(ring);
+    const dot = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.04, 0.012, 20),
+      new THREE.MeshStandardMaterial({ color: 0xea580c, transparent: true, opacity: freshness * 0.85 })
+    );
+    dot.rotation.x = Math.PI / 2;
+    marker.add(dot);
+    const lineGeom = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, floorY, 0),
+      new THREE.Vector3(marker.position.x, marker.position.y, marker.position.z),
+    ]);
+    const line = new THREE.Line(
+      lineGeom,
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: freshness * 0.35 })
+    );
+    motionGroup.add(line);
+    const label = makeTextSprite(`M${m.id} ${Math.round(m.age_sec || 0)}s`, '#fb923c');
+    label.position.y = 0.10;
+    marker.add(label);
+    motionGroup.add(marker);
+  }
 }
 
 function updateMemoryMarkers(s) {
@@ -998,6 +1055,7 @@ async function poll() {
     imuGroup.rotation.z = deg(latest.imu_roll_deg || 0);
     imuGroup.rotation.x = deg(latest.imu_pitch_deg || 0) * imuPitchSign;
     updateMemoryMarkers(latest);
+    updateMotionMarkers(latest, proxPulse);
     updateProxHud(latest);
     updateProxMarkers(latest, proxPulse, true);
     const nearTiltMax = latest.tilt_mech_deg >= (latest.tilt_mech_up_deg - 1);
@@ -1167,6 +1225,7 @@ function animate() {
   requestAnimationFrame(animate);
   proxPulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.008);
   if (latest && Object.keys(latest).length) {
+    updateMotionMarkers(latest, proxPulse);
     updateProxMarkers(latest, proxPulse, false);
   }
   controls.update();

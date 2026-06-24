@@ -356,3 +356,15 @@ proximity:
   glance_return_sec: 0.6
   # How far to turn head during glance (0=none, 1=full)
   glance_blend: 0.4
+  investigate:
+    enabled: true
+    motion_fade_sec: 5.0
+    verified_ttl_sec: 5.0
+    scan_duration_sec: 2.5
+    scan_tilt_down_deg: 12.0
+    scan_tilt_up_deg: 8.0
+    zone_yaw_deg: 35.0
+    glance_blend_track: 0.35
+    revisit_enabled: true
+    revisit_max_age_sec: 5.0
+    revisit_aim_tolerance_deg: 15.0

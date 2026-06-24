@@ -87,6 +87,7 @@ class Blackboard:
     # ── Person Memory (written by FaceTracker) ─────────────────────────────
     person_snapshots: list = None  # list[dict] from PersonMemory.snapshots()
     last_seen_world_yaw: float = None  # world yaw of last-seen-at-edge position
+    motion_snapshots: list = None    # list[dict] from MotionMemory (ToF ghosts)
 
     # ── Proximity Sensing (written by ServoMixer from ESP32 PROX lines) ───
     prox_approach_zone: str = ""          # "" | "L" | "C" | "R"
@@ -110,6 +111,15 @@ class Blackboard:
     prox_glance_target_pan: float = 0.0
     prox_glance_phase: str = ""
     prox_glance_since: float = 0.0
+    prox_glance_emotion: str = ""       # short-lived looking_left/right during track glance
+    prox_investigate_active: bool = False
+    prox_investigate_phase: str = ""    # "" | "turn" | "scan" | "done"
+    prox_investigate_zone: str = ""
+    prox_investigate_yaw: float = 0.0
+    prox_investigate_since: float = 0.0
+    prox_investigate_motion_id: int = 0
+    prox_verified_priority_yaw: float = None
+    prox_scan_complete_ts: float = 0.0
 
     # ── Emotion (written by EmotionEngine) ───────────────────────────────────
     emotion: str = "idle"
@@ -146,6 +156,7 @@ class Blackboard:
         # Mutable defaults that can't be class-level
         self.face_candidates = []
         self.person_snapshots = []
+        self.motion_snapshots = []
         self.debug_live_tune = {}
 
     # ─────────────────────────────────────────────────────────────────────────

@@ -32,6 +32,7 @@ class PersonMemoryItem:
     last_seen_ts: float
     first_seen_ts: float
     kind: str = "face"
+    source: str = "camera"  # "camera" | "prox_verify"
     confidence: float = 0.5
     seen_count: int = 1
 
@@ -39,15 +40,28 @@ class PersonMemoryItem:
         now = time.time() if now is None else now
         return max(0.0, now - self.last_seen_ts)
 
-    def to_dict(self, now: float | None = None, *, timeout_sec: float = 20.0) -> dict[str, float | int | str]:
+    def ttl_sec(self, default_timeout: float, *, prox_verify_timeout: float) -> float:
+        if self.source == "prox_verify":
+            return prox_verify_timeout
+        return default_timeout
+
+    def to_dict(
+        self,
+        now: float | None = None,
+        *,
+        timeout_sec: float = 20.0,
+        prox_verify_timeout_sec: float = 5.0,
+    ) -> dict[str, float | int | str]:
         now = time.time() if now is None else now
         age = self.age_sec(now)
-        freshness = _clamp(1.0 - (age / max(timeout_sec, 0.001)), 0.0, 1.0)
+        ttl = self.ttl_sec(timeout_sec, prox_verify_timeout=prox_verify_timeout_sec)
+        freshness = _clamp(1.0 - (age / max(ttl, 0.001)), 0.0, 1.0)
         return {
             "id": self.id,
             "world_yaw_deg": self.world_yaw_deg,
             "age_sec": age,
             "kind": self.kind,
+            "source": self.source,
             "confidence": self.confidence,
             "seen_count": self.seen_count,
             "freshness": freshness,
@@ -64,8 +78,10 @@ class PersonMemory:
         merge_angle_deg: float = 12.0,
         camera_hfov_deg: float = 62.0,
         max_items: int = 6,
+        prox_verify_timeout_sec: float = 5.0,
     ) -> None:
         self.timeout_sec = max(1.0, timeout_sec)
+        self.prox_verify_timeout_sec = max(0.5, prox_verify_timeout_sec)
         self.merge_angle_deg = max(1.0, merge_angle_deg)
         self.camera_hfov_deg = max(1.0, camera_hfov_deg)
         self.max_items = max(1, max_items)
@@ -111,6 +127,7 @@ class PersonMemory:
         tilt_mech_deg: float = 0.0,
         kind: str,
         confidence: float = 1.0,
+        source: str = "camera",
         now: float | None = None,
     ) -> PersonMemoryItem:
         now = time.time() if now is None else now
@@ -128,6 +145,7 @@ class PersonMemory:
                 last_seen_ts=now,
                 first_seen_ts=now,
                 kind=kind,
+                source=source,
                 confidence=_clamp(confidence, 0.0, 1.0),
             )
             self._next_id += 1
@@ -140,13 +158,53 @@ class PersonMemory:
             item.last_seen_ts = now
             item.seen_count += 1
             item.kind = "face" if kind == "face" or item.kind == "face" else kind
+            item.source = source if source == "prox_verify" else item.source
             item.confidence = _clamp(max(item.confidence * 0.85, confidence), 0.0, 1.0)
+        self._trim_oldest()
+        return item
+
+    def observe_at_yaw(
+        self,
+        *,
+        world_yaw_deg: float,
+        kind: str,
+        source: str = "prox_verify",
+        confidence: float = 0.85,
+        now: float | None = None,
+    ) -> PersonMemoryItem:
+        now = time.time() if now is None else now
+        self.prune(now)
+        world_yaw = wrap_degrees(world_yaw_deg)
+        item = self._nearest(world_yaw)
+        if item is None or angular_distance_deg(item.world_yaw_deg, world_yaw) > self.merge_angle_deg:
+            item = PersonMemoryItem(
+                id=self._next_id,
+                world_yaw_deg=world_yaw,
+                last_seen_ts=now,
+                first_seen_ts=now,
+                kind=kind,
+                source=source,
+                confidence=_clamp(confidence, 0.0, 1.0),
+            )
+            self._next_id += 1
+            self._items.append(item)
+        else:
+            item.last_seen_ts = now
+            item.seen_count += 1
+            item.kind = "face" if kind == "face" or item.kind == "face" else kind
+            item.source = "prox_verify"
+            item.confidence = _clamp(max(item.confidence, confidence), 0.0, 1.0)
         self._trim_oldest()
         return item
 
     def prune(self, now: float | None = None) -> None:
         now = time.time() if now is None else now
-        self._items = [item for item in self._items if item.age_sec(now) <= self.timeout_sec]
+        self._items = [
+            item for item in self._items
+            if item.age_sec(now) <= item.ttl_sec(
+                self.timeout_sec, prox_verify_timeout=self.prox_verify_timeout_sec
+            )
+        ]
 
     def active(self, now: float | None = None) -> list[PersonMemoryItem]:
         now = time.time() if now is None else now
@@ -191,9 +249,36 @@ class PersonMemory:
             ),
         )
 
+    def best_prox_verified(
+        self,
+        *,
+        current_world_yaw_deg: float,
+        now: float | None = None,
+        max_age_sec: float | None = None,
+    ) -> PersonMemoryItem | None:
+        now = time.time() if now is None else now
+        age_limit = max_age_sec if max_age_sec is not None else self.prox_verify_timeout_sec
+        items = [
+            item for item in self.active(now)
+            if item.source == "prox_verify" and item.age_sec(now) <= age_limit
+        ]
+        if not items:
+            return None
+        return min(
+            items,
+            key=lambda item: angular_distance_deg(item.world_yaw_deg, current_world_yaw_deg),
+        )
+
     def snapshots(self, now: float | None = None) -> list[dict[str, float | int | str]]:
         now = time.time() if now is None else now
-        return [item.to_dict(now, timeout_sec=self.timeout_sec) for item in self.active(now)]
+        return [
+            item.to_dict(
+                now,
+                timeout_sec=self.timeout_sec,
+                prox_verify_timeout_sec=self.prox_verify_timeout_sec,
+            )
+            for item in self.active(now)
+        ]
 
     def _nearest(self, world_yaw_deg: float) -> PersonMemoryItem | None:
         if not self._items:

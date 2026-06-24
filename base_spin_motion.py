@@ -6,7 +6,7 @@ import time
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from arduino_servo import ArduinoServoLink
+    from hardware.arduino_servo import ArduinoServoLink
 
 
 class SpinLink(Protocol):

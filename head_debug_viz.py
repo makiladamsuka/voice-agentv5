@@ -671,7 +671,7 @@ function setStats(s) {
     <div class="row" style="margin-top:6px;border-top:1px solid #2a3142;padding-top:6px">
       <span class="k">proximity</span>
       <span class="${proxApproach ? 'warn' : ''}">
-        ${proxApproach ? \`APPROACH \${s.prox_approach_zone} \${s.prox_approach_distance}mm \${s.prox_approach_velocity}mm/s\` : 'clear'}
+        ${proxApproach ? 'APPROACH ' + s.prox_approach_zone + ' ' + s.prox_approach_distance + 'mm ' + s.prox_approach_velocity + 'mm/s' : 'clear'}
       </span>
     </div>
     <div class="row"><span class="k">zones L C R</span>

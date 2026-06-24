@@ -199,6 +199,15 @@ class BaseController:
         self.prox_comp_gain = float(prox.get("compensation_gain", 0.90))
         self.prox_cooldown_sec = float(prox.get("cooldown_sec", 5.0))
         self.prox_post_motion_blanking_sec = float(prox.get("post_motion_blanking_sec", 1.5))
+        inv = _cfg(prox, "investigate", default={}) or {}
+        self.prox_investigate_enabled = bool(inv.get("enabled", True))
+        self.prox_motion_fade_sec = float(inv.get("motion_fade_sec", 5.0))
+        self.prox_verified_ttl_sec = float(inv.get("verified_ttl_sec", 5.0))
+        self.prox_zone_yaw_deg = float(inv.get("zone_yaw_deg", self.prox_turn_step))
+        self.prox_glance_blend_track = float(inv.get("glance_blend_track", 0.35))
+        self.prox_revisit_enabled = bool(inv.get("revisit_enabled", True))
+        self.prox_revisit_max_age_sec = float(inv.get("revisit_max_age_sec", 5.0))
+        self.prox_revisit_aim_tol = float(inv.get("revisit_aim_tolerance_deg", 15.0))
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self._last_nudge_ts = 0.0
@@ -223,6 +232,39 @@ class BaseController:
         self._prox_turn_timestamps: list[float] = []
         self._last_base_motion_done_ts = 0.0
         self._was_base_busy = False
+        self._last_prox_reaction_approach_ts = 0.0
+
+    def _prox_zone_yaw(self, zone: str, base_world_yaw: float) -> float:
+        from lib.prox_investigate import zone_world_yaw
+        return zone_world_yaw(zone, base_world_yaw, self.prox_zone_yaw_deg)
+
+    def _trigger_prox_glance(self, now: float, zone: str, pan: float) -> None:
+        from lib.prox_investigate import glance_emotion_for_zone
+        sign = 0.0
+        if zone == "L":
+            sign = 1.0
+        elif zone == "R":
+            sign = -1.0
+        pan_offset = sign * self.prox_turn_step * self.prox_glance_blend_track
+        glance_pan = pan + pan_offset
+        self.bb.write(
+            prox_glance_active=True,
+            prox_glance_target_pan=glance_pan,
+            prox_glance_phase="toward",
+            prox_glance_since=now,
+            prox_glance_emotion=glance_emotion_for_zone(zone),
+        )
+
+    def _start_investigate(self, now: float, zone: str, world_yaw: float, phase: str, motion_id: int = 0) -> None:
+        self.bb.write(
+            prox_investigate_active=True,
+            prox_investigate_phase=phase,
+            prox_investigate_zone=zone,
+            prox_investigate_yaw=world_yaw,
+            prox_investigate_since=now,
+            prox_investigate_motion_id=motion_id,
+            prox_search_active=False,
+        )
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -602,58 +644,67 @@ class BaseController:
             return None, "", 0.0
         if not state.get("prox_approach_active", False):
             return None, "", 0.0
-        # Suppress while face tracking is active (already engaged)
-        if state.get("face_detected", False):
+        approach_ts = float(state.get("prox_approach_ts", 0.0) or 0.0)
+        if approach_ts > 0.0 and approach_ts == self._last_prox_reaction_approach_ts:
             return None, "", 0.0
-        # Post-turn lockout
         if now < state.get("prox_post_turn_lockout_ts", 0.0):
             return None, "", 0.0
-        # Post-motion blanking
         if (now - self._last_base_motion_done_ts) < self.prox_post_motion_blanking_sec:
             return None, "", 0.0
-        # Cooldown
         if (now - self._last_prox_ts) < self.prox_cooldown_sec:
             return None, "", 0.0
-        # Confidence gate
         if state.get("prox_approach_confidence", 0) < self.prox_min_confidence:
             return None, "", 0.0
-        # Budget: max turns per window
         recent = [t for t in self._prox_turn_timestamps if now - t < self.prox_window_sec]
         if len(recent) >= self.prox_max_turns:
             return None, "", 0.0
 
         zone = state.get("prox_approach_zone", "")
-        
-        # Voice conversation: glance instead of base turn
+        pan = state["servo_pan"]
+        world_yaw = self._prox_zone_yaw(zone, state["base_world_yaw_deg"])
+        tracking = state.get("face_detected", False) or state.get("body_detected", False)
+
+        if tracking and self.prox_investigate_enabled:
+            self._last_prox_ts = now
+            if approach_ts > 0.0:
+                self._last_prox_reaction_approach_ts = approach_ts
+            if zone in ("L", "R", "C"):
+                self._trigger_prox_glance(now, zone, pan)
+            return None, "", 0.0
+
         if state.get("voice_session_active", False):
             if zone in ("L", "R"):
                 sign = 1.0 if zone == "L" else -1.0
                 pan_offset = sign * self.prox_turn_step * 0.4
-                glance_pan = state["servo_pan"] + pan_offset
+                glance_pan = pan + pan_offset
                 self.bb.write(
                     prox_glance_active=True,
                     prox_glance_target_pan=glance_pan,
                     prox_glance_phase="toward",
                     prox_glance_since=now,
                 )
+            if approach_ts > 0.0:
+                self._last_prox_reaction_approach_ts = approach_ts
+            return None, "", 0.0
+
+        if zone == "C" and self.prox_investigate_enabled:
+            self._last_prox_ts = now
+            self._prox_turn_timestamps = [t for t in self._prox_turn_timestamps if now - t < self.prox_window_sec]
+            self._prox_turn_timestamps.append(now)
+            if approach_ts > 0.0:
+                self._last_prox_reaction_approach_ts = approach_ts
+            self.bb.write(prox_post_turn_lockout_ts=now + self.prox_lockout_sec)
+            self._start_investigate(now, zone, world_yaw, "scan")
             return None, "", 0.0
 
         if zone == "L":
             step_sign = 1.0
         elif zone == "R":
             step_sign = -1.0
-        elif zone == "C":
-            self.bb.write(
-                prox_search_active=True,
-                prox_search_since=now,
-                prox_search_zone="C",
-            )
-            return None, "", 0.0
         else:
             return None, "", 0.0
 
         step = step_sign * self.prox_turn_step * self.base_sign
-        pan = state["servo_pan"]
         step = self._apply_gate(
             step, pan, state["base_encoder_deg"], state,
             require_head_lead=False,
@@ -661,19 +712,55 @@ class BaseController:
         if abs(step) < self.min_step:
             return None, "", 0.0
 
-        # Commit: set lockout and record in budget
         self._last_prox_ts = now
         self._prox_turn_timestamps = [t for t in self._prox_turn_timestamps if now - t < self.prox_window_sec]
         self._prox_turn_timestamps.append(now)
-        self.bb.write(
-            prox_post_turn_lockout_ts=now + self.prox_lockout_sec,
-            prox_search_active=True,
-            prox_search_since=now,
-            prox_search_zone=zone,
-        )
+        if approach_ts > 0.0:
+            self._last_prox_reaction_approach_ts = approach_ts
+        self.bb.write(prox_post_turn_lockout_ts=now + self.prox_lockout_sec)
+        if self.prox_investigate_enabled:
+            self._start_investigate(now, zone, world_yaw, "turn")
+        else:
+            self.bb.write(
+                prox_search_active=True,
+                prox_search_since=now,
+                prox_search_zone=zone,
+            )
 
         comp_pan = self._comp_pan_for_step(step, pan, self.prox_comp_gain)
         return step, "proximity", comp_pan
+
+    def _plan_prox_verified_revisit(
+        self, now: float, state: dict,
+    ) -> tuple[Optional[float], str, float]:
+        if not self.prox_revisit_enabled or not self.prox_investigate_enabled:
+            return None, "", 0.0
+        if state.get("face_detected", False) or state.get("body_detected", False):
+            return None, "", 0.0
+        if state.get("prox_investigate_active", False):
+            return None, "", 0.0
+        priority_yaw = state.get("prox_verified_priority_yaw")
+        if priority_yaw is None:
+            return None, "", 0.0
+        current_yaw = state["base_world_yaw_deg"]
+        err = angular_error_deg(float(priority_yaw), current_yaw)
+        if abs(err) <= self.prox_revisit_aim_tol:
+            return None, "", 0.0
+        if (now - self._last_prox_ts) < self.prox_cooldown_sec:
+            return None, "", 0.0
+        step_mag = clamp(abs(err) * 0.55, self.min_step, self.max_step)
+        step = step_mag * (1.0 if err > 0.0 else -1.0) * self.base_sign
+        pan = state["servo_pan"]
+        step = self._apply_gate(
+            step, pan, state["base_encoder_deg"], state,
+            require_head_lead=False,
+        )
+        if abs(step) < self.min_step:
+            return None, "", 0.0
+        self._last_prox_ts = now
+        self._start_investigate(now, "R" if err > 0 else "L", float(priority_yaw), "turn")
+        comp_pan = self._comp_pan_for_step(step, pan, self.prox_comp_gain)
+        return step, "prox_revisit", comp_pan
 
     # ── Main loop ──────────────────────────────────────────────────────────────
 
@@ -703,6 +790,8 @@ class BaseController:
                 "yaw_reference_locked",
                 "prox_approach_active", "prox_approach_zone",
                 "prox_approach_confidence", "prox_post_turn_lockout_ts",
+                "prox_approach_ts", "prox_investigate_active",
+                "prox_verified_priority_yaw",
             )
 
             pan_offset = self._head_pan_offset(state["servo_pan"])
@@ -721,6 +810,9 @@ class BaseController:
 
             if not state["base_motion_busy"] and self._was_base_busy:
                 self._last_base_motion_done_ts = now
+                inv = self.bb.read("prox_investigate_active", "prox_investigate_phase")
+                if inv["prox_investigate_active"] and inv["prox_investigate_phase"] == "turn":
+                    self.bb.write(prox_investigate_phase="scan", prox_investigate_since=now)
             self._was_base_busy = state["base_motion_busy"]
 
             if not state["yaw_reference_locked"]:
@@ -749,7 +841,9 @@ class BaseController:
                 if step is None:
                     step, source, comp_pan = self._plan_memory_step(now, state)
             elif mode == "wander":
-                step, source, comp_pan = self._plan_wander_follow(now, state)
+                step, source, comp_pan = self._plan_prox_verified_revisit(now, state)
+                if step is None:
+                    step, source, comp_pan = self._plan_wander_follow(now, state)
 
             if step is None and mode in ("wander", "track", "last_seen"):
                 step, source, comp_pan = self._plan_sustained_follow(now, state)

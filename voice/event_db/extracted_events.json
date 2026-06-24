@@ -1,0 +1,56 @@
+[
+  {
+    "title": "Art Exhibition 2022",
+    "date": "OCTOBER 10-15",
+    "time": "10AM-2PM",
+    "location": "DEVS ART STUDIO, 21 LOREMIPSUM STREET, NY",
+    "description": "Creative Art Show by Exuberant Youths. Art Activities: ART EXHIBITS, ART TALKS, PORTRAIT WORKSHOP, ART AUCTION, SHORT ART CLASS FOR CHILDREN AND MORE... More info: WWW.EVENTNAME.COM. For registration call Martha: (09) 123 456 7890.",
+    "source_file": "art-exhibition.jpg",
+    "category": "events"
+  },
+  {
+    "title": "Campus Sports Sports Meeting",
+    "date": "2025/5/20",
+    "time": null,
+    "location": "Chenguang Playground, Maker Middle School",
+    "description": "Peak Showdowns Never Stop. Events include: Opening Ceremony Performance, Award Ceremony, Closing Ceremony. Sports include Football, Basketball, Sprinting, Shot Put.",
+    "source_file": "freshers-sportmeet.jpg",
+    "category": "events"
+  },
+  {
+    "title": "University Open House",
+    "date": "11 July",
+    "time": "3 PM",
+    "location": null,
+    "description": "Recruitment, Limited Spaces. Lorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam nonummy nibh euismod tincidunt ut laoreet dolore magna aliquam erat volutpat. Ut wisi enim ad minin consectetuer adipiscing elit, sed diam duran. Apply Today, Apply Tonight. Visit www.website.kom",
+    "source_file": "openhouse.jpg",
+    "category": "events"
+  },
+  {
+    "title": "DEPLOY SPRINT",
+    "date": null,
+    "time": null,
+    "location": null,
+    "description": "Registrations are now open for UoM undergraduates only. Scan the QR code or visit deloysprint.knurdz.org/register to register.",
+    "source_file": "1780802866647_21089.jpg",
+    "category": "competitions"
+  },
+  {
+    "title": "Proposal Submission Opening Soon",
+    "date": null,
+    "time": null,
+    "location": null,
+    "description": "Organized by AIESEC in University of Moratuwa. The event is related to IDEALIZE 2026.",
+    "source_file": "1780921381359_21397.jpg",
+    "category": "competitions"
+  },
+  {
+    "title": "FIT '24 End of Semester 02",
+    "date": null,
+    "time": null,
+    "location": null,
+    "description": "A group photo featuring many students, likely commemorating the end of the second semester for the FIT '24 cohort.",
+    "source_file": "1780921427234_21372.jpg",
+    "category": "posts"
+  }
+]

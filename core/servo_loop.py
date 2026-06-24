@@ -182,6 +182,8 @@ class ServoLoop:
         lss = _cfg(cfg, "last_seen_search", default={}) or {}
         b = _cfg(cfg, "base", default={}) or {}
         dv = _cfg(cfg, "debug_viz", default={}) or {}
+        prox = _cfg(cfg, "proximity", default={}) or {}
+        inv = _cfg(prox, "investigate", default={}) or {}
 
         # ── Servo limits ──────────────────────────────────────────────────────
         self.pan_min = float(s.get("pan_min", 40.0))
@@ -306,6 +308,14 @@ class ServoLoop:
         self.forward_return_min_tilt_deg = float(s.get("forward_return_min_tilt_deg", 10.0))
         self.forward_return_smooth_hz = float(s.get("forward_return_smooth_hz", 4.5))
         self._servo_cfg = dict(s)
+        self.prox_search_timeout_sec = float(prox.get("search_timeout_sec", 3.0))
+        self.prox_scan_duration_sec = float(inv.get("scan_duration_sec", 2.5))
+        self.prox_scan_tilt_down_deg = float(inv.get("scan_tilt_down_deg", 12.0))
+        self.prox_scan_tilt_up_deg = float(inv.get("scan_tilt_up_deg", 8.0))
+        self.prox_glance_toward_sec = float(prox.get("glance_toward_sec", 0.8))
+        self.prox_glance_return_sec = float(prox.get("glance_return_sec", 0.6))
+        self.prox_glance_blend = float(prox.get("glance_blend", 0.4))
+        self.prox_glance_blend_track = float(inv.get("glance_blend_track", 0.35))
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self._pan = self.pan_center
@@ -739,20 +749,24 @@ class ServoLoop:
         if state.get("prox_glance_active", False):
             elapsed = now - state.get("prox_glance_since", 0.0)
             phase = state.get("prox_glance_phase", "")
-            toward_sec = float(self._servo_cfg.get("glance_toward_sec", 0.8))
-            return_sec = float(self._servo_cfg.get("glance_return_sec", 0.6))
-            blend = float(self._servo_cfg.get("glance_blend", 0.4))
-            
+
             if phase == "toward":
-                mix = min(1.0, elapsed / max(0.001, toward_sec))
+                mix = min(1.0, elapsed / max(0.001, self.prox_glance_toward_sec))
                 glance_target = state.get("prox_glance_target_pan", self._pan)
+                blend = self.prox_glance_blend
+                if face_detected or body_detected:
+                    blend = min(blend, self.prox_glance_blend_track)
                 blend_pan = self._pan + (glance_target - self._pan) * mix * blend
                 self._pan = clamp(blend_pan, self.pan_min, self.pan_max)
-                if elapsed > toward_sec:
+                if elapsed > self.prox_glance_toward_sec:
                     self.bb.write(prox_glance_phase="return", prox_glance_since=now)
             elif phase == "return":
-                if elapsed > return_sec:
-                    self.bb.write(prox_glance_active=False, prox_glance_phase="")
+                if elapsed > self.prox_glance_return_sec:
+                    self.bb.write(
+                        prox_glance_active=False,
+                        prox_glance_phase="",
+                        prox_glance_emotion="",
+                    )
 
         # Tilt: face-relative on fixed center (IMU horizon applies in wander/idle only).
         if abs(self._tilt_track_norm) <= self.tilt_center_norm_y:
@@ -808,13 +822,90 @@ class ServoLoop:
 
         return "track"
 
+    def _tick_prox_investigate(self, now: float, dt: float, effective_tilt_center: float) -> bool:
+        """Tilt sweep while investigating a ToF cue. Returns True if handling motion."""
+        state = self.bb.read(
+            "prox_investigate_active", "prox_investigate_phase", "prox_investigate_since",
+            "face_detected", "body_detected",
+        )
+        if not state.get("prox_investigate_active"):
+            return False
+        phase = str(state.get("prox_investigate_phase", ""))
+        if phase == "turn":
+            pan_max_step = min(self.pan_max_step_deg, self.pan_track_slew_dps * max(dt, 0.001))
+            tilt_max_step = min(self.tilt_max_step_deg, self.tilt_track_slew_dps * max(dt, 0.001))
+            self._pan = _smooth_toward_stepped(
+                self._pan, self.pan_center, dt,
+                smooth_hz=self.pan_smooth_hz, lo=self.pan_min, hi=self.pan_max,
+                max_step=pan_max_step,
+            )
+            self._tilt = _smooth_toward_stepped(
+                self._tilt, effective_tilt_center, dt,
+                smooth_hz=self.tilt_smooth_hz, lo=self.tilt_min, hi=self.tilt_max,
+                max_step=tilt_max_step,
+            )
+            self.bb.write(wander_moving=True, wander_last_step_deg=0.0)
+            return True
+        if phase != "scan":
+            return phase == "done"
+
+        elapsed = now - float(state.get("prox_investigate_since", now))
+        duration = max(0.5, self.prox_scan_duration_sec)
+        if state.get("face_detected") or state.get("body_detected"):
+            self.bb.write(
+                prox_investigate_active=False,
+                prox_investigate_phase="",
+                prox_search_active=False,
+            )
+            return True
+
+        if elapsed >= duration:
+            self.bb.write(
+                prox_investigate_active=False,
+                prox_investigate_phase="done",
+                prox_search_active=False,
+                prox_scan_complete_ts=now,
+            )
+            return True
+
+        t = elapsed / duration
+        down = effective_tilt_center - self.prox_scan_tilt_down_deg
+        up = effective_tilt_center + self.prox_scan_tilt_up_deg
+        if t < 0.33:
+            mix = t / 0.33
+            tilt_goal = effective_tilt_center + (down - effective_tilt_center) * mix
+        elif t < 0.66:
+            mix = (t - 0.33) / 0.33
+            tilt_goal = down + (up - down) * mix
+        else:
+            mix = (t - 0.66) / 0.34
+            tilt_goal = up + (effective_tilt_center - up) * mix
+
+        pan_max_step = min(self.pan_max_step_deg, self.pan_track_slew_dps * max(dt, 0.001))
+        tilt_max_step = min(self.tilt_max_step_deg, self.tilt_track_slew_dps * max(dt, 0.001))
+        self._pan = _smooth_toward_stepped(
+            self._pan, self.pan_center, dt,
+            smooth_hz=self.pan_smooth_hz, lo=self.pan_min, hi=self.pan_max,
+            max_step=pan_max_step,
+        )
+        self._tilt = _smooth_toward_stepped(
+            self._tilt, tilt_goal, dt,
+            smooth_hz=self.tilt_smooth_hz, lo=self.tilt_min, hi=self.tilt_max,
+            max_step=tilt_max_step,
+        )
+        self.bb.write(wander_moving=True, wander_last_step_deg=0.0)
+        return True
+
     # ── Wander mode ────────────────────────────────────────────────────────────
 
     def _tick_wander(self, now: float, dt: float, effective_tilt_center: float, camera_world_yaw_deg: float) -> str:
         if self._forward_return_active:
             return self._tick_forward_return(now, dt, effective_tilt_center)
 
-        state = self.bb.read("face_detected", "body_detected", "last_seen_world_yaw", "prox_search_active", "prox_search_since")
+        state = self.bb.read(
+            "face_detected", "body_detected", "last_seen_world_yaw",
+            "prox_investigate_active",
+        )
         if state["face_detected"] or state["body_detected"]:
             if state["face_detected"]:
                 self._last_face_ts = now
@@ -824,36 +915,16 @@ class ServoLoop:
                 self._no_face_since = None
             self._lss_active = False
             self._forward_return_active = False
-            self.bb.write(prox_search_active=False)
+            self.bb.write(prox_search_active=False, prox_investigate_active=False)
             self._pan_pid.soften()
             self._tilt_pid.soften()
             self._target_glide.soften()
             return "track"
 
-        if state.get("prox_search_active", False):
-            elapsed = now - state.get("prox_search_since", 0.0)
-            prox_search_timeout_sec = float(self._servo_cfg.get("prox_search_timeout_sec", 3.0))
-            if elapsed > prox_search_timeout_sec:
-                self.bb.write(prox_search_active=False)
-            else:
-                pan_goal = self.pan_center
-                tilt_goal = effective_tilt_center
-                pan_max_step = min(self.pan_max_step_deg, self.pan_track_slew_dps * max(dt, 0.001))
-                tilt_max_step = min(self.tilt_max_step_deg, self.tilt_track_slew_dps * max(dt, 0.001))
-                self._pan = _smooth_toward_stepped(
-                    self._pan, pan_goal, dt,
-                    smooth_hz=self.pan_smooth_hz, lo=self.pan_min, hi=self.pan_max,
-                    max_step=pan_max_step,
-                )
-                self._tilt = _smooth_toward_stepped(
-                    self._tilt, tilt_goal, dt,
-                    smooth_hz=self.tilt_smooth_hz, lo=self.tilt_min, hi=self.tilt_max,
-                    max_step=tilt_max_step,
-                )
-                self.bb.write(wander_moving=True, wander_last_step_deg=0.0)
-                return "wander"
+        if self._tick_prox_investigate(now, dt, effective_tilt_center):
+            return "wander"
 
-        # Only search last-seen shortly after we were tracking (avoid stale memory hijack).
+        state = self.bb.read("last_seen_world_yaw")
         last_yaw = state["last_seen_world_yaw"]
         recently_tracked = (now - max(self._last_face_ts, self._last_body_ts)) < self.no_face_home_sec * 2.0
         if last_yaw is not None and recently_tracked and not self._lss_active:

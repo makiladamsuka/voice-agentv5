@@ -29,6 +29,7 @@ except ImportError:
 
 from core.blackboard import Blackboard
 from lib.person_memory import PersonMemory, angular_error_deg, wrap_degrees
+from lib.motion_memory import MotionMemory, MotionMemoryItem
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
@@ -122,6 +123,8 @@ class FaceTracker:
         stream = _cfg(cfg, "stream", default={}) or {}
         pm = _cfg(cfg, "person_memory", default={}) or {}
         lss = _cfg(cfg, "last_seen_search", default={}) or {}
+        prox = _cfg(cfg, "proximity", default={}) or {}
+        inv = _cfg(prox, "investigate", default={}) or {}
 
         self.face_model = str(APP_DIR / _cfg(cam, "face_model_path", default="face_detection_yunet_2023mar.onnx"))
         self.body_model = str(APP_DIR / _cfg(cam, "body_model_path", default="yolov8n.onnx"))
@@ -156,6 +159,13 @@ class FaceTracker:
         self.lss_enabled = bool(lss.get("enabled", True))
         self.lss_edge_norm = float(lss.get("edge_norm", 0.40))
 
+        self.prox_min_confidence = int(prox.get("min_confidence", 3))
+        self.prox_investigate_enabled = bool(inv.get("enabled", True))
+        self.prox_motion_fade_sec = float(inv.get("motion_fade_sec", 5.0))
+        self.prox_verified_ttl_sec = float(inv.get("verified_ttl_sec", 5.0))
+        self.prox_zone_yaw_deg = float(inv.get("zone_yaw_deg", float(prox.get("turn_step_deg", 35.0))))
+        self.prox_revisit_max_age_sec = float(inv.get("revisit_max_age_sec", 5.0))
+
         # Internals
         self._attention = MultiFaceAttention()
         self._squint_until = 0.0
@@ -172,7 +182,16 @@ class FaceTracker:
                 merge_angle_deg=self.pm_merge,
                 camera_hfov_deg=self.pm_hfov,
                 max_items=self.pm_max,
+                prox_verify_timeout_sec=self.prox_verified_ttl_sec,
             )
+        self._motion_memory: Optional[MotionMemory] = None
+        if self.prox_investigate_enabled:
+            self._motion_memory = MotionMemory(
+                fade_sec=self.prox_motion_fade_sec,
+                zone_yaw_deg=self.prox_zone_yaw_deg,
+            )
+        self._last_recorded_prox_ts = 0.0
+        self._last_scan_complete_ts = 0.0
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -284,6 +303,102 @@ class FaceTracker:
             confidence=confidence,
             now=now,
         )
+
+    def _record_prox_motion(self, now: float) -> MotionMemoryItem | None:
+        if self._motion_memory is None:
+            return None
+        state = self.bb.read(
+            "prox_approach_active", "prox_approach_zone", "prox_approach_distance",
+            "prox_approach_confidence", "prox_approach_ts", "base_world_yaw_deg",
+        )
+        ts = float(state.get("prox_approach_ts", 0.0) or 0.0)
+        if not state.get("prox_approach_active") or ts <= 0.0:
+            return None
+        if ts == self._last_recorded_prox_ts:
+            return None
+        if int(state.get("prox_approach_confidence", 0)) < self.prox_min_confidence:
+            return None
+        zone = str(state.get("prox_approach_zone", ""))
+        if zone not in ("L", "C", "R"):
+            return None
+        item = self._motion_memory.observe_from_prox(
+            zone=zone,
+            base_world_yaw_deg=float(state["base_world_yaw_deg"]),
+            distance_mm=int(state.get("prox_approach_distance", 0)),
+            now=now,
+        )
+        self._last_recorded_prox_ts = ts
+        self.bb.write(prox_investigate_motion_id=item.id)
+        return item
+
+    def _handle_prox_verify(
+        self,
+        now: float,
+        *,
+        face_detected: bool,
+        body_detected: bool,
+        face_norm_x: float,
+        face_norm_y: float,
+    ) -> float | None:
+        if self._person_memory is None:
+            return None
+        state = self.bb.read(
+            "prox_investigate_active", "prox_investigate_phase",
+            "prox_investigate_yaw", "prox_investigate_motion_id",
+            "base_world_yaw_deg", "servo_pan", "prox_scan_complete_ts",
+        )
+        scan_ts = float(state.get("prox_scan_complete_ts", 0.0) or 0.0)
+        if scan_ts > 0.0 and scan_ts != self._last_scan_complete_ts:
+            self._last_scan_complete_ts = scan_ts
+            if self._motion_memory is not None:
+                motion_id = int(state.get("prox_investigate_motion_id", 0) or 0)
+                if motion_id > 0:
+                    self._motion_memory.start_fade(motion_id, now=now)
+                else:
+                    self._motion_memory.start_fade(now=now)
+
+        if not state.get("prox_investigate_active"):
+            verified = self._person_memory.best_prox_verified(
+                current_world_yaw_deg=float(state["base_world_yaw_deg"]),
+                now=now,
+                max_age_sec=self.prox_revisit_max_age_sec,
+            )
+            return verified.world_yaw_deg if verified is not None else None
+
+        if state.get("prox_investigate_phase") not in ("scan", "turn", "done"):
+            return None
+        if not face_detected and not body_detected:
+            return None
+
+        inv_yaw = float(state.get("prox_investigate_yaw", 0.0))
+        kind = "face" if face_detected else "body"
+        if face_detected:
+            self._person_memory.observe(
+                norm_x=face_norm_x,
+                norm_y=face_norm_y,
+                base_world_yaw_deg=float(state["base_world_yaw_deg"]),
+                pan_mech_deg=float(state["servo_pan"]) - 80.0,
+                kind=kind,
+                confidence=self.pm_face_conf if face_detected else self.pm_body_conf,
+                source="prox_verify",
+                now=now,
+            )
+        else:
+            self._person_memory.observe_at_yaw(
+                world_yaw_deg=inv_yaw,
+                kind=kind,
+                source="prox_verify",
+                confidence=self.pm_body_conf,
+                now=now,
+            )
+        if self._motion_memory is not None:
+            self._motion_memory.mark_verified(inv_yaw, now=now)
+        self.bb.write(
+            prox_investigate_active=False,
+            prox_investigate_phase="",
+            prox_search_active=False,
+        )
+        return inv_yaw
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
@@ -411,6 +526,16 @@ class FaceTracker:
                     face_detected = True
                     self._update_memory(face_norm_x, face_norm_y, "face", now, confidence=self.pm_face_conf)
 
+            # ── Proximity motion + verify ───────────────────────────────────
+            self._record_prox_motion(now)
+            verified_yaw = self._handle_prox_verify(
+                now,
+                face_detected=face_detected,
+                body_detected=body_detected,
+                face_norm_x=face_norm_x,
+                face_norm_y=face_norm_y,
+            )
+
             # ── Last-seen-at-edge tracking ──────────────────────────────────
             last_seen_yaw = None
             if (
@@ -427,6 +552,14 @@ class FaceTracker:
 
             # ── Publish to Blackboard ────────────────────────────────────────
             snapshots = self._person_memory.snapshots(now) if self._person_memory else []
+            motion_snapshots = self._motion_memory.snapshots(now) if self._motion_memory else []
+            if verified_yaw is None and self._person_memory is not None:
+                best_verified = self._person_memory.best_prox_verified(
+                    current_world_yaw_deg=self.bb.read("base_world_yaw_deg")["base_world_yaw_deg"],
+                    now=now,
+                    max_age_sec=self.prox_revisit_max_age_sec,
+                )
+                verified_yaw = best_verified.world_yaw_deg if best_verified is not None else None
             self.bb.write(
                 face_detected=face_detected,
                 face_norm_x=face_norm_x,
@@ -438,7 +571,9 @@ class FaceTracker:
                 body_detected=body_detected,
                 track_kind=track_kind,
                 person_snapshots=snapshots,
+                motion_snapshots=motion_snapshots,
                 last_seen_world_yaw=last_seen_yaw,
+                prox_verified_priority_yaw=verified_yaw,
             )
 
             # ── Publish stream frame ─────────────────────────────────────────

@@ -107,6 +107,8 @@ class EmotionEngine:
                 "manual_emotion",
                 "voice_session_active",
                 "conv_emotion",
+                "prox_glance_active",
+                "prox_glance_emotion",
                 "face_detected",
                 "face_area_ratio",
                 "face_norm_x",
@@ -137,6 +139,11 @@ class EmotionEngine:
                 time.sleep(loop_delay)
                 continue
             self._conv_emotion_last = None
+
+            if state.get("prox_glance_active") and state.get("prox_glance_emotion"):
+                self._set(str(state["prox_glance_emotion"]))
+                time.sleep(loop_delay)
+                continue
 
             face = state["face_detected"]
             area = float(state["face_area_ratio"])

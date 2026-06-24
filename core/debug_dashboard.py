@@ -176,6 +176,7 @@ def build_debug_snapshot(
         imu_horizon_ok=bool(state.get("imu_horizon_ok", True)),
         servo_connected=True,
         person_memories=state.get("person_snapshots") or [],
+        motion_memories=state.get("motion_snapshots") or [],
         active_memory_id=0,
         prox_approach_active=bool(state.get("prox_approach_active", False)),
         prox_approach_zone=str(state.get("prox_approach_zone", "")),
@@ -187,6 +188,9 @@ def build_debug_snapshot(
         prox_zone_right=bool(state.get("prox_zone_right", False)),
         prox_search_active=bool(state.get("prox_search_active", False)),
         prox_glance_active=bool(state.get("prox_glance_active", False)),
+        prox_investigate_active=bool(state.get("prox_investigate_active", False)),
+        prox_investigate_phase=str(state.get("prox_investigate_phase", "")),
+        prox_investigate_zone=str(state.get("prox_investigate_zone", "")),
     )
     result = asdict(snap)
     result["manual_control_enabled"] = bool(state.get("manual_control_enabled", False))

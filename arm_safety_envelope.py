@@ -30,9 +30,10 @@ class _CoupledArm:
     sweep_idx: int
     raise_low: float
     raise_high: float
-    sweep_home_low: float  # sweep at home (low raise)
-    sweep_out_low: float  # max sweep reach at low raise
-    sweep_at_high: float  # sweep limit at max raise (narrows / decreases)
+    sweep_home_low: float  # raise_low_min_sweep at low raise
+    sweep_out_low: float  # max_sweep_at_low at low raise
+    sweep_min_at_high: float  # min_sweep_at_high at max raise
+    sweep_max_at_high: float  # max_sweep_at_high at max raise
     raise_inverted: bool
     raise_min: float
     raise_max: float
@@ -50,8 +51,8 @@ class _CoupledArm:
 
     def sweep_range(self, raise_deg: float) -> tuple[float, float]:
         t = self.raise_t(raise_deg)
-        lo = _lerp(self.sweep_out_low, self.sweep_at_high, t)
-        hi = _lerp(self.sweep_home_low, self.sweep_at_high, t)
+        lo = _lerp(self.sweep_out_low, self.sweep_max_at_high, t)
+        hi = _lerp(self.sweep_home_low, self.sweep_min_at_high, t)
         return _ordered_pair(lo, hi)
 
     def clamp_raise(self, raise_deg: float) -> float:
@@ -94,6 +95,7 @@ class ArmSafetyEnvelope:
         max_sw_low = poses["max_sweep_at_low"]
         high_raise = poses["max_raise"]
         min_sw_high = poses["min_sweep_at_high"]
+        max_sw_high = poses["max_sweep_at_high"]
 
         right = _CoupledArm(
             raise_idx=0,
@@ -102,7 +104,8 @@ class ArmSafetyEnvelope:
             raise_high=high_raise[0],
             sweep_home_low=low[2],
             sweep_out_low=max_sw_low[2],
-            sweep_at_high=high_raise[2],
+            sweep_min_at_high=min_sw_high[2],
+            sweep_max_at_high=max_sw_high[2],
             raise_inverted=False,
             raise_min=mins[0],
             raise_max=maxs[0],
@@ -114,7 +117,8 @@ class ArmSafetyEnvelope:
             raise_high=high_raise[1],
             sweep_home_low=low[3],
             sweep_out_low=max_sw_low[3],
-            sweep_at_high=min_sw_high[3],
+            sweep_min_at_high=min_sw_high[3],
+            sweep_max_at_high=max_sw_high[3],
             raise_inverted=True,
             raise_min=mins[1],
             raise_max=maxs[1],

@@ -838,11 +838,11 @@ class ServoLoop:
             else:
                 pan_goal = self.pan_center
                 tilt_goal = effective_tilt_center
-                pan_max_step = min(self.pan_max_step_deg, self.pan_wander_slew_dps * max(dt, 0.001))
-                tilt_max_step = min(self.tilt_max_step_deg, self.tilt_wander_slew_dps * max(dt, 0.001))
+                pan_max_step = min(self.pan_max_step_deg, self.pan_track_slew_dps * max(dt, 0.001))
+                tilt_max_step = min(self.tilt_max_step_deg, self.tilt_track_slew_dps * max(dt, 0.001))
                 self._pan = _smooth_toward_stepped(
                     self._pan, pan_goal, dt,
-                    smooth_hz=self.pan_wander_smooth_hz, lo=self.pan_min, hi=self.pan_max,
+                    smooth_hz=self.pan_smooth_hz, lo=self.pan_min, hi=self.pan_max,
                     max_step=pan_max_step,
                 )
                 self._tilt = _smooth_toward_stepped(

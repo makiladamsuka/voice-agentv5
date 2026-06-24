@@ -639,9 +639,9 @@ class BaseController:
             return None, "", 0.0
 
         if zone == "L":
-            step_sign = -1.0
-        elif zone == "R":
             step_sign = 1.0
+        elif zone == "R":
+            step_sign = -1.0
         elif zone == "C":
             self.bb.write(
                 prox_search_active=True,

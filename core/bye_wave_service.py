@@ -53,7 +53,7 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 "border:2px solid #ff6a00;box-shadow:0 0 25px rgba(255,106,0,.2)}"
                 "img{display:block;max-width:100%;height:auto}</style></head>"
                 "<body><h1>Wave Detector</h1>"
-                "<p style='color:#94a3b8'>No height limit. 4 swings triggers bye animation.</p>"
+                "<p style='color:#94a3b8'>No height limit. Hand near face triggers bye animation.</p>"
                 "<div class='box'><img src='/stream'/></div>"
                 f"<p style='color:#555;font-size:.75rem'>http://{host_ip}:{port}/stream</p>"
                 "</body></html>"
@@ -93,79 +93,80 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
         pass
 
 
-class _WavingDetector:
-    """Tracks palm history and fires wave_callback on a 4-swing bye-wave.
-    No height gate. cooldown_until is passed in (read from Blackboard by caller).
-    """
-    def __init__(self, history_len=25, dead_zone_px=10, wave_callback=None):
-        self.history_len = history_len
-        self.dead_zone_px = dead_zone_px
-        self.wave_callback = wave_callback
+class _HandNearFaceDetector:
+    """Tracks palm position and triggers when hand is near the face."""
+
+    def __init__(self, bb, trigger_distance_px=110, trigger_callback=None):
+        self._bb = bb
+        self.trigger_distance_px = trigger_distance_px
+        self.trigger_callback = trigger_callback
         self.announcement_end_time = 0.0
         self.announcement_hand = ""
         self.hand_states = {
             side: {
-                "x_history": collections.deque(maxlen=history_len),
-                "y_history": collections.deque(maxlen=history_len),
+                "x_history": collections.deque(maxlen=25),
+                "y_history": collections.deque(maxlen=25),
                 "last_seen": 0.0,
-                "is_waving": False,
-                "reversals": 0,
-                "amplitude": 0.0,
+                "is_near_face": False,
+                "distance": 999.0,
                 "intensity": 0.0,
             }
             for side in ("Left", "Right")
         }
 
-    def _detect_reversals(self, history):
-        if len(history) < 6:
-            return 0, 0.0
-        reversals = 0
-        anchor = history[0]
-        direction = 0
-        peaks = [history[0]]
-        for val in history[1:]:
-            diff = val - anchor
-            if abs(diff) < self.dead_zone_px:
-                continue
-            new_dir = 1 if diff > 0 else -1
-            if direction != 0 and new_dir != direction:
-                reversals += 1
-                peaks.append(anchor)
-            direction = new_dir
-            anchor = val
-        return reversals, float(max(peaks) - min(peaks)) if peaks else 0.0
+    def process(self, detections, now, cooldown_until, frame_shape):
+        fh, fw = frame_shape[:2]
+        face_detected = self._bb.read("face_detected")["face_detected"]
+        face_px = None
+        if face_detected:
+            face_norm_x = self._bb.read("face_norm_x")["face_norm_x"]
+            face_norm_y = self._bb.read("face_norm_y")["face_norm_y"]
+            face_px = (
+                int((face_norm_x + 1.0) * 0.5 * fw),
+                int((face_norm_y + 1.0) * 0.5 * fh)
+            )
 
-    def process(self, detections, now, cooldown_until):
         for side in ("Left", "Right"):
             if now - self.hand_states[side]["last_seen"] > 0.4:
                 st = self.hand_states[side]
                 st["x_history"].clear()
                 st["y_history"].clear()
-                st["is_waving"] = False
-                st["reversals"] = 0
-                st["amplitude"] = 0.0
+                st["is_near_face"] = False
+                st["distance"] = 999.0
                 st["intensity"] = 0.0
+
         for hand in detections:
             side = hand.physical_side
             state = self.hand_states[side]
             state["last_seen"] = now
             px, py = hand.palm_center
+
             if hand.is_frontside:
                 state["x_history"].append(px)
                 state["y_history"].append(py)
             else:
                 state["x_history"].clear()
                 state["y_history"].clear()
-            rev_x, amp_x = self._detect_reversals(list(state["x_history"]))
-            state["reversals"] = rev_x
-            state["amplitude"] = amp_x
-            state["is_waving"] = rev_x >= 4 and amp_x >= 40.0
-            state["intensity"] = min(1.0, amp_x / 160.0) * min(1.0, rev_x / 4.0)
-            if rev_x >= 4 and amp_x >= 40.0 and now > cooldown_until:
+
+            is_near = False
+            dist = 999.0
+            if face_px:
+                dist = ((px - face_px[0])**2 + (py - face_px[1])**2)**0.5
+                state["distance"] = dist
+                if dist < self.trigger_distance_px:
+                    is_near = True
+
+            state["is_near_face"] = is_near
+            if dist < self.trigger_distance_px * 2:
+                state["intensity"] = max(0.0, 1.0 - (dist / (self.trigger_distance_px * 2)))
+            else:
+                state["intensity"] = 0.0
+
+            if is_near and now > cooldown_until:
                 self.announcement_end_time = now + 3.0
                 self.announcement_hand = side
-                if self.wave_callback is not None:
-                    self.wave_callback(side)
+                if self.trigger_callback is not None:
+                    self.trigger_callback(side)
 
 
 class _ByeSequenceRunner:
@@ -268,16 +269,16 @@ def _draw_hud(frame, hand_states, announcement_hand, announcement_end_time,
                     cv2.FONT_HERSHEY_SIMPLEX, 0.28, (255, 255, 255), 1, cv2.LINE_AA)
         if seen:
             col = (0, 255, 150)
-            lbl = "WAVE ANYWHERE"
+            lbl = "TRACKING"
             if now < cooldown_until:
                 lbl, col = "COOLDOWN...", (0, 165, 255)
-            elif state["reversals"] >= 4:
+            elif state["is_near_face"]:
                 lbl, col = "TRIGGERED!", (255, 255, 0)
-            elif state["reversals"] >= 3:
-                lbl, col = f"SWINGS:{state['reversals']}/4", (0, 255, 255)
+            elif state["distance"] < 180:
+                lbl, col = "NEAR FACE", (0, 255, 255)
             cv2.putText(frame, lbl, (bx + 3, by + 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.26, col, 1, cv2.LINE_AA)
-            cv2.putText(frame, f"sw:{state['reversals']} {state['amplitude']:.0f}px",
+            cv2.putText(frame, f"dist:{state['distance']:.0f}px",
                         (bx + 3, by + 32), cv2.FONT_HERSHEY_SIMPLEX, 0.24, (200, 200, 200), 1)
             _draw_gauge(frame, bx + 3, by + 36, 71, state["intensity"])
         else:
@@ -359,7 +360,7 @@ class ByeWaveService:
             cooldown_sec=self._cooldown_sec,
             envelope=self._envelope,
         )
-        waving_detector = _WavingDetector(wave_callback=bye_runner.trigger)
+        waving_detector = _HandNearFaceDetector(bb=self._bb, trigger_callback=bye_runner.trigger)
 
         def _on_complete() -> None:
             until = time.time() + self._cooldown_sec
@@ -372,7 +373,7 @@ class ByeWaveService:
         fps = 0.0
         last_frame_token = -1
 
-        print("[ByeWaveService] Running -- wave your hand to trigger a bye animation.")
+        print("[ByeWaveService] Running -- bring your hand near your face to trigger a bye animation.")
 
         while self._bb.read("running")["running"]:
             raw = self._bb.read("stream_frame")["stream_frame"]
@@ -396,7 +397,7 @@ class ByeWaveService:
 
             annotated = frame.copy()
             for hand in detections:
-                is_waving = waving_detector.hand_states[hand.physical_side]["is_waving"]
+                is_waving = waving_detector.hand_states[hand.physical_side]["is_near_face"]
                 draw_skeleton(annotated, hand, is_active=is_waving)
                 st = waving_detector.hand_states[hand.physical_side]
                 draw_motion_trail(
@@ -405,7 +406,7 @@ class ByeWaveService:
                 )
 
             cooldown_until = self._bb.read("bye_wave_cooldown_until")["bye_wave_cooldown_until"]
-            waving_detector.process(detections, now, cooldown_until)
+            waving_detector.process(detections, now, cooldown_until, frame.shape)
 
             fps_now = time.time()
             fps = 1.0 / max(fps_now - prev_time, 1e-6)

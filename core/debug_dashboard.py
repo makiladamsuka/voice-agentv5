@@ -218,6 +218,10 @@ def build_debug_snapshot(
     result["true_front_body_deg"] = true_front_body
     result["fusion_head_pan_error_deg"] = fusion_pan_err
     result["base_spin_active"] = base_spin_active
+    result["base_motion_allowed"] = bool(state.get("base_motion_allowed", True))
+    result["base_fault_reason"] = str(state.get("base_fault_reason") or "")
+    result["base_last_spin_reason"] = str(state.get("base_last_spin_reason") or "")
+    result["base_last_spin_moved_deg"] = float(state.get("base_last_spin_moved_deg", 0.0))
     result["base_fwd_deg"] = base_enc
     result["true_north_deg"] = 0.0
     result["pan_rel_base_deg"] = pan_mech

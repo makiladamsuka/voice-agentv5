@@ -81,6 +81,9 @@ last_seen_search:
   timeout_sec: 5.0             # search last-seen bearing until this (then memory/wander)
   track_gain: 0.65
   max_pan_step_deg: 8.0
+  pan_smooth_hz: 3.2             # glide toward last-seen bearing (lower = softer)
+  pan_slew_dps: 22.0             # max pan cmd °/s while searching last seen
+  entry_blend_sec: 0.55          # ramp pan smooth rate after leaving wander
   base_enabled: true
   base_min_yaw_error_deg: 8.0
   base_min_step_deg: 1.5
@@ -133,7 +136,7 @@ base:
   command_scale: 0.1714  # legacy; spin control uses encoder DEG directly (see spin_*)
   spin_stop_tolerance_deg: 1.5
   spin_timeout_sec: 4.0       # hard cap; small steps use shorter internal deadline
-  spin_stall_sec: 0.28       # stop if encoder counts stop advancing
+  spin_stall_sec: 0.35       # stop if encoder counts stop advancing (scaled up for large steps)
   spin_positive_uses_left: false  # +step = R spin; -step = L spin (encoder DEG axis)
   # --- behavior (safe to tune) ---
   error_backoff_sec: 45.0
@@ -357,6 +360,10 @@ proximity:
   turn_window_sec: 30.0
   # How far to turn toward a side sensor (~45° mounting angle)
   turn_step_deg: 35.0
+  # Cap proximity base spins (large steps stall more often in tight spaces)
+  base_turn_max_deg: 10.0
+  # Skip L/R proximity spins when all ToF zones show presence (walls/furniture)
+  skip_when_all_zones_occupied: true
   # Min time between proximity turns
   cooldown_sec: 5.0
   # Counter-rotate neck to keep gaze during turn

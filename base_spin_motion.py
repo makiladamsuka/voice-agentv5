@@ -116,8 +116,8 @@ def write_base_step_spin(
     st1 = link.query_status()
     if st1 is not None:
         delta = st1.degrees - start_deg
-        if not ok and reason == "timeout":
-            if abs(delta) >= abs(enc_target) * 0.35:
+        if not ok and reason in ("timeout", "stall"):
+            if abs(delta) >= abs(enc_target) * 0.5:
                 ok = True
                 reason = "target_partial"
     return ok, delta, reason

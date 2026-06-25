@@ -295,6 +295,9 @@ class ServoLoop:
         self.pm_hfov = float(pm.get("camera_hfov_deg", 62.0))
         self.lss_track_gain = float(lss.get("track_gain", 0.65))
         self.lss_max_step = float(lss.get("max_pan_step_deg", 8.0))
+        self.lss_pan_smooth_hz = float(lss.get("pan_smooth_hz", 3.2))
+        self.lss_pan_slew_dps = float(lss.get("pan_slew_dps", 22.0))
+        self.lss_entry_blend_sec = float(lss.get("entry_blend_sec", 0.55))
         self.lss_timeout = float(lss.get("timeout_sec", 5.0))
         self.lss_edge_norm = float(lss.get("edge_norm", 0.40))
 
@@ -338,6 +341,7 @@ class ServoLoop:
         self._prev_face_raw_y = 0.0
         self._lss_active = False
         self._lss_start_ts = 0.0
+        self._lss_enter_ts = 0.0
         self._memory_reacquire_ts = 0.0
         self._last_base_enc = None
         self._proactive_comp_applied = False
@@ -596,6 +600,43 @@ class ServoLoop:
         self._effective_tilt_center_smooth += (target - self._effective_tilt_center_smooth) * center_alpha
         return self._effective_tilt_center_smooth
 
+    def _lss_pan_goal_for(self, last_yaw: float, world_yaw: float) -> float:
+        """Pan command that aims the head toward last-seen world bearing."""
+        yaw_err = angular_error_deg(last_yaw, world_yaw)
+        if abs(yaw_err) < 0.35:
+            return self._pan
+        current_mech = signed_pan_mech_deg(self._pan, self._servo_cfg)
+        target_mech = clamp(
+            current_mech + yaw_err,
+            min(self.mech_left, self.mech_right),
+            max(self.mech_left, self.mech_right),
+        )
+        return mech_to_pan_cmd(
+            target_mech,
+            pan_center=self.pan_center,
+            pan_min=self.pan_min,
+            pan_max=self.pan_max,
+            mech_left=self.mech_left,
+            mech_right=self.mech_right,
+            pan_sign=self.pan_sign,
+        )
+
+    def _enter_last_seen(self, now: float, last_yaw: float, world_yaw: float) -> None:
+        """Glide from wander pose toward last-seen without a pan snap."""
+        self._lss_enter_ts = now
+        self._wander.moving = False
+        self._wander.pan_goal = self._pan
+        self._wander.tilt_goal = self._tilt
+        self._pan_pid.soften(0.2)
+        self._tilt_pid.soften(0.2)
+
+    def _lss_pan_smooth_hz(self, now: float) -> float:
+        if self._lss_enter_ts <= 0.0:
+            return self.lss_pan_smooth_hz
+        elapsed = now - self._lss_enter_ts
+        blend = clamp(elapsed / max(0.05, self.lss_entry_blend_sec), 0.0, 1.0)
+        return self.lss_pan_smooth_hz * (0.22 + 0.78 * blend)
+
     def _on_mode_change(self, old_mode: str, new_mode: str) -> None:
         """Avoid PID derivative spikes when switching track ↔ wander."""
         if old_mode == new_mode:
@@ -635,6 +676,15 @@ class ServoLoop:
         elif new_mode == "wander":
             self._wander.tilt_goal = self._tilt
             self._wander.pan_goal = self._pan
+        if new_mode == "last_seen":
+            state = self.bb.read("last_seen_world_yaw", "base_world_yaw_deg")
+            last_yaw = state["last_seen_world_yaw"]
+            if last_yaw is not None:
+                self._enter_last_seen(
+                    time.time(),
+                    float(last_yaw),
+                    float(state["base_world_yaw_deg"]),
+                )
         if old_mode == "track" and new_mode != "track":
             imu_state = self.bb.read(
                 "imu_available", "imu_horizon_ok", "imu_effective_tilt_center",
@@ -1016,12 +1066,23 @@ class ServoLoop:
             self._lss_active = False
             return "wander"
 
-        # Aim pan toward last-seen world yaw
-        world_yaw = state["base_world_yaw_deg"]
-        yaw_err = angular_error_deg(last_yaw, world_yaw)
-        pan_step = clamp(yaw_err * self.lss_track_gain, -self.lss_max_step, self.lss_max_step)
-        pan_target = clamp(self._pan + pan_step, self.pan_min, self.pan_max)
-        self._pan = smooth_toward(self._pan, pan_target, dt, smooth_hz=self.pan_smooth_hz, lo=self.pan_min, hi=self.pan_max)
+        # Glide toward last-seen world bearing (smooth entry from wander).
+        world_yaw = float(state["base_world_yaw_deg"])
+        pan_target = self._lss_pan_goal_for(float(last_yaw), world_yaw)
+        pan_hz = self._lss_pan_smooth_hz(now)
+        pan_max_step = min(
+            self.lss_max_step,
+            self.lss_pan_slew_dps * max(dt, 0.001),
+        )
+        self._pan = _smooth_toward_stepped(
+            self._pan,
+            pan_target,
+            dt,
+            smooth_hz=pan_hz,
+            lo=self.pan_min,
+            hi=self.pan_max,
+            max_step=pan_max_step,
+        )
 
         tilt_hz = self.tilt_smooth_hz * 0.28
         self._tilt = smooth_toward(self._tilt, effective_tilt_center, dt, smooth_hz=tilt_hz, lo=self.tilt_min, hi=self.tilt_max)

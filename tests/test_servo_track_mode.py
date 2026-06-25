@@ -30,7 +30,7 @@ def test_wander_does_not_immediately_drop_back_when_face_appears():
     loop._last_face_ts = 0.0
     loop._last_body_ts = 0.0
 
-    next_mode = loop._tick_wander(now=100.0, dt=0.01, effective_tilt_center=loop.tilt_center)
+    next_mode = loop._tick_wander(now=100.0, dt=0.01, effective_tilt_center=loop.tilt_center, camera_world_yaw_deg=0.0)
     assert next_mode == "track"
     assert loop._last_face_ts == 100.0
 
@@ -239,7 +239,7 @@ def test_wander_to_track_moves_pan_when_face_off_center():
     loop._pan = loop.pan_center
     mech_before = _mech(loop._pan, loop)
 
-    next_mode = loop._tick_wander(now=100.0, dt=0.05, effective_tilt_center=loop.tilt_center)
+    next_mode = loop._tick_wander(now=100.0, dt=0.05, effective_tilt_center=loop.tilt_center, camera_world_yaw_deg=0.0)
     assert next_mode == "track"
     loop._on_mode_change("wander", "track")
     loop._mode = "track"
@@ -381,6 +381,41 @@ def test_wander_holds_track_pose_after_loss():
     loop._pan = track_pan
     loop._tilt = loop.tilt_center + 4.0
     loop._enter_wander_from_current_pose(100.0)
-    loop._tick_wander(now=100.05, dt=0.05, effective_tilt_center=loop.tilt_center - 8.0)
+    loop._tick_wander(now=100.05, dt=0.05, effective_tilt_center=loop.tilt_center - 8.0, camera_world_yaw_deg=0.0)
     assert abs(loop._pan - track_pan) < 2.0
     assert abs(loop._tilt - (loop.tilt_center + 4.0)) < 2.0
+
+
+def test_last_seen_pan_glides_without_large_step():
+    """Entering last-seen from wander should slew pan, not jump by max_pan_step in one tick."""
+    bb = Blackboard()
+    bb.write(
+        running=True,
+        face_detected=False,
+        body_detected=False,
+        last_seen_world_yaw=35.0,
+        base_world_yaw_deg=0.0,
+    )
+    loop = ServoLoop(bb)
+    loop._mode = "last_seen"
+    loop._pan = loop.pan_center
+    loop._lss_start_ts = 100.0
+    loop._enter_last_seen(100.0, 35.0, 0.0)
+    loop.lss_pan_slew_dps = 22.0
+    loop.lss_max_step = 8.0
+
+    before = loop._pan
+    loop._tick_last_seen(now=100.02, dt=0.02, effective_tilt_center=loop.tilt_center)
+    step = abs(loop._pan - before)
+    assert step <= loop.lss_pan_slew_dps * 0.02 + 0.05
+    assert step < loop.lss_max_step
+
+
+def test_last_seen_entry_stops_wander_motion():
+    loop = ServoLoop(Blackboard())
+    loop._wander.moving = True
+    loop._wander.pan_goal = loop.pan_center + 30.0
+    loop._pan = loop.pan_center + 5.0
+    loop._enter_last_seen(50.0, 20.0, 0.0)
+    assert loop._wander.moving is False
+    assert loop._wander.pan_goal == loop._pan

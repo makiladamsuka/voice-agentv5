@@ -667,7 +667,7 @@ function updateProxHud(s) {
       text = `${s.prox_approach_distance || '?'}mm`;
     } else if (zones[key]) {
       mode = 'presence';
-      text = 'occupied';
+      text = 'presence';
     }
     cell.className = 'prox-cell' + (mode ? ` ${mode}` : '');
     if (st) st.textContent = text;
@@ -689,7 +689,7 @@ function updateProxHud(s) {
       line.textContent = 'Glancing toward approach';
     } else {
       line.className = 'approach-line';
-      line.textContent = 'No approach';
+      line.textContent = 'No approach (zones may still show presence ≤800mm)';
     }
   }
 }
@@ -877,7 +877,7 @@ function setStats(s) {
     <div class="row"><span class="k">face</span><span>${s.face_seen ? 'yes' : 'no'} x=${fmt(s.face_norm_x,2)} y=${fmt(s.face_norm_y,2)} n=${s.face_count||0}${s.pan_hold ? ' <span class="warn">pan hold</span>' : ''}</span></div>
     <div class="row"><span class="k">memory</span><span>${mems.length} active ${s.active_memory_id ? '#'+s.active_memory_id : '-'}</span></div>
     <div class="row"><span class="k">mem list</span><span>${memText}</span></div>
-    <div class="row"><span class="k">base</span><span>body ${fmt(s.body_yaw_deg ?? s.base_yaw_deg)} enc ${fmt(s.base_yaw_deg)} world ${fmt(s.world_head_yaw_deg ?? s.base_world_yaw_deg)} busy ${s.base_busy ? 'yes' : 'no'}</span></div>
+    <div class="row"><span class="k">base</span><span>body ${fmt(s.body_yaw_deg ?? s.base_yaw_deg)} enc ${fmt(s.base_yaw_deg)} world ${fmt(s.world_head_yaw_deg ?? s.base_world_yaw_deg)} busy ${s.base_busy ? 'yes' : 'no'}${s.base_motion_allowed === false ? ' · <span style="color:#f66">PAUSED</span>' : ''}${s.base_fault_reason ? ` · ${s.base_fault_reason}` : ''}${s.base_last_spin_reason ? ` · last ${s.base_last_spin_reason}` : ''}</span></div>
     <div class="row"><span class="k">yaw split</span><span>body ${fmt(s.body_yaw_deg ?? s.base_yaw_deg)} head ${fmt(s.head_yaw_on_body_deg ?? s.imu_pan_delta_deg)} imu ${fmt(s.imu_yaw_rel_deg ?? s.imu_yaw_total_deg)}</span></div>
     <div class="row"><span class="k">IMU pitch</span><span class="${Math.abs(s.imu_pitch_deg||0) > 8 ? 'warn' : 'ok'}">${fmt(s.imu_pitch_deg)}° (vs mech ${fmt(s.tilt_mech_deg)}°)</span></div>
     <div class="row"><span class="k">IMU roll</span><span>${fmt(s.imu_roll_deg)}</span></div>

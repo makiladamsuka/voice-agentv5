@@ -442,6 +442,10 @@ class ServoMixer:
             self.bb.write(base_motion_busy=True, base_spin_active=True)
             from base_spin_motion import write_base_step_spin
 
+            stall_sec = max(
+                self.spin_stall_sec,
+                min(1.2, abs(step) * 0.045 + 0.15),
+            )
             ok, moved_deg, stop_reason = write_base_step_spin(
                 self._link,
                 step,
@@ -449,7 +453,7 @@ class ServoMixer:
                 timeout_sec=self.spin_timeout_sec,
                 positive_uses_left=self.spin_positive_uses_left,
                 encoder_sign=self.encoder_sign,
-                stall_sec=self.spin_stall_sec,
+                stall_sec=stall_sec,
                 on_poll=self._refresh_during_spin,
             )
             self._link.unmute_tof()

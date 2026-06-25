@@ -196,6 +196,8 @@ class BaseController:
         self.prox_max_turns = int(prox.get("max_turns_per_window", 2))
         self.prox_window_sec = float(prox.get("turn_window_sec", 30.0))
         self.prox_turn_step = float(prox.get("turn_step_deg", 35.0))
+        self.prox_base_turn_max = float(prox.get("base_turn_max_deg", 12.0))
+        self.prox_skip_all_zones_occupied = bool(prox.get("skip_when_all_zones_occupied", True))
         self.prox_comp_gain = float(prox.get("compensation_gain", 0.90))
         self.prox_cooldown_sec = float(prox.get("cooldown_sec", 5.0))
         self.prox_post_motion_blanking_sec = float(prox.get("post_motion_blanking_sec", 1.5))
@@ -655,6 +657,14 @@ class BaseController:
             return None, "", 0.0
         if state.get("prox_approach_confidence", 0) < self.prox_min_confidence:
             return None, "", 0.0
+        zone_count = int(state.get("prox_zone_count", 0) or 0)
+        if (
+            self.prox_skip_all_zones_occupied
+            and zone_count >= 3
+            and not state.get("face_detected", False)
+            and not state.get("body_detected", False)
+        ):
+            return None, "", 0.0
         recent = [t for t in self._prox_turn_timestamps if now - t < self.prox_window_sec]
         if len(recent) >= self.prox_max_turns:
             return None, "", 0.0
@@ -704,7 +714,8 @@ class BaseController:
         else:
             return None, "", 0.0
 
-        step = step_sign * self.prox_turn_step * self.base_sign
+        prox_mag = min(abs(self.prox_turn_step), self.prox_base_turn_max)
+        step = step_sign * prox_mag * self.base_sign
         step = self._apply_gate(
             step, pan, state["base_encoder_deg"], state,
             require_head_lead=False,

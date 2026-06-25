@@ -381,6 +381,17 @@ def main():
         threading.Thread(target=EmotionEngine(bb).run, daemon=True, name="EmotionEngine"),
         threading.Thread(target=EyeRenderer(bb).run, daemon=True, name="EyeRenderer"),
     ]
+    face_greeting_cfg = cfg.get("face_greeting", {}) or {}
+    if face_greeting_cfg.get("enabled", True):
+        from core.face_greeting import FaceGreetingMonitor
+
+        threads.append(
+            threading.Thread(
+                target=FaceGreetingMonitor(bb, config_path=DEFAULT_CONFIG_PATH).run,
+                daemon=True,
+                name="FaceGreeting",
+            )
+        )
     if arm_controller is not None and arm_controller.enabled:
         threads.append(
             threading.Thread(target=arm_controller.run, daemon=True, name="ArmController")

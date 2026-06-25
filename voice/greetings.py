@@ -90,6 +90,29 @@ def generate_greeting(name: str, is_known: bool = True) -> str:
     return random.choice(pool)
 
 
+def generate_random_face_greeting() -> str:
+    """Short generic hello when a face appears (no enrollment / no name)."""
+    time_of_day = get_time_of_day()
+    pool = [
+        "Hi!",
+        "Hello!",
+        "Hey there!",
+        "Oh, hi!",
+        "Hello there!",
+        "Hi there!",
+        "Hey! Good to see you!",
+    ]
+    if time_of_day == "morning":
+        pool.extend(["Good morning!", "Morning! Hi!"])
+    elif time_of_day == "afternoon":
+        pool.extend(["Good afternoon!", "Hey! Good afternoon!"])
+    elif time_of_day == "evening":
+        pool.extend(["Good evening!", "Hey! Good evening!"])
+    else:
+        pool.extend(["Hey! You're up late!", "Hi! Working late?"])
+    return random.choice(pool)
+
+
 def generate_presence_greeting() -> str:
     """Generic greeting when someone approaches during an active voice session (no face ID)."""
     time_of_day = get_time_of_day()

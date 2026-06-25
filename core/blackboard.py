@@ -136,6 +136,10 @@ class Blackboard:
     user_speaking: bool = False              # True when user VAD triggers
     agent_speaking: bool = False             # True when agent TTS is playing
 
+    # ── Face greeting (written by FaceGreetingMonitor, consumed by VoiceService) ─
+    face_greeting_seq: int = 0
+    face_greeting_text: str = ""
+
     # ── Debug manual control (written by viz POST /api/control) ───────────────
     manual_control_enabled: bool = False
     debug_control_cmd: str = ""

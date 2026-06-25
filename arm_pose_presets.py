@@ -47,12 +47,29 @@ def _pose_tuple(entry: dict[str, Any]) -> tuple[float, float, float, float]:
     )
 
 
-class ArmPosePresets:
-    """Load/save named arm poses from a JSON file."""
+def _frames_list(frames: list[tuple[float, float, float, float]]) -> list[dict[str, float]]:
+    return [_pose_dict(*f) for f in frames]
 
-    def __init__(self, path: Path, poses: dict[str, dict[str, float]]) -> None:
+
+def _frames_tuple(entry: dict[str, Any]) -> list[tuple[float, float, float, float]]:
+    raw = entry.get("frames")
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("animation entry must contain a non-empty frames list")
+    return [_pose_tuple(f) for f in raw]
+
+
+class ArmPosePresets:
+    """Load/save named arm poses and multi-frame animations from a JSON file."""
+
+    def __init__(
+        self,
+        path: Path,
+        poses: dict[str, dict[str, float]],
+        animations: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
         self._path = path
         self._poses = poses
+        self._animations = animations if animations is not None else {}
 
     @property
     def path(self) -> Path:
@@ -62,10 +79,11 @@ class ArmPosePresets:
     def load(cls, path: Path | str = DEFAULT_PRESETS_PATH) -> ArmPosePresets:
         p = Path(path)
         if not p.is_file():
-            return cls(p, {})
+            return cls(p, {}, {})
         data = json.loads(p.read_text(encoding="utf-8"))
         poses = {k: dict(v) for k, v in data.get("poses", {}).items()}
-        return cls(p, poses)
+        animations = {k: dict(v) for k, v in data.get("animations", {}).items()}
+        return cls(p, poses, animations)
 
     @classmethod
     def load_or_create_home(
@@ -83,12 +101,22 @@ class ArmPosePresets:
     def list_names(self) -> list[str]:
         return sorted(self._poses.keys())
 
+    def list_animation_names(self) -> list[str]:
+        return sorted(self._animations.keys())
+
     def get(self, name: str) -> tuple[float, float, float, float]:
         key = normalize_pose_name(name) if name not in self._poses else name
         if key not in self._poses:
             known = ", ".join(self.list_names()) or "(none)"
             raise KeyError(f"unknown pose {name!r} — saved: {known}")
         return _pose_tuple(self._poses[key])
+
+    def get_animation(self, name: str) -> list[tuple[float, float, float, float]]:
+        key = normalize_pose_name(name) if name not in self._animations else name
+        if key not in self._animations:
+            known = ", ".join(self.list_animation_names()) or "(none)"
+            raise KeyError(f"unknown animation {name!r} — saved: {known}")
+        return _frames_tuple(self._animations[key])
 
     def save(
         self,
@@ -107,6 +135,24 @@ class ArmPosePresets:
         self._write()
         return key
 
+    def save_animation(
+        self,
+        name: str,
+        frames: list[tuple[float, float, float, float]],
+        *,
+        overwrite: bool = True,
+    ) -> str:
+        if not frames:
+            raise ValueError("animation must contain at least one frame")
+        key = normalize_pose_name(name)
+        if key in self._animations and not overwrite:
+            raise ValueError(f"animation {key!r} already exists")
+        if key in self._poses and not overwrite:
+            raise ValueError(f"name {key!r} already used by a single pose")
+        self._animations[key] = {"frames": _frames_list(frames)}
+        self._write()
+        return key
+
     def delete(self, name: str) -> bool:
         key = normalize_pose_name(name) if name not in self._poses else name
         if key not in self._poses:
@@ -115,13 +161,23 @@ class ArmPosePresets:
         self._write()
         return True
 
+    def delete_animation(self, name: str) -> bool:
+        key = normalize_pose_name(name) if name not in self._animations else name
+        if key not in self._animations:
+            return False
+        del self._animations[key]
+        self._write()
+        return True
+
     def _write(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
+        payload: dict[str, Any] = {
             "version": 1,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "poses": self._poses,
         }
+        if self._animations:
+            payload["animations"] = self._animations
         text = json.dumps(payload, indent=2) + "\n"
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")
         tmp.write_text(text, encoding="utf-8")

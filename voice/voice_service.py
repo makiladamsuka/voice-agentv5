@@ -401,10 +401,34 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     except Exception as e:
         print(f"[VoiceService] Initial greeting failed: {e}")
 
+    async def monitor_face_greetings() -> None:
+        """Speak queued hellos when FaceGreetingMonitor sees a new person."""
+        last_seq = 0
+        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+            try:
+                if _bb is not None:
+                    state = _bb.read("face_greeting_seq", "face_greeting_text")
+                    seq = int(state.get("face_greeting_seq", 0) or 0)
+                    if seq > last_seq:
+                        text = str(state.get("face_greeting_text", "") or "").strip()
+                        last_seq = seq
+                        if text:
+                            print(f"[VoiceService] Face greeting: {text!r}")
+                            _bb.write(conv_emotion="happy")
+                            await session.say(text, allow_interruptions=True)
+            except Exception as exc:
+                print(f"[VoiceService] Face greeting failed: {exc}")
+            await asyncio.sleep(0.25)
+
+    greet_task = asyncio.create_task(monitor_face_greetings())
+
     try:
         while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
             await asyncio.sleep(1)
     finally:
+        greet_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await greet_task
         _session_live = False
         _active_session = None
         if _bb is not None:

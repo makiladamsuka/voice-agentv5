@@ -328,6 +328,12 @@ surroundings_emotion:
 voice:
   enabled: true
 
+face_greeting:
+  enabled: true
+  cooldown_sec: 60.0       # min time before greeting the same visit again
+  hold_sec: 0.45            # face must be visible this long before hello
+  min_face_area_ratio: 0.008  # ignore tiny false detections
+
 proximity:
   enabled: true
   # Mirror L/R when side ToF sensors are swapped vs mux labels (set false if you

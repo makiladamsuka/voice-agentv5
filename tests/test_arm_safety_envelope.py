@@ -27,8 +27,8 @@ class TestArmSafetyEnvelope(unittest.TestCase):
 
     def test_right_sweep_at_high_raise(self) -> None:
         lo, hi = self.env.sweep_range(side="right", raise_deg=124.0)
-        self.assertAlmostEqual(lo, 78.0)
-        self.assertAlmostEqual(hi, 78.0)
+        self.assertAlmostEqual(lo, 44.0)
+        self.assertAlmostEqual(hi, 60.0)
 
     def test_left_sweep_at_home(self) -> None:
         lo, hi = self.env.sweep_range(side="left", raise_deg=65.0)

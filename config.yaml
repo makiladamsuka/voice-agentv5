@@ -39,6 +39,18 @@ debug_viz:
   tilt_sign: 1.0              # flip head tilt (W/S); flip to -1.0 if viz tilts opposite
   imu_pitch_sign: -1.0        # flip IMU pitch chip on head mesh
 
+# Standalone IMU-only viz (tilt / pan / yaw) — python3 tests/imu_orient_viz.py
+imu_orient_viz:
+  host: "0.0.0.0"
+  port: 8083
+  use_level_cal: false
+  servo_enabled: true
+  head_step_deg: 5.0
+  error_warn_deg: 3.0
+  unlock_servo_limits: true   # 0–180° jog (test_servo_manual style); false = config pan/tilt_min/max
+  encoder_poll_hz: 5.0
+  base_yaw_sign: 1.0         # flip 3D body rotation if needed
+
 person_memory:
   enabled: true
   timeout_sec: 20.0

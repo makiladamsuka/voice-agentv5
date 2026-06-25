@@ -56,6 +56,7 @@ if not _has_display:
 
 import cv2  # noqa: E402  (must come after env-var setup)
 
+from arduino_servo import ArduinoServoLink
 from lib.hand_detector import HandDetector, HandDetection, draw_skeleton, draw_motion_trail
 
 # ── Streaming Server State ────────────────────────────────────────────────────
@@ -231,9 +232,9 @@ class ByeSequenceRunner:
 
     Parameters
     ----------
-    bb:
-        A ``Blackboard`` instance used to publish arm poses, or ``None`` when
-        arm motion is disabled (e.g. Blackboard unavailable at startup).
+    servo_link:
+        A connected ``ArduinoServoLink`` used to send arm poses directly to the
+        ESP32, or ``None`` when arm motion is disabled (e.g. serial unavailable).
     presets_path:
         ``pathlib.Path`` pointing to ``tests/arm_pose_presets.json``.  The file
         is loaded fresh on each ``trigger()`` call so in-place edits take effect
@@ -246,14 +247,14 @@ class ByeSequenceRunner:
 
     def __init__(
         self,
-        bb,
+        servo_link: ArduinoServoLink | None,
         presets_path: pathlib.Path,
         on_complete=None,
     ) -> None:
         self._lock: threading.Lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._running: bool = False
-        self._bb = bb
+        self._servo_link = servo_link
         self._presets_path: pathlib.Path = presets_path
         self._on_complete = on_complete
 
@@ -275,7 +276,7 @@ class ByeSequenceRunner:
            ``["bye1","bye2","bye3"]`` at random.
         3. On any file / parse / key error: print to stderr, release lock, return.
         4. Set ``_running = True``; spawn daemon thread targeting
-           ``_run_animation(frames)``; release lock.
+           ``_run_animation(frames, key)``; release lock.
         """
         with self._lock:
             if self._running:
@@ -315,6 +316,7 @@ class ByeSequenceRunner:
                 return
 
             # Step 4 – set running flag and spawn daemon thread
+            print(f"[BYE] Playing animation '{key}' ({len(frames)} frames)")
             self._running = True
             self._thread = threading.Thread(
                 target=self._run_animation,
@@ -327,17 +329,20 @@ class ByeSequenceRunner:
     def _run_animation(self, frames: list[dict]) -> None:
         """Execute the animation on the background thread.
 
-        For each frame dict, writes arm pose to the Blackboard (if available)
+        For each frame dict, sends arm pose directly to the ESP32 via
+        ``ArduinoServoLink.write_arms()`` (force=True bypasses the motion-deadband
+        filter so every frame is transmitted even for small angle changes),
         then sleeps 0.25 s.  After the last frame, calls ``_on_complete`` if
         set, then clears the ``_running`` flag under ``_lock``.
         """
         for f in frames:
-            if self._bb is not None:
-                self._bb.write(
-                    arm_a0=f["a0"],
-                    arm_a1=f["a1"],
-                    arm_a2=f["a2"],
-                    arm_a3=f["a3"],
+            if self._servo_link is not None:
+                self._servo_link.write_arms(
+                    f["a0"],
+                    f["a1"],
+                    f["a2"],
+                    f["a3"],
+                    force=True,
                 )
             time.sleep(0.25)
 
@@ -763,84 +768,70 @@ def main() -> None:
 
     # ── 8.2  Startup sequence ─────────────────────────────────────────────────
 
-    # 1. Start MJPEG HTTP server
-    print(f"[SERVER] Starting HTTP stream server on http://{args.host}:{args.port}/")
-    server = ThreadingHTTPServer((args.host, args.port), MJPEGHandler)
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
-
-    # 2. Resolve local IP for the startup banner
-    local_ip = "localhost"
+    # 1. Connect to ESP32 arm servos via ArduinoServoLink (gracefully optional)
+    servo_link: ArduinoServoLink | None = None
+    home_pose: tuple[float, float, float, float] | None = None
     try:
-        _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        _s.connect(("8.8.8.8", 80))
-        local_ip = _s.getsockname()[0]
-        _s.close()
-    except Exception:
-        pass
-
-    print("\n=======================================================")
-    print("      [BYE RUNNER] MediaPipe Bye-Wave Detection Active")
-    print("=======================================================")
-    print(f"  • Local Watch URL:   http://localhost:{args.port}/")
-    print(f"  • Network Watch URL: http://{local_ip}:{args.port}/")
-    print(f"  • Active Camera:     Picamera2")
-    print(f"  • Cooldown:          {args.cooldown:.1f}s")
-    print(f"  • Trigger:           4 swings, 40 px sweep (no height limit)")
-    print("  • Press Ctrl+C in console to stop safely.")
-    print("=======================================================\n")
-
-    # 3. Blackboard + arm controller (gracefully optional)
-    bb = None
-    home_pose = None
-    try:
-        from core.blackboard import Blackboard
-        bb = Blackboard()
-        # Load home pose from presets JSON directly (no full ArmController boot needed)
         _presets_path = pathlib.Path(__file__).resolve().parent / "arm_pose_presets.json"
         _presets_data = json.loads(_presets_path.read_text())
         _hp = _presets_data["poses"]["home"]
         home_pose = (_hp["a0"], _hp["a1"], _hp["a2"], _hp["a3"])
-        # Publish home immediately so servos start in a known position
-        bb.write(arm_a0=home_pose[0], arm_a1=home_pose[1],
-                 arm_a2=home_pose[2], arm_a3=home_pose[3])
-        print("[INFO] Blackboard initialised — arm motion enabled.")
-    except Exception as exc:
-        print(f"[WARNING] Arm/Blackboard unavailable ({exc}); arm motion disabled for this session.",
-              file=sys.stderr)
-        bb = None
-        home_pose = None
 
-    # 4. Presets path for ByeSequenceRunner
+        _link = ArduinoServoLink()
+        if _link.connect():
+            servo_link = _link
+            # Drive arms to home immediately on connect
+            servo_link.write_arms(*home_pose, force=True)
+            print("[INFO] ESP32 connected — arm motion enabled.")
+            print(f"[INFO] Home pose: A0={home_pose[0]:.1f} A1={home_pose[1]:.1f} "
+                  f"A2={home_pose[2]:.1f} A3={home_pose[3]:.1f}")
+        else:
+            print("[WARNING] ESP32 not found; arm motion disabled for this session.",
+                  file=sys.stderr)
+    except Exception as exc:
+        print(f"[WARNING] Servo link setup failed ({exc}); arm motion disabled for this session.",
+              file=sys.stderr)
+        servo_link = None
+
+    # 2. Presets path for ByeSequenceRunner
     presets_path = pathlib.Path(__file__).resolve().parent / "arm_pose_presets.json"
 
-    # 5. Wire up WavingDetector → ByeSequenceRunner with a cooldown callback
+    # 3. Wire up WavingDetector → ByeSequenceRunner with a cooldown callback
     bye_runner = ByeSequenceRunner(
-        bb=bb,
+        servo_link=servo_link,
         presets_path=presets_path,
         on_complete=None,  # patched below after waving_detector is created
     )
 
-    def _on_bye_complete() -> None:
-        """Called by ByeSequenceRunner after animation finishes; sets cooldown."""
-        waving_detector.cooldown_until = time.time() + args.cooldown
-        print(f"[INFO] Bye sequence done — cooldown active for {args.cooldown:.1f}s.")
+    # 4. HTTP server thread
+    server = ThreadingHTTPServer((args.host, args.port), MJPEGHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
 
-    bye_runner._on_complete = _on_bye_complete
+    # 5. Local IP resolution and startup banner
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        local_ip = "localhost"
+    print(f"[INFO] MJPEG stream: http://{local_ip}:{args.port}/")
+    print(f"[INFO] Arm enabled: {servo_link is not None} | Cooldown: {args.cooldown}s")
 
-    def _wave_callback(side: str) -> None:
-        print(f"[EVENT] 👋 BYE WAVE triggered by {side.upper()} hand!")
-        bye_runner.trigger(side)
-
+    # 6. HandDetector and WavingDetector init
+    detector = HandDetector(max_num_hands=args.max_hands)
     waving_detector = WavingDetector(
         cooldown_sec=args.cooldown,
-        wave_callback=_wave_callback,
+        wave_callback=lambda side: bye_runner.trigger(side),
     )
 
-    # 6. Camera feed and hand detector
+    # 7. Set the on_complete callback (after waving_detector exists)
+    bye_runner._on_complete = lambda: setattr(waving_detector, "cooldown_until", time.time() + args.cooldown)
+
+    # 8. CameraFeed.start()
     camera = CameraFeed()
     camera.start()
-    detector = HandDetector(max_num_hands=args.max_hands)
 
     prev_time = time.time()
     fps = 0.0
@@ -914,14 +905,13 @@ def main() -> None:
         # (a) Wait for any in-progress bye animation (2-second timeout)
         bye_runner.join(timeout=2.0)
 
-        # (b) Return arm to home pose
-        if bb is not None and home_pose is not None:
+        # (b) Return arm to home pose via the servo link
+        if servo_link is not None and home_pose is not None:
             try:
-                bb.write(arm_a0=home_pose[0], arm_a1=home_pose[1],
-                         arm_a2=home_pose[2], arm_a3=home_pose[3])
+                servo_link.write_arms(*home_pose, force=True)
                 print("[INFO] Arm returned to home pose.")
             except Exception as exc:
-                print(f"[WARNING] Could not publish home pose on shutdown: {exc}",
+                print(f"[WARNING] Could not send home pose on shutdown: {exc}",
                       file=sys.stderr)
 
         # (c) Stop camera

@@ -41,6 +41,20 @@ def test_decompose_yaw_base_spin_head_on_body_unchanged():
     assert abs(d.head_yaw_on_body_deg) < 0.01
 
 
+def test_decompose_yaw_imu_fallback_during_base_spin():
+    """When encoder lags during spin, IMU-inferred body tracks rotation (lab math)."""
+    fusion = _locked_fusion(pan_mech_deg=0.0, base_encoder_deg=0.0, imu_yaw_total_deg=0.0)
+    d = decompose_yaw(
+        fusion,
+        imu_yaw_total=35.0,
+        base_encoder_deg=5.0,
+        pan_mech_deg=0.0,
+        base_spin_active=True,
+    )
+    assert abs(d.body_yaw_deg - 35.0) < 0.01
+    assert abs(d.head_yaw_on_body_deg) < 0.01
+
+
 def test_drift_reanchor_preserves_startup_body_display():
     from base_yaw_controller import EncoderImuDriftCorrector
 

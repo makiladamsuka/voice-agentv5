@@ -12,6 +12,66 @@ def wrap_degrees(value: float) -> float:
 
 
 @dataclass(frozen=True)
+class TrueFrontReference:
+    """Robot forward at first center lock (startup pose) — fixed world zero."""
+
+    imu_yaw_deg: float = 0.0
+    imu_tilt_deg: float = 0.0
+    servo_pan_mech_deg: float = 0.0
+    servo_tilt_mech_deg: float = 0.0
+    base_encoder_deg: float = 0.0
+
+
+@dataclass(frozen=True)
+class TrueFrontState:
+    """Heading relative to startup true front."""
+
+    heading_deg: float
+    body_deg: float
+    head_on_body_deg: float
+    locked: bool
+
+
+def compute_true_front(
+    *,
+    imu_yaw_deg: float,
+    imu_tilt_deg: float,
+    base_encoder_deg: float,
+    servo: ServoPose,
+    true_front: TrueFrontReference | None,
+    base_spin_active: bool = False,
+) -> TrueFrontState:
+    if true_front is None:
+        return TrueFrontState(
+            heading_deg=0.0,
+            body_deg=0.0,
+            head_on_body_deg=0.0,
+            locked=False,
+        )
+    ref = VerifyReference(
+        imu_yaw_deg=true_front.imu_yaw_deg,
+        imu_tilt_deg=true_front.imu_tilt_deg,
+        servo_pan_mech_deg=true_front.servo_pan_mech_deg,
+        servo_tilt_mech_deg=true_front.servo_tilt_mech_deg,
+        base_encoder_deg=true_front.base_encoder_deg,
+    )
+    state = compute_yaw_verify(
+        imu_yaw_deg=imu_yaw_deg,
+        imu_tilt_deg=imu_tilt_deg,
+        base_encoder_deg=base_encoder_deg,
+        servo=servo,
+        ref=ref,
+        base_spin_active=base_spin_active,
+    )
+    return TrueFrontState(
+        heading_deg=state.world_head_yaw_deg,
+        body_deg=state.body_yaw_deg,
+        head_on_body_deg=state.head_on_body_imu_deg,
+        locked=True,
+    )
+
+
+@dataclass(frozen=True)
 class VerifyReference:
     """Pose locked at center homing."""
 

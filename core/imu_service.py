@@ -213,10 +213,16 @@ class ImuService:
                 "servo_pan",
                 "base_fusion_resync_request",
                 "imu_drift_reset_request",
+                "base_spin_active",
+                "base_motion_busy",
             )
             pan_mech = signed_pan_mech_deg(float(bb_state["servo_pan"]), self._servo_cfg)
             base_enc = float(bb_state["base_encoder_deg"])
             raw_yaw = self._reader.filter.yaw_integral_deg() * self.yaw_sign
+            spin_active = bool(
+                bb_state.get("base_spin_active")
+                or bb_state.get("base_motion_busy")
+            )
 
             if bb_state.get("base_fusion_resync_request"):
                 self._fusion.reset_reference(
@@ -276,6 +282,7 @@ class ImuService:
                     imu_yaw_total=yaw_out,
                     base_encoder_deg=base_enc,
                     pan_mech_deg=pan_mech,
+                    base_spin_active=spin_active,
                 )
             elif self._fusion_initialized:
                 decomp = decompose_yaw(
@@ -283,6 +290,7 @@ class ImuService:
                     imu_yaw_total=raw_yaw,
                     base_encoder_deg=base_enc,
                     pan_mech_deg=pan_mech,
+                    base_spin_active=spin_active,
                 )
 
             self._prev_base_enc = base_enc
@@ -317,6 +325,13 @@ class ImuService:
                     decomp.world_head_yaw_deg if decomp else base_enc + pan_mech
                 ),
                 head_imu_vs_servo_delta_deg=(
+                    decomp.head_imu_vs_servo_delta_deg if decomp else 0.0
+                ),
+                true_front_heading_deg=(
+                    decomp.world_head_yaw_deg if decomp else base_enc + pan_mech
+                ),
+                true_front_body_deg=decomp.body_yaw_deg if decomp else base_enc,
+                fusion_head_pan_error_deg=(
                     decomp.head_imu_vs_servo_delta_deg if decomp else 0.0
                 ),
                 imu_accel_trusted=sample.accel_trusted,

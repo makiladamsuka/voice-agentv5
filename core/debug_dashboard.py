@@ -125,6 +125,10 @@ def build_debug_snapshot(
     imu_rel = float(state.get("imu_yaw_rel_deg", imu_yaw_total))
     world_head = float(state.get("base_world_yaw_deg", body_yaw + head_on_body))
     head_vs_servo = float(state.get("head_imu_vs_servo_delta_deg", head_on_body - pan_mech))
+    true_front_heading = float(state.get("true_front_heading_deg", world_head))
+    true_front_body = float(state.get("true_front_body_deg", body_yaw))
+    fusion_pan_err = float(state.get("fusion_head_pan_error_deg", head_vs_servo))
+    base_spin_active = bool(state.get("base_spin_active", False))
     imu_pan_delta = head_on_body
 
     snap = HeadDebugSnapshot(
@@ -165,6 +169,10 @@ def build_debug_snapshot(
         imu_yaw_rel_deg=imu_rel,
         world_head_yaw_deg=world_head,
         head_imu_vs_servo_delta_deg=head_vs_servo,
+        true_front_heading_deg=true_front_heading,
+        true_front_body_deg=true_front_body,
+        fusion_head_pan_error_deg=fusion_pan_err,
+        base_spin_active=base_spin_active,
         viz_base_yaw_sign=float(debug_viz_cfg.get("base_yaw_sign", 1.0)),
         base_max_yaw_deg=float(base_cfg.get("max_yaw_deg", 120.0)),
         base_busy=bool(state.get("base_motion_busy", False)),
@@ -206,6 +214,10 @@ def build_debug_snapshot(
     result["viz_pan_yaw_sign"] = pan_sign
     result["viz_tilt_sign"] = tilt_sign
     result["viz_imu_pitch_sign"] = imu_pitch_sign
+    result["true_front_heading_deg"] = true_front_heading
+    result["true_front_body_deg"] = true_front_body
+    result["fusion_head_pan_error_deg"] = fusion_pan_err
+    result["base_spin_active"] = base_spin_active
     result["base_fwd_deg"] = base_enc
     result["true_north_deg"] = 0.0
     result["pan_rel_base_deg"] = pan_mech

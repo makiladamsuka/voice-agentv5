@@ -137,6 +137,10 @@ class HeadDebugSnapshot:
     imu_yaw_rel_deg: float = 0.0
     world_head_yaw_deg: float = 0.0
     head_imu_vs_servo_delta_deg: float = 0.0
+    true_front_heading_deg: float = 0.0
+    true_front_body_deg: float = 0.0
+    fusion_head_pan_error_deg: float = 0.0
+    base_spin_active: bool = False
     viz_base_yaw_sign: float = 1.0
     base_max_yaw_deg: float = 120.0
     base_busy: bool = False
@@ -304,15 +308,15 @@ _DEBUG_HTML = """<!DOCTYPE html>
       <div id="ground-hud-body"></div>
     </div>
     <div id="legend">
-      <div><span style="background:#e879f9"></span>true north (+Z fixed)</div>
-      <div><span style="background:#fb923c"></span>body (encoder, on base)</div>
-      <div><span style="background:#f472b6"></span>head on body (IMU − body)</div>
+      <div><span style="background:#f472b6"></span>true front (startup +Z, fixed)</div>
+      <div><span style="background:#34d399"></span>BODY box (encoder yaw)</div>
+      <div><span style="background:#93c5fd"></span>FACE box (neck pan + tilt)</div>
+      <div><span style="background:#f472b6"></span>head look axis (IMU on body)</div>
       <div><span style="background:#fbbf24"></span>world aim (body + head)</div>
-      <div><span style="background:#4ade80"></span>head mesh</div>
       <div><span style="background:#22d3ee"></span>ToF presence (L/C/R)</div>
       <div><span style="background:#f97316"></span>ToF approach beam</div>
       <div><span style="background:#ea580c"></span>ToF motion (fading)</div>
-      <div style="margin-top:4px;color:#8899aa">servo pan cross-check: HUD only</div>
+      <div style="margin-top:4px;color:#8899aa">pink arrow fixed · robot rotates relative to it</div>
     </div>
     <div id="prox-hud">
       <div class="title">ToF PROXIMITY</div>
@@ -420,58 +424,77 @@ function box(w, h, d, color, opacity=1) {
   return m;
 }
 
-const root = new THREE.Group();
-scene.add(root);
+function faceLabelTexture(text, hex, bgHex) {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 160;
+  const ctx = c.getContext('2d');
+  const grd = ctx.createLinearGradient(0, 0, 0, 160);
+  grd.addColorStop(0, bgHex);
+  grd.addColorStop(1, '#0f172a');
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, 256, 160);
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 6;
+  ctx.strokeRect(3, 3, 250, 154);
+  ctx.fillStyle = hex;
+  ctx.font = 'bold 52px ui-monospace, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 128, 80);
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  return tex;
+}
 
-const base = box(0.55, 0.08, 0.55, 0x475569);
-base.position.y = 0.04;
-root.add(base);
+function labeledBox(w, h, d, label, labelColor, faceBg) {
+  const side = new THREE.MeshStandardMaterial({ color: 0x253044 });
+  const top = new THREE.MeshStandardMaterial({ color: 0x334155 });
+  const bottom = new THREE.MeshStandardMaterial({ color: 0x1e293b });
+  const front = new THREE.MeshStandardMaterial({ map: faceLabelTexture(label, labelColor, faceBg) });
+  const back = new THREE.MeshStandardMaterial({ color: 0x1a2332 });
+  return new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    [side, side, top, bottom, front, back]
+  );
+}
 
-const bodyDirGeom = new THREE.BufferGeometry().setFromPoints([
-  new THREE.Vector3(0, 0.05, 0.08),
-  new THREE.Vector3(0, 0.05, 0.95),
-]);
-const bodyDirLine = new THREE.Line(
-  bodyDirGeom,
-  new THREE.LineBasicMaterial({ color: 0xfb923c, linewidth: 2 })
-);
-base.add(bodyDirLine);
-const bodyDirTip = new THREE.Mesh(
-  new THREE.ConeGeometry(0.045, 0.12, 10),
-  new THREE.MeshBasicMaterial({ color: 0xfb923c })
-);
-bodyDirTip.rotation.x = -Math.PI / 2;
-bodyDirTip.position.set(0, 0.05, 0.95);
-base.add(bodyDirTip);
+const robotYaw = new THREE.Group();
+scene.add(robotYaw);
 
-const neck = box(0.12, 0.16, 0.12, 0x64748b);
-neck.position.y = 0.16;
-base.add(neck);
+const bodyBox = labeledBox(0.32, 0.10, 0.14, 'BODY', '#34d399', '#134e4a');
+bodyBox.position.y = 0.05;
+robotYaw.add(bodyBox);
 
-const panNode = new THREE.Group();
-panNode.position.y = 0.24;
-neck.add(panNode);
+const neckBar = box(0.028, 0.10, 0.04, 0x475569);
+neckBar.position.set(0, 0.15, 0);
+robotYaw.add(neckBar);
 
+const headMount = new THREE.Group();
+headMount.position.y = 0.20;
+robotYaw.add(headMount);
+
+const panNode = headMount;
 const tiltNode = new THREE.Group();
-panNode.add(tiltNode);
+headMount.add(tiltNode);
 
-const headMesh = box(0.34, 0.22, 0.18, 0x4ade80);
-headMesh.position.y = 0.11;
-tiltNode.add(headMesh);
+const headBox = labeledBox(0.28, 0.20, 0.10, 'FACE', '#93c5fd', '#1e3a5f');
+headBox.position.y = 0.10;
+tiltNode.add(headBox);
 
-const camLens = box(0.08, 0.08, 0.06, 0x111827);
-camLens.position.set(0, 0.11, 0.12);
+const camLens = box(0.05, 0.05, 0.04, 0x111827);
+camLens.position.set(0, 0.10, 0.06);
 tiltNode.add(camLens);
 
 const imuGroup = new THREE.Group();
-headMesh.add(imuGroup);
-const imuMesh = box(0.08, 0.04, 0.06, 0x60a5fa, 0.85);
-imuMesh.position.set(0.06, 0.08, 0);
+headBox.add(imuGroup);
+const imuMesh = box(0.05, 0.025, 0.04, 0x60a5fa, 0.85);
+imuMesh.position.set(0.05, 0.06, 0);
 imuGroup.add(imuMesh);
 
 const lookGeom = new THREE.BufferGeometry().setFromPoints([
-  new THREE.Vector3(0, 0.11, 0.12),
-  new THREE.Vector3(0, 0.11, 1.2),
+  new THREE.Vector3(0, 0.10, 0.06),
+  new THREE.Vector3(0, 0.10, 0.85),
 ]);
 const lookLine = new THREE.Line(
   lookGeom,
@@ -487,12 +510,12 @@ const trueNorthGeom = new THREE.BufferGeometry().setFromPoints([
 ]);
 const trueNorthLine = new THREE.Line(
   trueNorthGeom,
-  new THREE.LineBasicMaterial({ color: 0xe879f9, linewidth: 2 })
+  new THREE.LineBasicMaterial({ color: 0xf472b6, linewidth: 2 })
 );
 trueNorthGroup.add(trueNorthLine);
 const trueNorthTip = new THREE.Mesh(
   new THREE.ConeGeometry(0.045, 0.11, 10),
-  new THREE.MeshBasicMaterial({ color: 0xe879f9 })
+  new THREE.MeshBasicMaterial({ color: 0xf472b6 })
 );
 trueNorthTip.rotation.x = -Math.PI / 2;
 trueNorthTip.position.set(0, 0.022, 0.95);
@@ -518,16 +541,16 @@ worldAimTip.position.set(0, 0.022, 1.05);
 worldAimGroup.add(worldAimTip);
 
 const limitPan = new THREE.Group();
-base.add(limitPan);
+robotYaw.add(limitPan);
 const limitTilt = new THREE.Group();
-panNode.add(limitTilt);
+headMount.add(limitTilt);
 const memoryGroup = new THREE.Group();
 const motionGroup = new THREE.Group();
 scene.add(memoryGroup);
 scene.add(motionGroup);
 
 const proxGroup = new THREE.Group();
-base.add(proxGroup);
+bodyBox.add(proxGroup);
 
 const PROX_COL = { idle: 0x334155, presence: 0x22d3ee, approach: 0xf97316 };
 const TOF_MOUNT_Z = 0.24;
@@ -738,15 +761,18 @@ function updateGroundHud(s) {
   const bodyG = s.body_yaw_deg ?? s.base_ground_yaw_deg ?? s.base_fwd_deg ?? s.base_yaw_deg ?? 0;
   const headOnBodyG = s.head_yaw_on_body_deg ?? s.neck_pan_rel_base_deg ?? 0;
   const servoPanG = s.pan_rel_base_deg ?? s.pan_mech_deg ?? 0;
-  const trueNorthG = s.true_north_deg ?? 0;
   const worldHeadG = s.world_head_yaw_deg ?? s.head_yaw_ground_deg ?? s.world_fwd_deg ?? 0;
   const headTiltG = s.tilt_ground_deg ?? s.tilt_rel_fwd_deg ?? s.tilt_mech_deg ?? 0;
   const vizYaw = s.viz_world_applied_deg ?? 0;
   const vizTilt = s.viz_tilt_applied_deg ?? 0;
+  const trueFrontG = s.true_front_heading_deg ?? worldHeadG;
+  const trueFrontBodyG = s.true_front_body_deg ?? bodyG;
+  const panErrG = s.fusion_head_pan_error_deg ?? s.head_imu_vs_servo_delta_deg ?? 0;
   el.innerHTML = `
-    <div class="grow"><span class="gk">true north (+Z)</span><span>${fmtDir(trueNorthG)} <span class="gk">fixed</span></span></div>
-    <div class="grow"><span class="gk">body (encoder)</span><span>${fmtDir(bodyG)}</span></div>
+    <div class="grow"><span class="gk">true front (+Z)</span><span>${fmtDir(trueFrontG)} <span class="gk">fixed</span></span></div>
+    <div class="grow"><span class="gk">body (encoder)</span><span>${fmtDir(trueFrontBodyG)}</span></div>
     <div class="grow"><span class="gk">head on body (IMU)</span><span>${fmtDir(headOnBodyG)}</span></div>
+    <div class="grow"><span class="gk">head pan error</span><span class="${Math.abs(panErrG) > 3 ? 'warn' : ''}">${fmt(panErrG)}°</span></div>
     <div class="grow"><span class="gk">servo pan</span><span>${fmtDir(servoPanG)} <span class="gk">cross-check</span></span></div>
     <div class="grow"><span class="gk">world aim</span><span>${fmtDir(worldHeadG)} <span class="gk">body+head</span></span></div>
     <div class="grow"><span class="gk">head tilt (ground)</span><span>${fmtTilt(headTiltG)}</span></div>
@@ -763,25 +789,25 @@ function setFusionStats(s) {
   const showControls = !!s.manual_control_enabled || s.mode === 'manual_test';
   if (controlsEl) controlsEl.style.display = showControls ? 'block' : 'none';
 
-  const fusionDelta = (s.head_imu_vs_servo_delta_deg !== undefined)
-    ? s.head_imu_vs_servo_delta_deg
-    : ((s.fusion_delta_deg !== undefined)
-      ? s.fusion_delta_deg
-      : ((s.head_yaw_on_body_deg || 0) - (s.pan_mech_deg || 0)));
+  const fusionDelta = s.fusion_head_pan_error_deg ?? s.head_imu_vs_servo_delta_deg ?? s.fusion_delta_deg ?? 0;
   const drift = s.imu_drift_correction_deg || 0;
   const stationary = s.fusion_stationary ? 'yes' : 'no';
+  const spinActive = s.base_spin_active ? 'yes' : 'no';
   const cls = (ok) => ok ? 'ok' : 'warn';
-  const bodyYaw = s.body_yaw_deg ?? s.base_fwd_deg ?? s.base_yaw_deg ?? 0;
+  const bodyYaw = s.body_yaw_deg ?? s.true_front_body_deg ?? s.base_fwd_deg ?? s.base_yaw_deg ?? 0;
   const headOnBody = s.head_yaw_on_body_deg ?? 0;
-  const worldHead = s.world_head_yaw_deg ?? s.world_fwd_deg ?? s.base_world_yaw_deg ?? 0;
+  const worldHead = s.true_front_heading_deg ?? s.world_head_yaw_deg ?? s.world_fwd_deg ?? s.base_world_yaw_deg ?? 0;
+  const panErr = s.fusion_head_pan_error_deg ?? fusionDelta;
 
   fusionEl.innerHTML = `
-    <div class="row" style="margin-top:4px;color:#88c0d0"><span>vs forward (0° = startup facing +Z)</span></div>
-    <div class="row"><span class="k">true north</span><span>${fmtDir(s.true_north_deg ?? 0)} <span class="k">fixed</span></span></div>
+    <div class="row" style="margin-top:4px;color:#88c0d0"><span>Fusion (lab math) — 0° = startup true front</span></div>
+    <div class="row"><span class="k">true front heading</span><span>${fmtDir(worldHead)} <span class="k">fixed ref</span></span></div>
     <div class="row"><span class="k">body (encoder)</span><span>${fmtDir(bodyYaw)}</span></div>
     <div class="row"><span class="k">head on body (IMU)</span><span>${fmtDir(headOnBody)} <span class="k">imu−body</span></span></div>
+    <div class="row"><span class="k">head pan error</span><span class="${Math.abs(panErr) > 3 ? 'warn' : 'ok'}">${fmt(panErr)}° <span class="k">neck IMU−servo</span></span></div>
+    <div class="row"><span class="k">base spin</span><span class="${s.base_spin_active ? 'warn' : ''}">${spinActive} <span class="k">IMU fallback when yes</span></span></div>
     <div class="row"><span class="k">servo pan</span><span>${fmtDir(s.pan_rel_base_deg ?? s.pan_mech_deg)} <span class="k">cross-check</span></span></div>
-    <div class="row"><span class="k">world aim</span><span>${fmtDir(worldHead)} <span class="k">body+head</span></span></div>
+    <div class="row"><span class="k">world aim</span><span>${fmtDir(s.world_head_yaw_deg ?? worldHead)} <span class="k">body+head</span></span></div>
     <div class="row"><span class="k">head tilt</span><span>${fmtTilt(s.tilt_rel_fwd_deg ?? s.tilt_mech_deg)} <span class="k">mech on neck</span></span></div>
     <div class="row"><span class="k">3D viz yaw</span><span>${fmtDir(s.viz_world_applied_deg)} <span class="k">(×${fmt(s.viz_base_yaw_sign,0)} body+head)</span></span></div>
     <div class="row"><span class="k">3D viz tilt</span><span>${fmtTilt(vizTiltApplied(s))} <span class="k">(tilt×${fmt(s.viz_tilt_sign,0)})</span></span></div>
@@ -789,7 +815,7 @@ function setFusionStats(s) {
     <div class="row"><span class="k">stationary</span><span class="${cls(s.fusion_stationary)}">${stationary}</span></div>
     <div class="row"><span class="k">enc raw</span><span>${fmt(s.base_yaw_deg)}°</span></div>
     <div class="row"><span class="k">imu rel</span><span>${fmtDir(s.imu_yaw_rel_deg ?? s.imu_yaw_total_deg)}</span></div>
-    <div class="row"><span class="k">head vs servo</span><span class="${Math.abs(fusionDelta) > 8 ? 'warn' : 'ok'}">${fmt(fusionDelta)}° (imu−servo)</span></div>
+    <div class="row"><span class="k">head vs servo</span><span class="${Math.abs(panErr) > 3 ? 'warn' : 'ok'}">${fmt(panErr)}° (imu−servo)</span></div>
     <div class="row"><span class="k">imu total</span><span>${fmtDir(s.imu_yaw_total_deg)}</span></div>
     <div class="row"><span class="k">imu raw</span><span>${fmt(s.imu_yaw_raw_deg)}°</span></div>
     <div class="row"><span class="k">drift fix</span><span class="${Math.abs(drift) > 0.05 ? 'ok' : ''}">${fmt(drift)}°</span></div>
@@ -1047,8 +1073,8 @@ async function poll() {
     // rotation matches the chassis convention and rides the base correctly.
     const headRad = deg(headOnBody) * baseSign;
     const tiltRad = deg(tiltMech) * tiltSign;
-    root.rotation.y = baseRad;
-    panNode.rotation.y = headRad;
+    robotYaw.rotation.y = baseRad;
+    headMount.rotation.y = headRad;
     tiltNode.rotation.x = tiltRad;
     worldAimGroup.rotation.y = deg(bodyYaw + headOnBody) * baseSign;
     updateBaseLimitArc(latest.base_max_yaw_deg);
@@ -1058,9 +1084,6 @@ async function poll() {
     updateMotionMarkers(latest, proxPulse);
     updateProxHud(latest);
     updateProxMarkers(latest, proxPulse, true);
-    const nearTiltMax = latest.tilt_mech_deg >= (latest.tilt_mech_up_deg - 1);
-    const nearTiltMin = latest.tilt_mech_deg <= (latest.tilt_mech_down_deg + 1);
-    headMesh.material.color.setHex(nearTiltMax || nearTiltMin ? 0xbf616a : 0x4ade80);
   } catch (e) {
     stats.innerHTML = `<div class="bad">poll failed: ${e}</div>`;
   }

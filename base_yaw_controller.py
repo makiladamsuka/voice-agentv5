@@ -134,27 +134,44 @@ def decompose_yaw(
     imu_yaw_total: float,
     base_encoder_deg: float,
     pan_mech_deg: float,
+    base_spin_active: bool = False,
 ) -> YawDecomposition:
     """Split yaw into fixed north, encoder body, and IMU head-on-body.
 
-    body = encoder delta from startup ref
-    head_on_body = imu_rel - body  (neck rotation relative to chassis)
-    world = body + head_on_body ≈ imu_rel
+    Uses the same fusion math as tests/imu_orient_viz (compute_yaw_verify):
+    encoder body by default, IMU-inferred body during base spin / encoder lag.
     """
+    from lib.imu_servo_verify import ServoPose, VerifyReference, compute_yaw_verify
+
+    ref = VerifyReference(
+        imu_yaw_deg=fusion.startup_imu_yaw_total_deg,
+        imu_tilt_deg=0.0,
+        servo_pan_mech_deg=fusion.ref_pan_mech_deg,
+        servo_tilt_mech_deg=0.0,
+        base_encoder_deg=fusion.startup_base_encoder_deg,
+    )
+    state = compute_yaw_verify(
+        imu_yaw_deg=imu_yaw_total,
+        imu_tilt_deg=0.0,
+        base_encoder_deg=base_encoder_deg,
+        servo=ServoPose(
+            pan_cmd=0.0,
+            tilt_cmd=0.0,
+            pan_mech_deg=pan_mech_deg,
+            tilt_mech_deg=0.0,
+        ),
+        ref=ref,
+        base_spin_active=base_spin_active,
+    )
     fusion.imu_yaw_total_deg = imu_yaw_total
-    body = angular_delta_deg(base_encoder_deg, fusion.startup_base_encoder_deg)
-    imu_rel = angular_delta_deg(imu_yaw_total, fusion.startup_imu_yaw_total_deg)
-    head_on_body = angular_delta_deg(imu_rel, body)
-    world = wrap_degrees(body + head_on_body)
-    vs_servo = angular_delta_deg(head_on_body, pan_mech_deg)
     return YawDecomposition(
         true_north_deg=0.0,
-        body_yaw_deg=body,
-        imu_yaw_rel_deg=imu_rel,
-        head_yaw_on_body_deg=head_on_body,
-        world_head_yaw_deg=world,
+        body_yaw_deg=state.body_yaw_deg,
+        imu_yaw_rel_deg=state.imu_yaw_delta_deg,
+        head_yaw_on_body_deg=state.head_on_body_imu_deg,
+        world_head_yaw_deg=state.world_head_yaw_deg,
         pan_mech_deg=pan_mech_deg,
-        head_imu_vs_servo_delta_deg=vs_servo,
+        head_imu_vs_servo_delta_deg=state.head_pan_error_deg,
         imu_inferred_base_deg=base_encoder_deg,
     )
 

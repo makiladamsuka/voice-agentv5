@@ -28,7 +28,13 @@ from lib.elastic_head_motion import clamp
 from lib.head_imu_mount import load_head_mount
 from lib.head_imu_orient import HeadImuOrient, HeadImuOrientReader, load_imu_hw_config
 from lib.head_mech import signed_pan_mech_deg, signed_tilt_mech_deg
-from lib.imu_servo_verify import ServoPose, VerifyReference, compute_yaw_verify
+from lib.imu_servo_verify import (
+    ServoPose,
+    TrueFrontReference,
+    VerifyReference,
+    compute_true_front,
+    compute_yaw_verify,
+)
 
 APP_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = APP_DIR / "config.yaml"
@@ -268,11 +274,15 @@ class ServoHeadController:
         self.tilt_cmd = self.tilt_center
         self._limits_unlocked = False
         self.ref = VerifyReference()
+        self.true_front: TrueFrontReference | None = None
+        self._imu_yaw_epoch_offset = 0.0
         self.pan_error_deg = 0.0
         self.tilt_error_deg = 0.0
         self.body_yaw_deg = 0.0
         self.head_on_body_imu_deg = 0.0
         self.world_head_yaw_deg = 0.0
+        self.true_front_heading_deg = 0.0
+        self.true_front_body_deg = 0.0
         self._homelocked = False
 
     @property
@@ -295,7 +305,6 @@ class ServoHeadController:
             self.tilt_cmd = self.tilt_center
             self._link.home_smooth(self.pan_cmd, self.tilt_cmd)
         time.sleep(0.35)
-        reader.lock_reference()
         deadline = time.time() + 2.0
         sample = None
         while time.time() < deadline:
@@ -305,7 +314,24 @@ class ServoHeadController:
             time.sleep(0.02)
         pan_mech, tilt_mech = self._mech()
         imu_tilt = sample.pitch_deg if sample is not None else 0.0
+        imu_yaw_before = sample.yaw_deg if sample is not None else 0.0
         base_enc = base.read_encoder_now() if base is not None else 0.0
+        if self.true_front is not None:
+            self._imu_yaw_epoch_offset += imu_yaw_before
+        else:
+            self.true_front = TrueFrontReference(
+                imu_yaw_deg=0.0,
+                imu_tilt_deg=imu_tilt,
+                servo_pan_mech_deg=pan_mech,
+                servo_tilt_mech_deg=tilt_mech,
+                base_encoder_deg=base_enc,
+            )
+            self._imu_yaw_epoch_offset = 0.0
+            print(
+                f"[imu_orient_viz] True front locked: base_enc={base_enc:+.1f}° "
+                f"pan={pan_mech:+.1f}° (startup forward = 0°)"
+            )
+        reader.lock_reference()
         self.ref = VerifyReference(
             imu_yaw_deg=0.0,
             imu_tilt_deg=imu_tilt,
@@ -318,6 +344,20 @@ class ServoHeadController:
         self.body_yaw_deg = 0.0
         self.head_on_body_imu_deg = 0.0
         self.world_head_yaw_deg = 0.0
+        tf = compute_true_front(
+            imu_yaw_deg=self._imu_yaw_epoch_offset,
+            imu_tilt_deg=imu_tilt,
+            base_encoder_deg=base_enc,
+            servo=ServoPose(
+                pan_cmd=self.pan_cmd,
+                tilt_cmd=self.tilt_cmd,
+                pan_mech_deg=pan_mech,
+                tilt_mech_deg=tilt_mech,
+            ),
+            true_front=self.true_front,
+        )
+        self.true_front_heading_deg = tf.heading_deg
+        self.true_front_body_deg = tf.body_deg
         self._homelocked = True
         print(
             f"[imu_orient_viz] Center lock: body≈0° head_on_body≈0° "
@@ -385,11 +425,24 @@ class ServoHeadController:
             ref=self.ref,
             base_spin_active=base_spin_active,
         )
+        imu_since_true_front = imu_yaw_deg
+        if self.true_front is not None:
+            imu_since_true_front = imu_yaw_deg + self._imu_yaw_epoch_offset
+        tf = compute_true_front(
+            imu_yaw_deg=imu_since_true_front,
+            imu_tilt_deg=imu_tilt_deg,
+            base_encoder_deg=base_encoder_deg,
+            servo=servo,
+            true_front=self.true_front,
+            base_spin_active=base_spin_active,
+        )
         self.pan_error_deg = state.head_pan_error_deg
         self.tilt_error_deg = state.tilt_error_deg
         self.body_yaw_deg = state.body_yaw_deg
         self.head_on_body_imu_deg = state.head_on_body_imu_deg
         self.world_head_yaw_deg = state.world_head_yaw_deg
+        self.true_front_heading_deg = tf.heading_deg
+        self.true_front_body_deg = tf.body_deg
 
     def extra_fields(self) -> dict[str, Any]:
         pan_mech, tilt_mech = self._mech()
@@ -404,6 +457,9 @@ class ServoHeadController:
             "body_yaw_deg": self.body_yaw_deg,
             "head_on_body_imu_deg": self.head_on_body_imu_deg,
             "world_head_yaw_deg": self.world_head_yaw_deg,
+            "true_front_heading_deg": self.true_front_heading_deg,
+            "true_front_body_deg": self.true_front_body_deg,
+            "true_front_locked": self.true_front is not None,
             "center_locked": self._homelocked,
         }
 
@@ -424,6 +480,7 @@ class ImuOrientState:
         self.history_pan: deque[float] = deque(maxlen=HISTORY_LEN)
         self.history_pan_err: deque[float] = deque(maxlen=HISTORY_LEN)
         self.history_tilt_err: deque[float] = deque(maxlen=HISTORY_LEN)
+        self.history_true_front: deque[float] = deque(maxlen=HISTORY_LEN)
 
     def set_mount(self, axis_remap: tuple[int, ...], yaw_sign: float) -> None:
         with self._lock:
@@ -448,6 +505,7 @@ class ImuOrientState:
             self.history_pan.append(float(sample_dict.get("yaw_deg", 0.0)))
             self.history_pan_err.append(float(sample_dict.get("pan_error_deg", 0.0)))
             self.history_tilt_err.append(float(sample_dict.get("tilt_error_deg", 0.0)))
+            self.history_true_front.append(float(sample_dict.get("true_front_heading_deg", 0.0)))
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -469,6 +527,7 @@ class ImuOrientState:
                     "pan": list(self.history_pan),
                     "pan_err": list(self.history_pan_err),
                     "tilt_err": list(self.history_tilt_err),
+                    "true_front": list(self.history_true_front),
                 },
             }
 
@@ -651,6 +710,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .metric.tilt .label { color: var(--tilt); }
     .metric.pan .label { color: var(--pan); }
     .metric.body .label { color: #34d399; }
+    .metric.front .label { color: #f472b6; }
     .metric.errpan .label, .metric.errtilt .label { color: var(--err); }
     .metric .value { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
     .metric .value.warn { color: #fbbf24; }
@@ -662,7 +722,16 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 1rem 1.1rem; }
     .card h2 { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em;
       color: var(--muted); margin-bottom: 0.75rem; }
-    .scene-wrap { display: flex; align-items: center; justify-content: center; min-height: 280px; perspective: 900px; }
+    .scene-wrap { display: flex; align-items: center; justify-content: center; min-height: 300px; perspective: 900px; position: relative; }
+    .scene-plane { position: relative; transform-style: preserve-3d; }
+    .true-front-marker { position: absolute; left: 50%; bottom: -8px; width: 120px; margin-left: -60px;
+      text-align: center; font-size: 0.58rem; font-weight: 700; letter-spacing: 0.14em; color: #f472b6;
+      transform: translateZ(-40px); pointer-events: none; }
+    .true-front-marker::before { content: ""; display: block; width: 0; height: 0; margin: 0 auto 4px;
+      border-left: 10px solid transparent; border-right: 10px solid transparent;
+      border-bottom: 22px solid rgba(244, 114, 182, 0.85); filter: drop-shadow(0 0 6px rgba(244,114,182,0.4)); }
+    .true-front-marker::after { content: ""; display: block; width: 2px; height: 36px; margin: 0 auto;
+      background: linear-gradient(180deg, rgba(244,114,182,0.9), transparent); }
     .scene-tilt { transform: rotateX(16deg); transform-style: preserve-3d; }
     .robot-stack { display: flex; flex-direction: column; align-items: center; transform-style: preserve-3d; }
     .robot-yaw { display: flex; flex-direction: column; align-items: center; transform-style: preserve-3d;
@@ -753,33 +822,42 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <div class="value" id="headOnBody">—</div>
       <div class="sub">servo pan <span id="servoPanHob">—</span>° · world <span id="worldYaw">—</span>°</div>
     </div>
+    <div class="metric front">
+      <div class="label">True front heading</div>
+      <div class="value" id="trueFrontHeading">—</div>
+      <div class="sub">vs startup forward · body <span id="trueFrontBody">—</span>°</div>
+      <canvas class="spark" id="sparkTrueFront" width="400" height="52"></canvas>
+    </div>
   </div>
 
   <div class="layout">
     <div class="card">
       <h2>Head + body preview</h2>
       <div class="scene-wrap">
-        <div class="scene-tilt">
-          <div class="robot-stack">
-            <div class="robot-yaw" id="robotYaw">
-              <div class="head-mount" id="headMount">
-                <div class="head-box" id="headBox">
-                  <div class="face front">FACE</div>
-                  <div class="face back">BACK</div>
-                  <div class="face top"></div>
-                  <div class="face bottom"></div>
-                  <div class="face left"></div>
-                  <div class="face right"></div>
+        <div class="scene-plane">
+          <div class="scene-tilt">
+            <div class="true-front-marker" id="trueFrontMarker">TRUE FRONT</div>
+            <div class="robot-stack">
+              <div class="robot-yaw" id="robotYaw">
+                <div class="head-mount" id="headMount">
+                  <div class="head-box" id="headBox">
+                    <div class="face front">FACE</div>
+                    <div class="face back">BACK</div>
+                    <div class="face top"></div>
+                    <div class="face bottom"></div>
+                    <div class="face left"></div>
+                    <div class="face right"></div>
+                  </div>
                 </div>
-              </div>
-              <div class="neck-bar"></div>
-              <div class="body-box" id="bodyBox">
-                <div class="bface front">BODY</div>
-                <div class="bface back">BACK</div>
-                <div class="bface top"></div>
-                <div class="bface bottom"></div>
-                <div class="bface left"></div>
-                <div class="bface right"></div>
+                <div class="neck-bar"></div>
+                <div class="body-box" id="bodyBox">
+                  <div class="bface front">BODY</div>
+                  <div class="bface back">BACK</div>
+                  <div class="bface top"></div>
+                  <div class="bface bottom"></div>
+                  <div class="bface left"></div>
+                  <div class="bface right"></div>
+                </div>
               </div>
             </div>
           </div>
@@ -791,7 +869,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <button type="button" data-cmd="pan_right">D</button>
         <span class="sp"></span><button type="button" data-cmd="tilt_down">S</button><span class="sp"></span>
       </div>
-      <p class="hint">W/S tilt · A/D pan · C center+lock · R reset yaw · Z zero encoder</p>
+      <p class="hint">Pink arrow = startup true front (fixed) · robot rotates relative to it · W/S A/D · C lock · R yaw · Z zero</p>
     </div>
     <div class="card">
       <h2>Body spin</h2>
@@ -804,6 +882,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <div class="row"><span>body Δ</span><strong id="bodyYawRow">—</strong></div>
       <div class="row"><span>head on body (IMU)</span><strong id="hobRow">—</strong></div>
       <div class="row"><span>world aim</span><strong id="worldRow">—</strong></div>
+      <div class="row"><span>true front heading</span><strong id="trueFrontRow">—</strong></div>
     </div>
     <div class="card">
       <h2>Servo commands</h2>
@@ -957,6 +1036,12 @@ HTML_PAGE = r"""<!DOCTYPE html>
       document.getElementById("headOnBody").textContent = fmt(L.head_on_body_imu_deg) + "°";
       document.getElementById("servoPanHob").textContent = fmt(L.servo_pan_mech_deg);
       document.getElementById("worldYaw").textContent = fmt(L.world_head_yaw_deg) + "°";
+      document.getElementById("trueFrontHeading").textContent = fmt(L.true_front_heading_deg) + "°";
+      document.getElementById("trueFrontBody").textContent = fmt(L.true_front_body_deg);
+      const tfLocked = L.true_front_locked ? "locked" : "waiting";
+      document.getElementById("trueFrontRow").textContent = fmt(L.true_front_heading_deg) + "° (" + tfLocked + ")";
+      const tfMarker = document.getElementById("trueFrontMarker");
+      tfMarker.style.opacity = L.true_front_locked ? "1" : "0.35";
       document.getElementById("baseEncRow").textContent = fmt(L.base_encoder_deg) + "°";
       document.getElementById("bodyYawRow").textContent = fmt(L.body_yaw_deg) + "°";
       document.getElementById("hobRow").textContent = fmt(L.head_on_body_imu_deg) + "°";
@@ -987,6 +1072,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       drawSpark(document.getElementById("sparkPan"), hist.pan || [], "#a855f7", 90);
       drawSpark(document.getElementById("sparkPanErr"), hist.pan_err || [], "#f59e0b", 15);
       drawSpark(document.getElementById("sparkTiltErr"), hist.tilt_err || [], "#f59e0b", 15);
+      drawSpark(document.getElementById("sparkTrueFront"), hist.true_front || [], "#f472b6", 90);
     }
 
     async function poll() {

@@ -65,6 +65,7 @@ class Blackboard:
     base_last_spin_moved_deg: float = 0.0
     base_last_spin_reason: str = ""
     base_fusion_resync_request: bool = False
+    base_spin_active: bool = False
 
     # ── Yaw reference (startup lock) ─────────────────────────────────────────
     yaw_reference_locked: bool = False
@@ -74,6 +75,9 @@ class Blackboard:
     head_yaw_on_body_deg: float = 0.0
     imu_yaw_rel_deg: float = 0.0
     head_imu_vs_servo_delta_deg: float = 0.0
+    true_front_heading_deg: float = 0.0
+    true_front_body_deg: float = 0.0
+    fusion_head_pan_error_deg: float = 0.0
     imu_pitch_deg: float = 0.0
     imu_roll_deg: float = 0.0
     imu_gyro_dps: float = 0.0

@@ -154,6 +154,8 @@ class ServoMixer:
             "base_encoder_deg": enc,
             "base_encoder_synced": synced,
         }
+        if not busy:
+            writes["base_spin_active"] = False
         # When IMU fusion is active, ImuService owns decomposed world yaw.
         if not self.bb.read("imu_available")["imu_available"]:
             writes["base_world_yaw_deg"] = self._world_yaw(enc, pan)
@@ -278,7 +280,7 @@ class ServoMixer:
                 time.sleep(loop_delay)
                 continue
 
-            if state["base_motion_busy"] and (now - self._last_busy_check_ts) > (1.0 / self.base_busy_check_hz):
+            if state["base_motion_busy"] and (now - self._last_busy_check_ts) > (1.0 / max(8.0, self.base_busy_check_hz * 4.0)):
                 self._last_busy_check_ts = now
                 self._poll_base_busy(pan)
             elif (
@@ -437,7 +439,7 @@ class ServoMixer:
                 )
             self._send_angles(pan, tilt)
             self._link.mute_tof()
-            self.bb.write(base_motion_busy=True)
+            self.bb.write(base_motion_busy=True, base_spin_active=True)
             from base_spin_motion import write_base_step_spin
 
             ok, moved_deg, stop_reason = write_base_step_spin(
@@ -469,9 +471,10 @@ class ServoMixer:
                     base_fusion_resync_request=True,
                     base_last_spin_moved_deg=moved_deg,
                     base_last_spin_reason=stop_reason,
+                    base_spin_active=False,
                 )
             else:
-                self.bb.write(base_motion_busy=False)
+                self.bb.write(base_motion_busy=False, base_spin_active=False)
             if not ok and abs(moved_deg) < max(0.5, abs(step) * 0.2):
                 self._gate.record_fault(
                     f"spin {stop_reason} moved {moved_deg:+.1f}° vs cmd {step:+.1f}° ({source})",
@@ -481,11 +484,11 @@ class ServoMixer:
             print(f"[ServoMixer] base step failed: {e}")
             if self._watchdog is not None:
                 self._watchdog.finish_move()
-            self.bb.write(base_motion_busy=False)
+            self.bb.write(base_motion_busy=False, base_spin_active=False)
 
     def _poll_base_busy(self, pan: float) -> None:
         if self._link is None:
-            self.bb.write(base_motion_busy=False)
+            self.bb.write(base_motion_busy=False, base_spin_active=False)
             return
         try:
             if self._watchdog is not None and self._watchdog.active:

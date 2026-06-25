@@ -132,6 +132,14 @@ class ArmController:
 
         while self.bb.read("running")["running"]:
             t0 = time.time()
+
+            # Pause lean accumulation while a bye-wave animation is playing.
+            # ByeWaveService writes arm poses directly to the Blackboard during
+            # the animation; we must not overwrite them with lean updates.
+            if self.bb.read("bye_wave_active")["bye_wave_active"]:
+                time.sleep(loop_delay)
+                continue
+
             state = self.bb.read(
                 "base_motion_busy",
                 "base_step_deg",

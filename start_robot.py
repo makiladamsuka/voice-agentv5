@@ -386,6 +386,24 @@ def main():
             threading.Thread(target=arm_controller.run, daemon=True, name="ArmController")
         )
 
+    # ── Bye Wave Gesture Service (Optional) ───────────────────────────────────
+    bye_wave_cfg = cfg.get("bye_wave", {}) or {}
+    if bye_wave_cfg.get("enabled", False):
+        from core.bye_wave_service import ByeWaveService
+
+        bye_wave_svc = ByeWaveService(bb, cfg)
+        threads.append(
+            threading.Thread(
+                target=bye_wave_svc.run,
+                daemon=True,
+                name="ByeWaveService",
+            )
+        )
+        print(
+            f"[Bootstrap] ByeWaveService enabled — "
+            f"hand stream port {bye_wave_cfg.get('port', 8000)}."
+        )
+
     if debug_viz_cfg.get("enabled", True):
         threads.append(
             threading.Thread(

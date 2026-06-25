@@ -250,6 +250,7 @@ class ByeSequenceRunner:
         servo_link: ArduinoServoLink | None,
         presets_path: pathlib.Path,
         on_complete=None,
+        envelope=None,
     ) -> None:
         self._lock: threading.Lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -257,6 +258,7 @@ class ByeSequenceRunner:
         self._servo_link = servo_link
         self._presets_path: pathlib.Path = presets_path
         self._on_complete = on_complete
+        self._envelope = envelope
 
     # ------------------------------------------------------------------
     # Public interface
@@ -332,16 +334,20 @@ class ByeSequenceRunner:
         For each frame dict, sends arm pose directly to the ESP32 via
         ``ArduinoServoLink.write_arms()`` (force=True bypasses the motion-deadband
         filter so every frame is transmitted even for small angle changes),
+        clamped to the raise-dependent safety envelope if available,
         then sleeps 0.25 s.  After the last frame, calls ``_on_complete`` if
         set, then clears the ``_running`` flag under ``_lock``.
         """
         for f in frames:
             if self._servo_link is not None:
+                a0, a1, a2, a3 = f["a0"], f["a1"], f["a2"], f["a3"]
+                if self._envelope is not None:
+                    a0, a1, a2, a3 = self._envelope.clamp_arms(a0, a1, a2, a3)
                 self._servo_link.write_arms(
-                    f["a0"],
-                    f["a1"],
-                    f["a2"],
-                    f["a3"],
+                    a0,
+                    a1,
+                    a2,
+                    a3,
                     force=True,
                 )
             time.sleep(0.25)
@@ -768,6 +774,15 @@ def main() -> None:
 
     # ── 8.2  Startup sequence ─────────────────────────────────────────────────
 
+    # Load safety envelope if available
+    envelope = None
+    try:
+        from arm_safety_envelope import ArmSafetyEnvelope
+        envelope = ArmSafetyEnvelope.from_json()
+        print("[INFO] ArmSafetyEnvelope loaded and active.")
+    except Exception as exc:
+        print(f"[WARNING] Could not load ArmSafetyEnvelope ({exc}); safety limits will not be enforced.", file=sys.stderr)
+
     # 1. Connect to ESP32 arm servos via ArduinoServoLink (gracefully optional)
     servo_link: ArduinoServoLink | None = None
     home_pose: tuple[float, float, float, float] | None = None
@@ -780,7 +795,9 @@ def main() -> None:
         _link = ArduinoServoLink()
         if _link.connect():
             servo_link = _link
-            # Drive arms to home immediately on connect
+            # Drive arms to home immediately on connect (clamp if safety envelope loaded)
+            if envelope is not None:
+                home_pose = envelope.clamp_arms(*home_pose)
             servo_link.write_arms(*home_pose, force=True)
             print("[INFO] ESP32 connected — arm motion enabled.")
             print(f"[INFO] Home pose: A0={home_pose[0]:.1f} A1={home_pose[1]:.1f} "
@@ -801,6 +818,7 @@ def main() -> None:
         servo_link=servo_link,
         presets_path=presets_path,
         on_complete=None,  # patched below after waving_detector is created
+        envelope=envelope,
     )
 
     # 4. HTTP server thread
@@ -908,6 +926,8 @@ def main() -> None:
         # (b) Return arm to home pose via the servo link
         if servo_link is not None and home_pose is not None:
             try:
+                if envelope is not None:
+                    home_pose = envelope.clamp_arms(*home_pose)
                 servo_link.write_arms(*home_pose, force=True)
                 print("[INFO] Arm returned to home pose.")
             except Exception as exc:

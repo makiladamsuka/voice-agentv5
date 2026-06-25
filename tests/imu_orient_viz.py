@@ -67,12 +67,17 @@ def _load_viz_config(config_path: Path) -> dict:
         "error_warn_deg": float(viz.get("error_warn_deg", 3.0)),
         "unlock_servo_limits": bool(viz.get("unlock_servo_limits", True)),
         "encoder_poll_hz": float(viz.get("encoder_poll_hz", 5.0)),
+        "base_spin_heartbeat_sec": float(viz.get("base_spin_heartbeat_sec", 0.75)),
+        "base_max_yaw_deg": float(viz.get("base_max_yaw_deg", base_cfg.get("max_yaw_deg", 120.0))),
         "base_yaw_sign": float(base_yaw_sign),
     }
 
 
 class BaseBodyController:
-    """Encoder poll + hold-to-spin base control (shared serial with head)."""
+    """Encoder poll + latched hold-to-spin (robottest L/R/X, web-friendly)."""
+
+    SPIN_POLL_SEC = 0.03  # same cadence as tests/robottest.py
+    MAX_ABS_BASE_DEG = 124.0
 
     def __init__(
         self,
@@ -80,15 +85,23 @@ class BaseBodyController:
         serial_lock: threading.Lock,
         *,
         poll_hz: float = 5.0,
+        spin_heartbeat_sec: float = 0.75,
+        max_yaw_deg: float = 120.0,
     ) -> None:
         self._link = link
         self._lock = serial_lock
         self._poll_hz = max(0.5, poll_hz)
+        self._spin_heartbeat_sec = max(0.2, spin_heartbeat_sec)
+        self._max_yaw_deg = max_yaw_deg
         self._stop = threading.Event()
         self._poll_thread: threading.Thread | None = None
+        self._spin_thread: threading.Thread | None = None
+        self._cmd_lock = threading.Lock()
         self.base_encoder_deg = 0.0
         self.base_motion_busy = False
-        self._spin = 0
+        self._active_spin = 0
+        self._spin_latch = 0
+        self._spin_heartbeat = 0.0
 
     @property
     def connected(self) -> bool:
@@ -98,6 +111,12 @@ class BaseBodyController:
         if self._poll_thread is not None:
             return
         self.poll_once()
+        self._spin_thread = threading.Thread(
+            target=self._spin_loop,
+            daemon=True,
+            name="BaseSpinLoop",
+        )
+        self._spin_thread.start()
         self._poll_thread = threading.Thread(
             target=self._poll_loop,
             daemon=True,
@@ -107,19 +126,76 @@ class BaseBodyController:
 
     def stop_poll_thread(self) -> None:
         self._stop.set()
-        if self._poll_thread is not None:
-            self._poll_thread.join(timeout=1.0)
-            self._poll_thread = None
+        self._clear_spin_latch()
+        with self._lock:
+            if self._active_spin != 0:
+                self._link.write_base_stop()
+                self._active_spin = 0
+        for thread in (self._spin_thread, self._poll_thread):
+            if thread is not None:
+                thread.join(timeout=1.0)
+        self._spin_thread = None
+        self._poll_thread = None
+
+    def _clear_spin_latch(self) -> None:
+        with self._cmd_lock:
+            self._spin_latch = 0
+            self._spin_heartbeat = 0.0
+
+    def _latched_spin(self, now: float) -> int:
+        with self._cmd_lock:
+            if self._spin_latch != 0:
+                if now - self._spin_heartbeat > self._spin_heartbeat_sec:
+                    self._spin_latch = 0
+            return self._spin_latch
+
+    def _spin_blocked(self, want: int) -> bool:
+        if want == 0:
+            return False
+        enc = self.base_encoder_deg
+        margin = 2.0
+        if want < 0 and enc <= -(self._max_yaw_deg - margin):
+            return True
+        if want > 0 and enc >= (self._max_yaw_deg - margin):
+            return True
+        return False
+
+    def _apply_spin_locked(self, want: int) -> None:
+        if want == self._active_spin:
+            return
+        if want == 0:
+            self._link.write_base_stop()
+        elif want == -1:
+            self._link.write_base_spin_left()
+        elif want == 1:
+            self._link.write_base_spin_right()
+        self._active_spin = want
+
+    def _spin_loop(self) -> None:
+        while not self._stop.is_set():
+            now = time.time()
+            want = self._latched_spin(now)
+            if self._spin_blocked(want):
+                want = 0
+                self._clear_spin_latch()
+            with self._lock:
+                self._apply_spin_locked(want)
+            self._stop.wait(self.SPIN_POLL_SEC)
 
     def _poll_loop(self) -> None:
         interval = 1.0 / self._poll_hz
         while not self._stop.is_set():
-            self.poll_once()
+            if self._active_spin == 0:
+                self.poll_once()
             self._stop.wait(interval)
 
     def poll_once(self) -> float | None:
-        with self._lock:
+        if not self._lock.acquire(blocking=False):
+            return self.base_encoder_deg
+        try:
             st = self._link.query_status()
+        finally:
+            self._lock.release()
         if st is None:
             return None
         self.base_encoder_deg = float(st.degrees)
@@ -130,37 +206,45 @@ class BaseBodyController:
         return self.poll_once() or self.base_encoder_deg
 
     def apply_cmd(self, cmd: str) -> bool:
-        with self._lock:
-            if cmd == "base_spin_left":
-                if self._spin != -1:
-                    self._link.write_base_spin_left()
-                    self._spin = -1
-                return True
-            if cmd == "base_spin_right":
-                if self._spin != 1:
-                    self._link.write_base_spin_right()
-                    self._spin = 1
-                return True
-            if cmd == "base_spin_stop":
-                if self._spin != 0:
+        now = time.time()
+        if cmd == "base_spin_left":
+            with self._cmd_lock:
+                self._spin_latch = -1
+                self._spin_heartbeat = now
+            return True
+        if cmd == "base_spin_right":
+            with self._cmd_lock:
+                self._spin_latch = 1
+                self._spin_heartbeat = now
+            return True
+        if cmd == "base_spin_stop":
+            self._clear_spin_latch()
+            return True
+        if cmd == "zero_base":
+            self._clear_spin_latch()
+            with self._lock:
+                if self._active_spin != 0:
                     self._link.write_base_stop()
-                    self._spin = 0
-                return True
-            if cmd == "zero_base":
-                if self._spin != 0:
-                    self._link.write_base_stop()
-                    self._spin = 0
+                    self._active_spin = 0
                 self._link.zero_base()
                 st = self._link.query_status()
                 if st is not None:
                     self.base_encoder_deg = float(st.degrees)
-                return True
+            return True
         return False
 
     def extra_fields(self) -> dict[str, Any]:
+        enc = self.base_encoder_deg
+        at_min = enc <= -(self._max_yaw_deg - 2.0)
+        at_max = enc >= (self._max_yaw_deg - 2.0)
         return {
-            "base_encoder_deg": self.base_encoder_deg,
+            "base_encoder_deg": enc,
             "base_motion_busy": self.base_motion_busy,
+            "base_spin": self._active_spin,
+            "base_at_limit": at_min or at_max,
+            "base_at_min": at_min,
+            "base_at_max": at_max,
+            "base_max_yaw_deg": self._max_yaw_deg,
         }
 
 
@@ -276,7 +360,10 @@ class ServoHeadController:
                 return False
             if self.pan_cmd == prev_pan and self.tilt_cmd == prev_tilt and cmd != "center":
                 print(f"[imu_orient_viz] At jog limit ({cmd}) pan={self.pan_cmd:.1f} tilt={self.tilt_cmd:.1f}")
-            self._link.write_angles(self.pan_cmd, self.tilt_cmd, force=True)
+            self._link.send_line(
+                f"P{self.pan_cmd:.1f} T{self.tilt_cmd:.1f}",
+                drain_after=False,
+            )
         return True
 
     def update_errors(
@@ -459,11 +546,36 @@ def imu_reader_loop(
             time.sleep(2.0)
 
 
+def verify_spin_firmware(link: ArduinoServoLink) -> bool:
+    """Confirm L/R spin commands exist (same as robottest.py)."""
+    if link._ser is None:
+        return False
+    link._drain_rx()
+    link._ser.write(b"L\n")
+    link._ser.flush()
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        line = link._ser.readline().decode("utf-8", errors="ignore").strip()
+        if not line:
+            continue
+        if line == "OK L":
+            link.write_base_stop()
+            time.sleep(0.05)
+            return True
+        if line.startswith("ERR"):
+            print(f"[imu_orient_viz] Firmware rejected spin ({line})")
+            return False
+    print("[imu_orient_viz] No OK L from firmware — reflash head_servo.ino")
+    return False
+
+
 def init_robot(
     config_path: Path,
     *,
     unlock_limits: bool = True,
     encoder_poll_hz: float = 5.0,
+    spin_heartbeat_sec: float = 0.75,
+    max_yaw_deg: float = 120.0,
 ) -> tuple[ServoHeadController | None, BaseBodyController | None]:
     servo_cfg = load_servo_cfg(config_path)
     port = str(servo_cfg.get("port") or "")
@@ -475,7 +587,16 @@ def init_robot(
         return None, None
     serial_lock = threading.Lock()
     apply_base_calibration_to_nano(link)
-    base = BaseBodyController(link, serial_lock, poll_hz=encoder_poll_hz)
+    if not verify_spin_firmware(link):
+        link.close(skip_home=True)
+        return None, None
+    base = BaseBodyController(
+        link,
+        serial_lock,
+        poll_hz=encoder_poll_hz,
+        spin_heartbeat_sec=spin_heartbeat_sec,
+        max_yaw_deg=max_yaw_deg,
+    )
     base.start_poll_thread()
     ctrl = ServoHeadController(link, servo_cfg, serial_lock)
     if unlock_limits:
@@ -664,7 +785,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <span class="sp"></span><button type="button" data-base-cmd="base_spin_left">M</button>
         <button type="button" data-base-cmd="base_spin_right">N</button><span class="sp"></span>
       </div>
-      <p class="hint">Hold M/N to spin base left/right · release to stop</p>
+      <p class="hint" id="baseLimitHint">Hold M/N to spin base left/right · release to stop</p>
       <div class="row" style="margin-top:1rem"><span>base encoder</span><strong id="baseEncRow">—</strong></div>
       <div class="row"><span>body Δ</span><strong id="bodyYawRow">—</strong></div>
       <div class="row"><span>head on body (IMU)</span><strong id="hobRow">—</strong></div>
@@ -696,14 +817,36 @@ HTML_PAGE = r"""<!DOCTYPE html>
       }).catch(() => {});
     }
 
+    const BASE_HOLD_MS = 40;
+  let baseKeepalive = null;
+  let baseHoldCmd = null;
+
+  function startBaseHold(cmd) {
+    baseHoldCmd = cmd;
+    sendCmd(cmd);
+    if (baseKeepalive) clearInterval(baseKeepalive);
+    baseKeepalive = setInterval(() => {
+      if (baseHoldCmd) sendCmd(baseHoldCmd);
+    }, BASE_HOLD_MS);
+  }
+
+  function stopBaseHold() {
+    baseHoldCmd = null;
+    if (baseKeepalive) {
+      clearInterval(baseKeepalive);
+      baseKeepalive = null;
+    }
+    sendCmd("base_spin_stop");
+  }
+
     document.querySelectorAll("[data-cmd]").forEach(btn => {
       btn.addEventListener("click", () => sendCmd(btn.dataset.cmd));
     });
 
     function bindBaseHold(btn) {
       const cmd = btn.dataset.baseCmd;
-      const start = (ev) => { ev.preventDefault(); sendCmd(cmd); };
-      const stop = (ev) => { ev.preventDefault(); sendCmd("base_spin_stop"); };
+      const start = (ev) => { ev.preventDefault(); startBaseHold(cmd); };
+      const stop = (ev) => { ev.preventDefault(); stopBaseHold(); };
       btn.addEventListener("mousedown", start);
       btn.addEventListener("mouseup", stop);
       btn.addEventListener("mouseleave", stop);
@@ -723,7 +866,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
         if (baseHeld.has(k)) return;
         baseHeld.add(k);
         ev.preventDefault();
-        sendCmd(BASE_KEY_DOWN[k]);
+        startBaseHold(BASE_KEY_DOWN[k]);
         return;
       }
       const cmd = KEY_MAP[k];
@@ -742,7 +885,12 @@ HTML_PAGE = r"""<!DOCTYPE html>
       if (!baseHeld.has(k)) return;
       baseHeld.delete(k);
       ev.preventDefault();
-      sendCmd("base_spin_stop");
+      if (baseHeld.size === 0) stopBaseHold();
+    });
+
+    window.addEventListener("blur", () => {
+      baseHeld.clear();
+      stopBaseHold();
     });
 
     function drawSpark(canvas, data, color, span=45) {
@@ -783,6 +931,15 @@ HTML_PAGE = r"""<!DOCTYPE html>
       document.getElementById("bodyYaw").textContent = fmt(L.body_yaw_deg) + "°";
       document.getElementById("baseEnc").textContent = fmt(L.base_encoder_deg);
       document.getElementById("baseBusy").textContent = L.base_motion_busy ? "yes" : "no";
+      const lim = document.getElementById("baseLimitHint");
+      if (L.base_at_limit) {
+        const edge = L.base_at_min ? "min (−" + fmt(L.base_max_yaw_deg, 0) + "°)" : "max (+" + fmt(L.base_max_yaw_deg, 0) + "°)";
+        lim.textContent = "Base at sector " + edge + " — press Z to zero here, or spin the other way";
+        lim.style.color = "#fbbf24";
+      } else {
+        lim.textContent = "Hold M/N to spin base left/right · release to stop";
+        lim.style.color = "";
+      }
       document.getElementById("headOnBody").textContent = fmt(L.head_on_body_imu_deg) + "°";
       document.getElementById("servoPanHob").textContent = fmt(L.servo_pan_mech_deg);
       document.getElementById("worldYaw").textContent = fmt(L.world_head_yaw_deg) + "°";
@@ -931,6 +1088,8 @@ def main() -> int:
             args.config,
             unlock_limits=viz_cfg.get("unlock_servo_limits", True),
             encoder_poll_hz=viz_cfg["encoder_poll_hz"],
+            spin_heartbeat_sec=viz_cfg["base_spin_heartbeat_sec"],
+            max_yaw_deg=viz_cfg["base_max_yaw_deg"],
         )
         if SERVO is not None and READER is not None:
             SERVO.home_and_lock(READER, BASE)

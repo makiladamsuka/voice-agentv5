@@ -49,6 +49,8 @@ imu_orient_viz:
   error_warn_deg: 3.0
   unlock_servo_limits: true   # 0–180° jog (test_servo_manual style); false = config pan/tilt_min/max
   encoder_poll_hz: 5.0
+  base_spin_heartbeat_sec: 0.75  # web hold timeout; keepalive refreshes while M/N held
+  base_max_yaw_deg: 120.0        # sector limit (match base.max_yaw_deg)
   base_yaw_sign: 1.0         # flip 3D body rotation if needed
 
 person_memory:

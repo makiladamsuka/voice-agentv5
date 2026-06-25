@@ -465,17 +465,34 @@ class ArduinoServoLink:
             timeout_sec=self.base_move_timeout_sec if wait_base else 12.0,
         )
 
+    def _fast_line(self, payload: str) -> bool:
+        """Low-latency write for hold-to-spin L/R/X (no RX drain)."""
+        if not self.connected or self._ser is None:
+            return False
+        try:
+            if not payload.endswith("\n"):
+                payload = payload + "\n"
+            self._ser.write(payload.encode("ascii"))
+            self._ser.flush()
+            return True
+        except Exception as e:
+            if not self._error_logged:
+                print(f"ESP32 serial write failed: {e}")
+                self._error_logged = True
+            self._connected = False
+            return False
+
     def zero_base(self) -> bool:
         return self.send_line("Z")
 
     def write_base_stop(self) -> bool:
-        return self.send_line("X", drain_after=False)
+        return self._fast_line("X")
 
     def write_base_spin_left(self) -> bool:
-        return self.send_line("L", drain_after=False)
+        return self._fast_line("L")
 
     def write_base_spin_right(self) -> bool:
-        return self.send_line("R", drain_after=False)
+        return self._fast_line("R")
 
     def write_base_step_spin(
         self,

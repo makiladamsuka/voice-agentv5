@@ -300,6 +300,18 @@ arms:
   turn_sign: 1.0
   loop_hz: 50.0
 
+# ── Bye Wave Gesture ───────────────────────────────────────────────────────────
+# Enable to run ByeWaveService alongside the main robot loop.
+# Reads the shared stream_frame from FaceTracker (no separate camera needed).
+# Animations are played via the Blackboard -> ServoMixer -> ESP32 path.
+bye_wave:
+  enabled: false              # Set to true to activate
+  port: 8000                  # MJPEG hand-stream port (debug viz is on 8082)
+  host: "0.0.0.0"
+  cooldown_sec: 10.0          # Seconds between bye triggers
+  max_hands: 2
+  presets_path: "tests/arm_pose_presets.json"
+
 eyes:
   blink_speed_min: 3.2
   blink_speed_max: 4.2

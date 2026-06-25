@@ -19,7 +19,6 @@ from __future__ import annotations
 import _bootstrap  # noqa: F401
 import argparse
 import collections
-import cv2
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import io
 import os
@@ -28,6 +27,21 @@ import socketserver
 import sys
 import threading
 import time
+
+# ── Headless-safe OpenCV import ───────────────────────────────────────────────
+# On a Raspberry Pi (or any machine without an active X/Wayland session) there
+# is no display server, so OpenCV's Qt backend will abort when cv2.imshow() is
+# called.  Detect this early and force a no-window mode so the script runs
+# purely via the HTTP MJPEG stream.
+_has_display = bool(
+    os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+)
+if not _has_display:
+    # Prevent OpenCV from even trying to load Qt/xcb
+    os.environ.setdefault("OPENCV_VIDEOIO_PRIORITY_MSMF", "0")
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+import cv2  # noqa: E402  (must come after env-var setup)
 
 from lib.hand_detector import HandDetector, HandDetection, draw_skeleton, draw_motion_trail
 
@@ -539,6 +553,12 @@ def main():
     parser.add_argument("--no-window", action="store_true", help="Disable cv2.imshow GUI window (useful for headless servers)")
     args = parser.parse_args()
 
+    # Auto-disable the GUI window when no display server is present so the
+    # script never tries to load the Qt xcb platform plugin on headless Pi.
+    if not _has_display:
+        args.no_window = True
+        print("[INFO] No display detected — running in headless mode (HTTP stream only).")
+
     # 1. Start Stream Server
     print(f"[SERVER] Starting HTTP stream server on http://{args.host}:{args.port}/")
     server = ThreadingHTTPServer((args.host, args.port), MJPEGHandler)
@@ -642,7 +662,8 @@ def main():
         camera.stop()
         detector.close()
         server.shutdown()
-        cv2.destroyAllWindows()
+        if not args.no_window:
+            cv2.destroyAllWindows()
         print("[SUCCESS] Cleanup completed. Offline.")
 
 if __name__ == "__main__":

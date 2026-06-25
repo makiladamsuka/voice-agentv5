@@ -145,6 +145,14 @@ class EmotionEngine:
                 time.sleep(loop_delay)
                 continue
 
+            state_traverse = self.bb.read(
+                "prox_traverse_active", "prox_traverse_emotion",
+            )
+            if state_traverse.get("prox_traverse_active") and state_traverse.get("prox_traverse_emotion"):
+                self._set(str(state_traverse["prox_traverse_emotion"]))
+                time.sleep(loop_delay)
+                continue
+
             face = state["face_detected"]
             area = float(state["face_area_ratio"])
             norm_x = float(state["face_norm_x"])

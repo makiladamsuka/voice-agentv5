@@ -124,6 +124,12 @@ class Blackboard:
     prox_investigate_motion_id: int = 0
     prox_verified_priority_yaw: float = None
     prox_scan_complete_ts: float = 0.0
+    prox_traverse_active: bool = False
+    prox_traverse_dir: str = ""           # "" | "L2R" | "R2L"
+    prox_traverse_zone: str = ""            # latest active zone during traverse
+    prox_traverse_since: float = 0.0
+    prox_traverse_confidence: int = 0
+    prox_traverse_emotion: str = ""
 
     # ── Emotion (written by EmotionEngine) ───────────────────────────────────
     emotion: str = "idle"

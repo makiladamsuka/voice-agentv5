@@ -106,6 +106,22 @@ class ServoMixer:
 
         prox = _cfg(cfg, "proximity", default={}) or {}
         self._prox_swap_lr = bool(prox.get("swap_left_right", False))
+        from lib.prox_traverse import ProxTraverseConfig, ProxTraverseTracker
+
+        trav = _cfg(prox, "traverse", default={}) or {}
+        self._traverse_tracker = ProxTraverseTracker(
+            config=ProxTraverseConfig(
+                enabled=bool(trav.get("enabled", True)),
+                sequence_window_sec=float(trav.get("sequence_window_sec", 3.5)),
+                allow_skip_center=bool(trav.get("allow_skip_center", True)),
+                skip_center_max_gap_sec=float(trav.get("skip_center_max_gap_sec", 1.2)),
+                min_zones_in_sequence=int(trav.get("min_zones_in_sequence", 2)),
+                max_duration_sec=float(trav.get("max_duration_sec", 8.0)),
+                idle_exit_sec=float(trav.get("idle_exit_sec", 1.5)),
+                reject_all_zones_at_start=bool(trav.get("reject_all_zones_at_start", True)),
+            )
+        )
+        self._prev_prox_zones: tuple[bool, bool, bool] = (False, False, False)
 
         a = _cfg(cfg, "arms", default={}) or {}
         self._arms_enabled = bool(a.get("enabled", False))
@@ -373,6 +389,22 @@ class ServoMixer:
                 prox_zone_right=zr,
                 prox_zone_count=int(zl) + int(zc) + int(zr),
             )
+            vision = self.bb.read("face_detected", "body_detected")
+            snap = self._traverse_tracker.update(
+                {"L": zl, "C": zc, "R": zr},
+                time.time(),
+                face_detected=bool(vision["face_detected"]),
+                body_detected=bool(vision["body_detected"]),
+            )
+            self.bb.write(
+                prox_traverse_active=snap.prox_traverse_active,
+                prox_traverse_dir=snap.prox_traverse_dir,
+                prox_traverse_zone=snap.prox_traverse_zone,
+                prox_traverse_since=snap.prox_traverse_since,
+                prox_traverse_confidence=snap.prox_traverse_confidence,
+                prox_traverse_emotion=snap.prox_traverse_emotion,
+            )
+            self._prev_prox_zones = (zl, zc, zr)
 
 
     def _tilt_for_send(self, tilt: float) -> float:

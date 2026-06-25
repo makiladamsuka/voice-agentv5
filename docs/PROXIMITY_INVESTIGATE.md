@@ -401,3 +401,24 @@ When `servo_mode == "wander"` and base is idle:
 - Firmware zone label changes (use `swap_left_right` in config instead)
 - Patrolling all motion ghosts — only **verified** spots get wander revisit
 - Multi-ghost queue / patrol route
+
+---
+
+## Walk-by traverse mode
+
+When someone crosses in front of the robot, presence edges on the three ToF zones form a sequence (e.g. L→C→R). Python tracks these edges in `lib/prox_traverse.py` and activates **traverse follow**:
+
+| Field | Meaning |
+|-------|---------|
+| `prox_traverse_active` | Walk-by sequence detected |
+| `prox_traverse_dir` | `L2R` or `R2L` |
+| `prox_traverse_zone` | Latest zone that fired |
+| `prox_traverse_confidence` | 2 = L…R skip center; 3 = full L-C-R |
+
+**Base:** small chunked steps (~3° every ~0.55 s) in traverse direction via `_plan_traverse_step`.  
+**Head:** pan overlay aims at the active zone bearing with neck compensation.  
+**Suppresses** discrete proximity investigate turns while traverse is active.
+
+Config: `proximity.traverse` in `config.yaml`.
+
+---

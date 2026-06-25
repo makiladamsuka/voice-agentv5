@@ -168,6 +168,10 @@ class HeadDebugSnapshot:
     prox_investigate_active: bool = False
     prox_investigate_phase: str = ""
     prox_investigate_zone: str = ""
+    prox_traverse_active: bool = False
+    prox_traverse_dir: str = ""
+    prox_traverse_zone: str = ""
+    prox_traverse_confidence: int = 0
 
 
 class HeadDebugState:
@@ -677,6 +681,10 @@ function updateProxHud(s) {
     if (s.prox_approach_active) {
       line.className = 'approach-line active';
       line.textContent = `APPROACH ${s.prox_approach_zone} · ${s.prox_approach_distance}mm · ${fmt(s.prox_approach_velocity, 0)} mm/s · conf ${s.prox_approach_confidence || 0}`;
+    } else if (s.prox_traverse_active) {
+      line.className = 'approach-line active';
+      const arrow = s.prox_traverse_dir === 'R2L' ? 'R→L' : (s.prox_traverse_dir === 'L2R' ? 'L→R' : s.prox_traverse_dir || '?');
+      line.textContent = `Traversing ${arrow} · zone ${s.prox_traverse_zone || '?'} · conf ${s.prox_traverse_confidence || 0}`;
     } else if (s.prox_investigate_active) {
       line.className = 'approach-line active';
       const phase = s.prox_investigate_phase || '?';

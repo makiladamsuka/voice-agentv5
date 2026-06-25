@@ -378,6 +378,21 @@ proximity:
   glance_return_sec: 0.6
   # How far to turn head during glance (0=none, 1=full)
   glance_blend: 0.4
+  traverse:
+    enabled: true
+    sequence_window_sec: 3.5
+    allow_skip_center: true
+    skip_center_max_gap_sec: 1.2
+    min_zones_in_sequence: 2
+    step_deg: 3.0
+    max_step_deg: 5.0
+    step_cooldown_sec: 0.55
+    compensation_gain: 0.85
+    max_duration_sec: 8.0
+    idle_exit_sec: 1.5
+    reject_all_zones_at_start: true
+    pan_smooth_hz: 3.2
+    pan_slew_dps: 22.0
   investigate:
     enabled: true
     motion_fade_sec: 5.0

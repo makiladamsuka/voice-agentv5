@@ -199,6 +199,10 @@ def build_debug_snapshot(
         prox_investigate_active=bool(state.get("prox_investigate_active", False)),
         prox_investigate_phase=str(state.get("prox_investigate_phase", "")),
         prox_investigate_zone=str(state.get("prox_investigate_zone", "")),
+        prox_traverse_active=bool(state.get("prox_traverse_active", False)),
+        prox_traverse_dir=str(state.get("prox_traverse_dir", "")),
+        prox_traverse_zone=str(state.get("prox_traverse_zone", "")),
+        prox_traverse_confidence=int(state.get("prox_traverse_confidence", 0)),
     )
     result = asdict(snap)
     result["manual_control_enabled"] = bool(state.get("manual_control_enabled", False))
@@ -222,6 +226,10 @@ def build_debug_snapshot(
     result["base_fault_reason"] = str(state.get("base_fault_reason") or "")
     result["base_last_spin_reason"] = str(state.get("base_last_spin_reason") or "")
     result["base_last_spin_moved_deg"] = float(state.get("base_last_spin_moved_deg", 0.0))
+    result["prox_traverse_active"] = bool(state.get("prox_traverse_active", False))
+    result["prox_traverse_dir"] = str(state.get("prox_traverse_dir", ""))
+    result["prox_traverse_zone"] = str(state.get("prox_traverse_zone", ""))
+    result["prox_traverse_confidence"] = int(state.get("prox_traverse_confidence", 0))
     result["base_fwd_deg"] = base_enc
     result["true_north_deg"] = 0.0
     result["pan_rel_base_deg"] = pan_mech

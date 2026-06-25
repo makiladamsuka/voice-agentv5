@@ -319,6 +319,10 @@ class ServoLoop:
         self.prox_glance_return_sec = float(prox.get("glance_return_sec", 0.6))
         self.prox_glance_blend = float(prox.get("glance_blend", 0.4))
         self.prox_glance_blend_track = float(inv.get("glance_blend_track", 0.35))
+        self.prox_zone_yaw_deg = float(inv.get("zone_yaw_deg", float(prox.get("turn_step_deg", 35.0))))
+        trav = _cfg(prox, "traverse", default={}) or {}
+        self.traverse_pan_smooth_hz = float(trav.get("pan_smooth_hz", 3.2))
+        self.traverse_pan_slew_dps = float(trav.get("pan_slew_dps", 22.0))
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self._pan = self.pan_center
@@ -636,6 +640,52 @@ class ServoLoop:
         elapsed = now - self._lss_enter_ts
         blend = clamp(elapsed / max(0.05, self.lss_entry_blend_sec), 0.0, 1.0)
         return self.lss_pan_smooth_hz * (0.22 + 0.78 * blend)
+
+    def _traverse_pan_goal_for(self, zone: str, base_world_yaw: float) -> float:
+        from lib.prox_investigate import zone_world_yaw
+
+        world_target = zone_world_yaw(zone, base_world_yaw, self.prox_zone_yaw_deg)
+        yaw_err = angular_error_deg(world_target, base_world_yaw)
+        current_mech = signed_pan_mech_deg(self._pan, self._servo_cfg)
+        target_mech = clamp(
+            current_mech + yaw_err,
+            min(self.mech_left, self.mech_right),
+            max(self.mech_left, self.mech_right),
+        )
+        return mech_to_pan_cmd(
+            target_mech,
+            pan_center=self.pan_center,
+            pan_min=self.pan_min,
+            pan_max=self.pan_max,
+            mech_left=self.mech_left,
+            mech_right=self.mech_right,
+            pan_sign=self.pan_sign,
+        )
+
+    def _tick_traverse_head_overlay(self, now: float, dt: float) -> bool:
+        """Pan toward active traverse zone; hold wander motion while active."""
+        state = self.bb.read(
+            "prox_traverse_active", "prox_traverse_zone", "base_world_yaw_deg",
+        )
+        if not state.get("prox_traverse_active", False):
+            return False
+
+        zone = state.get("prox_traverse_zone") or "C"
+        pan_target = self._traverse_pan_goal_for(zone, float(state["base_world_yaw_deg"]))
+        self._wander.moving = False
+        self._wander.pan_goal = self._pan
+        self._wander.tilt_goal = self._tilt
+        pan_max_step = self.traverse_pan_slew_dps * max(dt, 0.001)
+        self._pan = _smooth_toward_stepped(
+            self._pan,
+            pan_target,
+            dt,
+            smooth_hz=self.traverse_pan_smooth_hz,
+            lo=self.pan_min,
+            hi=self.pan_max,
+            max_step=pan_max_step,
+        )
+        return True
 
     def _on_mode_change(self, old_mode: str, new_mode: str) -> None:
         """Avoid PID derivative spikes when switching track ↔ wander."""
@@ -972,6 +1022,13 @@ class ServoLoop:
             return "track"
 
         if self._tick_prox_investigate(now, dt, effective_tilt_center):
+            return "wander"
+
+        if self._tick_traverse_head_overlay(now, dt):
+            self.bb.write(
+                wander_moving=False,
+                wander_last_step_deg=0.0,
+            )
             return "wander"
 
         state = self.bb.read("last_seen_world_yaw")

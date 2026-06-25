@@ -211,6 +211,13 @@ class BaseController:
         self.prox_revisit_max_age_sec = float(inv.get("revisit_max_age_sec", 5.0))
         self.prox_revisit_aim_tol = float(inv.get("revisit_aim_tolerance_deg", 15.0))
 
+        trav = _cfg(prox, "traverse", default={}) or {}
+        self.traverse_enabled = bool(trav.get("enabled", True))
+        self.traverse_step_deg = float(trav.get("step_deg", 3.0))
+        self.traverse_max_step_deg = float(trav.get("max_step_deg", 5.0))
+        self.traverse_cooldown_sec = float(trav.get("step_cooldown_sec", 0.55))
+        self.traverse_comp_gain = float(trav.get("compensation_gain", 0.85))
+
         # ── Runtime state ─────────────────────────────────────────────────────
         self._last_nudge_ts = 0.0
         self._last_fast_ts = 0.0
@@ -235,6 +242,7 @@ class BaseController:
         self._last_base_motion_done_ts = 0.0
         self._was_base_busy = False
         self._last_prox_reaction_approach_ts = 0.0
+        self._last_traverse_ts = 0.0
 
     def _prox_zone_yaw(self, zone: str, base_world_yaw: float) -> float:
         from lib.prox_investigate import zone_world_yaw
@@ -638,11 +646,51 @@ class BaseController:
         comp_pan = self._comp_pan_for_step(step, pan, self.lss_base_comp)
         return step, "last_seen", comp_pan
 
+    def _plan_traverse_step(
+        self, now: float, state: dict,
+    ) -> tuple[Optional[float], str, float]:
+        """Small chunked base steps while a walk-by traverse is active."""
+        if not self.traverse_enabled:
+            return None, "", 0.0
+        if not state.get("prox_traverse_active", False):
+            return None, "", 0.0
+        if state.get("face_detected", False) or state.get("body_detected", False):
+            return None, "", 0.0
+        mode = state.get("servo_mode", "")
+        if mode not in ("wander", "idle"):
+            return None, "", 0.0
+        if (now - self._last_traverse_ts) < self.traverse_cooldown_sec:
+            return None, "", 0.0
+
+        direction = state.get("prox_traverse_dir", "")
+        if direction == "L2R":
+            step_sign = 1.0
+        elif direction == "R2L":
+            step_sign = -1.0
+        else:
+            return None, "", 0.0
+
+        pan = state["servo_pan"]
+        mag = min(abs(self.traverse_step_deg), self.traverse_max_step_deg)
+        step = step_sign * mag * self.base_sign
+        step = self._apply_gate(
+            step, pan, state["base_encoder_deg"], state,
+            require_head_lead=False,
+        )
+        if abs(step) < self.min_step:
+            return None, "", 0.0
+
+        self._last_traverse_ts = now
+        comp_pan = self._comp_pan_for_step(step, pan, self.traverse_comp_gain)
+        return step, "traverse", comp_pan
+
     def _plan_proximity_step(
         self, now: float, state: dict,
     ) -> tuple[Optional[float], str, float]:
         """Turn base toward an approaching person detected by ToF sensors."""
         if not self.prox_enabled:
+            return None, "", 0.0
+        if state.get("prox_traverse_active", False):
             return None, "", 0.0
         if not state.get("prox_approach_active", False):
             return None, "", 0.0
@@ -803,6 +851,8 @@ class BaseController:
                 "prox_approach_confidence", "prox_post_turn_lockout_ts",
                 "prox_approach_ts", "prox_investigate_active",
                 "prox_verified_priority_yaw",
+                "prox_traverse_active", "prox_traverse_dir",
+                "prox_zone_count",
             )
 
             pan_offset = self._head_pan_offset(state["servo_pan"])
@@ -855,12 +905,14 @@ class BaseController:
                 step, source, comp_pan = self._plan_prox_verified_revisit(now, state)
                 if step is None:
                     step, source, comp_pan = self._plan_wander_follow(now, state)
+                if step is None:
+                    step, source, comp_pan = self._plan_traverse_step(now, state)
 
             if step is None and mode in ("wander", "track", "last_seen"):
                 step, source, comp_pan = self._plan_sustained_follow(now, state)
 
             # Proximity approach: react in any mode when not already tracking
-            if step is None and self.prox_enabled:
+            if step is None and self.prox_enabled and not state.get("prox_traverse_active", False):
                 step, source, comp_pan = self._plan_proximity_step(now, state)
 
             if step is not None and abs(step) >= self.min_step:

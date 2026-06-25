@@ -10,6 +10,8 @@ livekit-plugins-silero==1.5.1
 # Computer vision (YuNet faces + YOLOv8n person/body via OpenCV DNN)
 opencv-python==4.12.0.88
 face-recognition==1.3.0
+mediapipe  # Install via pip: pip install mediapipe (Note: on Raspberry Pi 64-bit, pip install is fully supported)
+
 
 # RAG - OCR and Vector Database
 pytesseract

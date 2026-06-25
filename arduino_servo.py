@@ -614,6 +614,16 @@ class ArduinoServoLink:
         if not self.send_line("?", drain_after=False):
             return None
         line = self._read_line_matching(ACK_TIMEOUT_SEC, _BASE_STATUS_RE)
+        return self._parse_base_status(line)
+
+    def query_status_fast(self, timeout: float = 0.12) -> Optional[BaseStatus]:
+        """Encoder poll during base spin — no RX drain (robottest-style)."""
+        if not self._fast_line("?"):
+            return None
+        line = self._read_line_matching(timeout, _BASE_STATUS_RE)
+        return self._parse_base_status(line)
+
+    def _parse_base_status(self, line: Optional[str]) -> Optional[BaseStatus]:
         if line is None:
             return None
         match = _BASE_STATUS_RE.match(line)

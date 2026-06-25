@@ -87,13 +87,22 @@ def compute_yaw_verify(
     base_encoder_deg: float,
     servo: ServoPose,
     ref: VerifyReference,
+    base_spin_active: bool = False,
 ) -> YawVerifyState:
     """Split yaw into body (encoder) + head-on-body; pan error excludes base rotation."""
     imu_yaw_delta = angular_delta_deg(imu_yaw_deg, ref.imu_yaw_deg)
     imu_tilt_delta = imu_tilt_deg - ref.imu_tilt_deg
-    body_yaw = angular_delta_deg(base_encoder_deg, ref.base_encoder_deg)
+    body_yaw_enc = angular_delta_deg(base_encoder_deg, ref.base_encoder_deg)
     servo_pan_delta = servo.pan_mech_deg - ref.servo_pan_mech_deg
     servo_tilt_delta = servo.tilt_mech_deg - ref.servo_tilt_mech_deg
+    inferred_body = wrap_degrees(imu_yaw_delta - servo_pan_delta)
+    body_yaw = body_yaw_enc
+    if base_spin_active or (
+        abs(servo_pan_delta) < 3.0
+        and abs(inferred_body - body_yaw_enc) > 4.0
+        and abs(inferred_body) > abs(body_yaw_enc)
+    ):
+        body_yaw = inferred_body
     head_on_body = angular_delta_deg(imu_yaw_delta, body_yaw)
     world_head_yaw = wrap_degrees(body_yaw + head_on_body)
     head_pan_error = angular_delta_deg(head_on_body, servo_pan_delta)

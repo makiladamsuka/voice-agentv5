@@ -70,6 +70,11 @@ def _load_viz_config(config_path: Path) -> dict:
         "base_spin_heartbeat_sec": float(viz.get("base_spin_heartbeat_sec", 0.75)),
         "base_max_yaw_deg": float(viz.get("base_max_yaw_deg", base_cfg.get("max_yaw_deg", 120.0))),
         "base_yaw_sign": float(base_yaw_sign),
+        "zero_on_start": bool(
+            viz["zero_on_start"]
+            if "zero_on_start" in viz
+            else base_cfg.get("zero_on_start", True)
+        ),
     }
 
 
@@ -149,17 +154,6 @@ class BaseBodyController:
                     self._spin_latch = 0
             return self._spin_latch
 
-    def _spin_blocked(self, want: int) -> bool:
-        if want == 0:
-            return False
-        enc = self.base_encoder_deg
-        margin = 2.0
-        if want < 0 and enc <= -(self._max_yaw_deg - margin):
-            return True
-        if want > 0 and enc >= (self._max_yaw_deg - margin):
-            return True
-        return False
-
     def _apply_spin_locked(self, want: int) -> None:
         if want == self._active_spin:
             return
@@ -175,25 +169,26 @@ class BaseBodyController:
         while not self._stop.is_set():
             now = time.time()
             want = self._latched_spin(now)
-            if self._spin_blocked(want):
-                want = 0
-                self._clear_spin_latch()
-            with self._lock:
-                self._apply_spin_locked(want)
+            if want != self._active_spin:
+                with self._lock:
+                    self._apply_spin_locked(want)
             self._stop.wait(self.SPIN_POLL_SEC)
 
     def _poll_loop(self) -> None:
-        interval = 1.0 / self._poll_hz
         while not self._stop.is_set():
-            if self._active_spin == 0:
-                self.poll_once()
-            self._stop.wait(interval)
+            self.poll_once()
+            # Poll faster while base is spinning so body_yaw tracks in the 3D preview.
+            hz = self._poll_hz * (4.0 if self._active_spin != 0 else 1.0)
+            self._stop.wait(1.0 / hz)
 
     def poll_once(self) -> float | None:
         if not self._lock.acquire(blocking=False):
             return self.base_encoder_deg
         try:
-            st = self._link.query_status()
+            if self._active_spin != 0:
+                st = self._link.query_status_fast()
+            else:
+                st = self._link.query_status()
         finally:
             self._lock.release()
         if st is None:
@@ -241,6 +236,7 @@ class BaseBodyController:
             "base_encoder_deg": enc,
             "base_motion_busy": self.base_motion_busy,
             "base_spin": self._active_spin,
+            "base_spin_active": self._active_spin != 0,
             "base_at_limit": at_min or at_max,
             "base_at_min": at_min,
             "base_at_max": at_max,
@@ -371,6 +367,8 @@ class ServoHeadController:
         imu_yaw_deg: float,
         imu_tilt_deg: float,
         base_encoder_deg: float = 0.0,
+        *,
+        base_spin_active: bool = False,
     ) -> None:
         pan_mech, tilt_mech = self._mech()
         servo = ServoPose(
@@ -385,6 +383,7 @@ class ServoHeadController:
             base_encoder_deg=base_encoder_deg,
             servo=servo,
             ref=self.ref,
+            base_spin_active=base_spin_active,
         )
         self.pan_error_deg = state.head_pan_error_deg
         self.tilt_error_deg = state.tilt_error_deg
@@ -523,8 +522,14 @@ def imu_reader_loop(
                 if sample is not None:
                     payload = sample.as_dict()
                     base_enc = BASE.base_encoder_deg if BASE is not None else 0.0
+                    spin_active = BASE._active_spin != 0 if BASE is not None else False
                     if SERVO is not None:
-                        SERVO.update_errors(sample.yaw_deg, sample.tilt_deg, base_enc)
+                        SERVO.update_errors(
+                            sample.yaw_deg,
+                            sample.tilt_deg,
+                            base_enc,
+                            base_spin_active=spin_active,
+                        )
                         payload.update(SERVO.extra_fields())
                     if BASE is not None:
                         payload.update(BASE.extra_fields())
@@ -576,6 +581,7 @@ def init_robot(
     encoder_poll_hz: float = 5.0,
     spin_heartbeat_sec: float = 0.75,
     max_yaw_deg: float = 120.0,
+    zero_on_start: bool = True,
 ) -> tuple[ServoHeadController | None, BaseBodyController | None]:
     servo_cfg = load_servo_cfg(config_path)
     port = str(servo_cfg.get("port") or "")
@@ -590,6 +596,14 @@ def init_robot(
     if not verify_spin_firmware(link):
         link.close(skip_home=True)
         return None, None
+    if zero_on_start:
+        with serial_lock:
+            link.write_base_stop()
+            link.zero_base()
+            time.sleep(0.08)
+            st = link.query_status()
+            enc = float(st.degrees) if st is not None else 0.0
+        print(f"[imu_orient_viz] Base encoder zeroed — this pose is now 0° (read {enc:+.1f}°)")
     base = BaseBodyController(
         link,
         serial_lock,
@@ -651,14 +665,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .scene-wrap { display: flex; align-items: center; justify-content: center; min-height: 280px; perspective: 900px; }
     .scene-tilt { transform: rotateX(16deg); transform-style: preserve-3d; }
     .robot-stack { display: flex; flex-direction: column; align-items: center; transform-style: preserve-3d; }
+    .robot-yaw { display: flex; flex-direction: column; align-items: center; transform-style: preserve-3d;
+      transition: transform 0.06s linear; transform-origin: center bottom; }
     .head-mount { width: 140px; height: 100px; transform-style: preserve-3d;
       transition: transform 0.06s linear; transform-origin: center bottom; }
     .neck-bar { width: 28px; height: 10px; margin: 2px 0; background: #475569; border-radius: 4px;
       box-shadow: 0 1px 0 #1e293b; transform: translateZ(2px); }
-    .body-mount { width: 168px; height: 80px; transform-style: preserve-3d;
-      transform-origin: center top; display: flex; align-items: flex-start; justify-content: center; }
     .body-box { width: 160px; height: 52px; position: relative; transform-style: preserve-3d;
-      transition: transform 0.06s linear; }
+      margin-top: 2px; }
     .head-box { width: 140px; height: 100px; position: relative; transform-style: preserve-3d;
       transition: transform 0.06s linear; }
     .face, .bface { position: absolute; border: 2px solid var(--border); border-radius: 8px;
@@ -747,18 +761,18 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <div class="scene-wrap">
         <div class="scene-tilt">
           <div class="robot-stack">
-            <div class="head-mount" id="headMount">
-              <div class="head-box" id="headBox">
-                <div class="face front">FACE</div>
-                <div class="face back">BACK</div>
-                <div class="face top"></div>
-                <div class="face bottom"></div>
-                <div class="face left"></div>
-                <div class="face right"></div>
+            <div class="robot-yaw" id="robotYaw">
+              <div class="head-mount" id="headMount">
+                <div class="head-box" id="headBox">
+                  <div class="face front">FACE</div>
+                  <div class="face back">BACK</div>
+                  <div class="face top"></div>
+                  <div class="face bottom"></div>
+                  <div class="face left"></div>
+                  <div class="face right"></div>
+                </div>
               </div>
-            </div>
-            <div class="neck-bar"></div>
-            <div class="body-mount">
+              <div class="neck-bar"></div>
               <div class="body-box" id="bodyBox">
                 <div class="bface front">BODY</div>
                 <div class="bface back">BACK</div>
@@ -964,9 +978,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
       const baseSign = data.base_yaw_sign ?? 1;
       const bodyYaw = (L.body_yaw_deg || 0) * baseSign;
       const headOnBody = (L.head_on_body_imu_deg || 0) * baseSign;
-      const worldYaw = bodyYaw + headOnBody;
-      document.getElementById("bodyBox").style.transform = "rotateY(" + bodyYaw + "deg)";
-      document.getElementById("headMount").style.transform = "rotateY(" + worldYaw + "deg)";
+      document.getElementById("robotYaw").style.transform = "rotateY(" + bodyYaw + "deg)";
+      document.getElementById("headMount").style.transform = "rotateY(" + headOnBody + "deg)";
       document.getElementById("headBox").style.transform = "rotateX(" + (-tilt) + "deg)";
 
       const hist = data.history || {};
@@ -1063,6 +1076,11 @@ def main() -> int:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--level-cal", action="store_true", default=viz_cfg.get("use_level_cal", False))
     parser.add_argument("--no-servo", action="store_true", default=not viz_cfg.get("servo_enabled", True))
+    parser.add_argument(
+        "--no-zero-base",
+        action="store_true",
+        help="Do not zero encoder at startup (default: zero current pose to 0°)",
+    )
     args = parser.parse_args()
 
     STATE = ImuOrientState(
@@ -1090,6 +1108,7 @@ def main() -> int:
             encoder_poll_hz=viz_cfg["encoder_poll_hz"],
             spin_heartbeat_sec=viz_cfg["base_spin_heartbeat_sec"],
             max_yaw_deg=viz_cfg["base_max_yaw_deg"],
+            zero_on_start=viz_cfg["zero_on_start"] and not args.no_zero_base,
         )
         if SERVO is not None and READER is not None:
             SERVO.home_and_lock(READER, BASE)

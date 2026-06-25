@@ -51,6 +51,7 @@ imu_orient_viz:
   encoder_poll_hz: 5.0
   base_spin_heartbeat_sec: 0.75  # web hold timeout; keepalive refreshes while M/N held
   base_max_yaw_deg: 120.0        # sector limit (match base.max_yaw_deg)
+  zero_on_start: true            # current physical pose = encoder 0° when viz starts
   base_yaw_sign: 1.0         # flip 3D body rotation if needed
 
 person_memory:

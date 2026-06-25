@@ -250,7 +250,7 @@ class CameraFeed:
         print("[INFO] Camera Interface: Picamera2")
         self.picam2 = Picamera2()
         config = self.picam2.create_video_configuration(
-            main={"format": "RGB888", "size": (640, 480)},
+            main={"format": "XRGB8888", "size": (640, 480)},
             buffer_count=2,
         )
         self.picam2.configure(config)
@@ -260,9 +260,10 @@ class CameraFeed:
 
     def read(self) -> tuple[bool, cv2.Mat | None]:
         try:
-            frame_rgb = self.picam2.capture_array()
-            # Convert RGB (Picamera2) to BGR (OpenCV standards)
-            frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+            frame_xrgb = self.picam2.capture_array()
+            # XRGB8888 is stored as B,G,R,X in memory on ARM little-endian.
+            # COLOR_BGRA2BGR drops the X pad byte, giving a clean BGR frame.
+            frame_bgr = cv2.cvtColor(frame_xrgb, cv2.COLOR_BGRA2BGR)
             return True, frame_bgr
         except Exception as e:
             print(f"[ERROR] Picamera2 frame capture failed: {e}")

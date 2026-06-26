@@ -57,11 +57,13 @@ class TalkAnimationRunner:
         presets_path: pathlib.Path,
         pose_duration: float = 0.5,
         poll_interval: float = 0.05,
+        debug: bool = False,
     ) -> None:
         self._bb = bb
         self._presets_path = presets_path
         self._pose_duration = pose_duration
         self._poll_interval = poll_interval
+        self._debug = debug
         self._running = False
         self._thread: threading.Thread | None = None
         self._talk_pose_keys: list[str] = []
@@ -69,12 +71,26 @@ class TalkAnimationRunner:
         
         # Load poses once at init
         self._load_talk_poses()
+        
+        # Test Blackboard connection
+        print("[DEBUG] Testing Blackboard connection...")
+        try:
+            bb_data = self._bb.read()
+            agent_speaking = bb_data.get("agent_speaking", None)
+            print(f"[DEBUG] Blackboard read successful. Current agent_speaking = {agent_speaking}")
+            print(f"[DEBUG] Blackboard keys available: {list(bb_data.keys())[:10]}...")  # Show first 10 keys
+        except Exception as exc:
+            print(f"[ERROR] Blackboard read failed: {exc}", file=sys.stderr)
 
     def _load_talk_poses(self) -> None:
         """Load all talk* poses from the presets file."""
+        print(f"[DEBUG] Loading talk poses from: {self._presets_path}")
         try:
             data = json.loads(self._presets_path.read_text())
             self._poses = data.get("poses", {})
+            
+            print(f"[DEBUG] Total poses in file: {len(self._poses)}")
+            print(f"[DEBUG] Available pose keys: {list(self._poses.keys())}")
             
             # Find all pose keys that start with "talk"
             self._talk_pose_keys = [
@@ -89,7 +105,10 @@ class TalkAnimationRunner:
                     file=sys.stderr,
                 )
             else:
-                print(f"[INFO] Loaded {len(self._talk_pose_keys)} talk poses: {', '.join(self._talk_pose_keys)}")
+                print(f"[INFO] ✓ Loaded {len(self._talk_pose_keys)} talk poses: {', '.join(self._talk_pose_keys)}")
+                for key in self._talk_pose_keys:
+                    pose = self._poses[key]
+                    print(f"[DEBUG]   {key}: a0={pose['a0']}, a1={pose['a1']}, a2={pose['a2']}, a3={pose['a3']}")
                 
         except Exception as exc:
             print(
@@ -110,21 +129,43 @@ class TalkAnimationRunner:
     def _run_loop(self) -> None:
         """Main loop: continuously switch between random talk poses while agent speaks."""
         print("[INFO] Talk pose loop started")
+        print("[DEBUG] Starting to monitor agent_speaking flag...")
+        
+        last_speaking_state = None
         
         while self._running:
+            # Read current state
+            bb_data = self._bb.read()
+            agent_speaking = bb_data.get("agent_speaking", False)
+            
+            # Debug: Log state changes
+            if agent_speaking != last_speaking_state:
+                print(f"[DEBUG] agent_speaking flag changed: {last_speaking_state} -> {agent_speaking}")
+                last_speaking_state = agent_speaking
+            
             # Wait for agent to start speaking
-            while self._running and not self._bb.read().get("agent_speaking", False):
+            if not agent_speaking:
                 time.sleep(self._poll_interval)
+                continue
             
             if not self._running:
                 break
                 
-            print("[INFO] Agent started speaking — triggering talk poses")
+            print("[INFO] ✓ Agent started speaking — triggering talk poses")
             
             # Agent is speaking — continuously switch between random talk poses
-            while self._running and self._bb.read().get("agent_speaking", False):
+            pose_count = 0
+            while self._running:
+                bb_data = self._bb.read()
+                agent_speaking = bb_data.get("agent_speaking", False)
+                
+                if not agent_speaking:
+                    print(f"[INFO] ✓ Agent stopped speaking (played {pose_count} poses)")
+                    break
+                
                 if not self._talk_pose_keys:
                     # No talk poses available — just wait
+                    print("[WARN] No talk poses available")
                     time.sleep(self._poll_interval)
                     continue
                 
@@ -133,18 +174,18 @@ class TalkAnimationRunner:
                 pose = self._poses[pose_key]
                 
                 # Apply the pose
+                print(f"[DEBUG] Playing pose: {pose_key} (a0={pose['a0']:.1f}, a1={pose['a1']:.1f}, a2={pose['a2']:.1f}, a3={pose['a3']:.1f})")
                 self._apply_pose(pose)
+                pose_count += 1
                 
                 # Hold the pose for the specified duration (or until agent stops speaking)
                 start = time.time()
                 while time.time() - start < self._pose_duration:
-                    if not self._bb.read().get("agent_speaking", False):
-                        print("[INFO] Agent stopped speaking")
+                    bb_data = self._bb.read()
+                    if not bb_data.get("agent_speaking", False):
+                        print(f"[DEBUG] Agent stopped mid-pose (pose {pose_count})")
                         break
                     time.sleep(self._poll_interval)
-            
-            if self._bb.read().get("agent_speaking", False) == False:
-                print("[INFO] Agent finished speaking")
         
         print("[INFO] Talk pose loop stopped")
 
@@ -196,6 +237,11 @@ def main() -> None:
         default=0.05,
         help="Seconds between checking agent_speaking flag (default: 0.05)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable verbose debug logging",
+    )
 
     args = parser.parse_args()
 
@@ -203,31 +249,51 @@ def main() -> None:
     if not args.presets.exists():
         print(f"[ERROR] Presets file not found: {args.presets}", file=sys.stderr)
         sys.exit(1)
+    
+    print(f"[DEBUG] Using presets file: {args.presets}")
+    print(f"[DEBUG] Pose duration: {args.frame_delay}s")
+    print(f"[DEBUG] Poll interval: {args.poll_interval}s")
+    print(f"[DEBUG] Debug mode: {args.debug}")
 
     # Initialize Blackboard
+    print("[DEBUG] Connecting to Blackboard...")
     try:
         bb = Blackboard()
-        print("[INFO] Blackboard connected")
+        print("[INFO] ✓ Blackboard connected successfully")
     except Exception as exc:
         print(f"[ERROR] Failed to connect to Blackboard: {exc}", file=sys.stderr)
+        print("[ERROR] Make sure start_robot.py is running on the Raspberry Pi", file=sys.stderr)
         sys.exit(1)
 
     # Create and start runner
+    print("[DEBUG] Creating TalkAnimationRunner...")
     runner = TalkAnimationRunner(
         bb=bb,
         presets_path=args.presets,
         pose_duration=args.frame_delay,
         poll_interval=args.poll_interval,
+        debug=args.debug,
     )
     
     try:
+        print("[DEBUG] Starting runner thread...")
         runner.start()
+        print("[INFO] ✓ Talk pose runner started successfully")
         print("[INFO] Monitoring agent_speaking flag... Press Ctrl+C to stop")
         print("[INFO] Talk poses will switch randomly when voice agent speaks")
+        print()
+        print("=" * 60)
+        print("WAITING FOR AGENT TO SPEAK...")
+        print("=" * 60)
         
-        # Keep main thread alive
+        # Keep main thread alive and show periodic status
+        check_count = 0
         while True:
-            time.sleep(1.0)
+            time.sleep(5.0)
+            check_count += 1
+            bb_data = bb.read()
+            agent_speaking = bb_data.get("agent_speaking", False)
+            print(f"[STATUS] Check #{check_count}: agent_speaking = {agent_speaking}")
             
     except KeyboardInterrupt:
         print("\n[INFO] Shutting down...")

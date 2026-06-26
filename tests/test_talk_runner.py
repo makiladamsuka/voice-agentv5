@@ -29,6 +29,7 @@ import threading
 import time
 
 from core.blackboard import Blackboard
+from voice.speaking_flag import read_speaking_flag
 
 
 class TalkAnimationRunner:
@@ -129,14 +130,13 @@ class TalkAnimationRunner:
     def _run_loop(self) -> None:
         """Main loop: continuously switch between random talk poses while agent speaks."""
         print("[INFO] Talk pose loop started")
-        print("[DEBUG] Monitoring agent_speaking flag...")
+        print("[DEBUG] Monitoring agent_speaking flag from file...")
         
         last_speaking = False
         
         while self._running:
-            # Read current state - use agent_speaking flag
-            bb_data = self._bb.read()
-            is_speaking = bb_data.get("agent_speaking", False)
+            # Read current state - use file-based flag (works across processes)
+            is_speaking = read_speaking_flag()
             
             # Detect speaking state changes
             if is_speaking and not last_speaking:
@@ -173,10 +173,10 @@ class TalkAnimationRunner:
             # Hold the pose for the specified duration (or until agent stops speaking)
             start = time.time()
             while time.time() - start < self._pose_duration:
-                bb_data = self._bb.read()
-                is_speaking = bb_data.get("agent_speaking", False)
+                is_speaking = read_speaking_flag()
                 if not is_speaking:
-                    print(f"[DEBUG] Agent stopped mid-pose")
+                    if self._debug:
+                        print(f"[DEBUG] Agent stopped mid-pose")
                     break
                 time.sleep(self._poll_interval)
         
@@ -284,10 +284,10 @@ def main() -> None:
         while True:
             time.sleep(5.0)
             check_count += 1
+            agent_speaking = read_speaking_flag()
             bb_data = bb.read()
-            agent_speaking = bb_data.get("agent_speaking", False)
             voice_session_active = bb_data.get("voice_session_active", False)
-            print(f"[STATUS] Check #{check_count}: agent_speaking = {agent_speaking}, voice_session_active = {voice_session_active}")
+            print(f"[STATUS] Check #{check_count}: agent_speaking (file) = {agent_speaking}, voice_session_active (BB) = {voice_session_active}")
             
     except KeyboardInterrupt:
         print("\n[INFO] Shutting down...")

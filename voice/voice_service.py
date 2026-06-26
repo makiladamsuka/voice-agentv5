@@ -34,6 +34,7 @@ from voice.map_navigation import MapNavigator
 from voice.event_database import build_event_database
 from voice.greetings import generate_presence_greeting
 from voice.tools import TimeTools, SearchTools, ContentTools
+from voice.speaking_flag import write_speaking_flag, clear_speaking_flag
 
 if TYPE_CHECKING:
     from core.blackboard import Blackboard
@@ -368,11 +369,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     def on_agent_state_changed(ev):
         if ev.new_state == "speaking":
             _set_conv_state("speaking")
+            write_speaking_flag(True)
             if _bb is not None:
                 _bb.write(agent_speaking=True)
         elif ev.new_state in ("listening", "idle"):
             drain_to_zero()
             _set_conv_state("waiting")
+            write_speaking_flag(False)
             if _bb is not None:
                 _bb.write(agent_speaking=False)
 
@@ -407,6 +410,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     finally:
         _session_live = False
         _active_session = None
+        write_speaking_flag(False)  # Clear flag on shutdown
         if _bb is not None:
             _bb.write(
                 voice_session_active=False,

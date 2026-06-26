@@ -18,6 +18,7 @@ import sys
 import time
 
 from core.blackboard import Blackboard
+from voice.speaking_flag import read_speaking_flag
 
 
 def main() -> None:
@@ -35,10 +36,13 @@ def main() -> None:
     
     print("=" * 70)
     print("MONITORING agent_speaking FLAG")
+    print("  - Blackboard (in-process)")
+    print("  - File flag (cross-process)")
     print("=" * 70)
     print()
     
-    last_agent_speaking = None
+    last_agent_speaking_bb = None
+    last_agent_speaking_file = None
     last_user_speaking = None
     last_voice_session_active = None
     
@@ -46,16 +50,22 @@ def main() -> None:
         while True:
             bb_data = bb.read()
             
-            agent_speaking = bb_data.get("agent_speaking", None)
+            agent_speaking_bb = bb_data.get("agent_speaking", None)
+            agent_speaking_file = read_speaking_flag()
             user_speaking = bb_data.get("user_speaking", None)
             voice_session_active = bb_data.get("voice_session_active", None)
             conv_state = bb_data.get("conv_state", None)
             
             # Show state changes
-            if agent_speaking != last_agent_speaking:
-                status = "🟢 SPEAKING" if agent_speaking else "🔴 SILENT"
-                print(f"[AGENT] agent_speaking changed: {last_agent_speaking} -> {agent_speaking} {status}")
-                last_agent_speaking = agent_speaking
+            if agent_speaking_file != last_agent_speaking_file:
+                status = "🟢 SPEAKING" if agent_speaking_file else "🔴 SILENT"
+                print(f"[AGENT-FILE] agent_speaking changed: {last_agent_speaking_file} -> {agent_speaking_file} {status}")
+                last_agent_speaking_file = agent_speaking_file
+            
+            if agent_speaking_bb != last_agent_speaking_bb:
+                status = "🟢 SPEAKING" if agent_speaking_bb else "🔴 SILENT"
+                print(f"[AGENT-BB] agent_speaking changed: {last_agent_speaking_bb} -> {agent_speaking_bb} {status}")
+                last_agent_speaking_bb = agent_speaking_bb
             
             if user_speaking != last_user_speaking:
                 status = "🎤 SPEAKING" if user_speaking else "🔇 SILENT"

@@ -17,6 +17,7 @@ from core.arm_controller import ArmController
 from core.emotion_engine import EmotionEngine
 from core.eye_renderer import EyeRenderer
 from core.debug_dashboard import DebugDashboard
+from core.talk_gesture_service import TalkGestureService
 from lib.live_tune import load_tune_defaults_from_config, sanitize_config
 from hardware.arduino_servo import ArduinoServoLink
 from base_motor_utils import apply_base_calibration_to_nano
@@ -440,6 +441,27 @@ def main():
             name="VoiceService",
         )
         threads.append(voice_thread)
+        
+        # ── Talk Gesture Service (requires voice + arms) ────────────────────
+        if arms_cfg.get("enabled", False):
+            presets_path = Path(arms_cfg.get("presets_path", "tests/arm_pose_presets.json"))
+            if not presets_path.is_absolute():
+                presets_path = APP_DIR / presets_path
+            
+            talk_gesture_svc = TalkGestureService(
+                bb=bb,
+                presets_path=presets_path,
+                pose_duration=0.5,
+                poll_interval=0.05,
+            )
+            threads.append(
+                threading.Thread(
+                    target=talk_gesture_svc.run,
+                    daemon=True,
+                    name="TalkGestureService",
+                )
+            )
+            print("[Bootstrap] TalkGestureService enabled — arms animate while agent speaks")
 
     for t in threads:
         t.start()

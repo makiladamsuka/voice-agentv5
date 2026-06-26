@@ -2,9 +2,12 @@
 """
 Talk Pose Runner — Randomly switches between talk poses while voice agent speaks.
 
-Monitors the Blackboard ``agent_speaking`` flag and continuously cycles through
-random talk poses from ``tests/arm_pose_presets.json`` while the voice agent is
-speaking. Stops immediately when the agent finishes.
+Monitors the Blackboard ``amplitude_fast`` (TTS audio amplitude) and continuously 
+cycles through random talk poses from ``tests/arm_pose_presets.json`` while the 
+voice agent is speaking. Stops immediately when the agent finishes.
+
+**Note**: This uses amplitude_fast as a workaround because agent_speaking flag 
+is not being set by the voice service.
 
 How to run::
 
@@ -13,7 +16,7 @@ How to run::
 Requirements::
 
     - Blackboard must be running (start_robot.py or standalone)
-    - voice_service.py must be writing agent_speaking flag
+    - TTS must be writing amplitude_fast to Blackboard
     - arm_pose_presets.json must contain talk poses (talk1, talk2, ...)
 """
 
@@ -129,63 +132,73 @@ class TalkAnimationRunner:
     def _run_loop(self) -> None:
         """Main loop: continuously switch between random talk poses while agent speaks."""
         print("[INFO] Talk pose loop started")
-        print("[DEBUG] Starting to monitor agent_speaking flag...")
+        print("[DEBUG] Starting to monitor amplitude_fast (TTS audio amplitude)...")
+        print("[DEBUG] This is a workaround for agent_speaking flag not being set")
         
-        last_speaking_state = None
+        last_amplitude = 0.0
+        is_speaking = False
+        silence_count = 0
+        SILENCE_THRESHOLD = 5  # frames of low amplitude before considering "stopped speaking"
+        AMPLITUDE_THRESHOLD = 0.01  # minimum amplitude to consider "speaking"
         
         while self._running:
-            # Read current state
+            # Read current state - use amplitude_fast as a proxy for speaking
             bb_data = self._bb.read()
-            agent_speaking = bb_data.get("agent_speaking", False)
+            amplitude = bb_data.get("amplitude_fast", 0.0)
             
-            # Debug: Log state changes
-            if agent_speaking != last_speaking_state:
-                print(f"[DEBUG] agent_speaking flag changed: {last_speaking_state} -> {agent_speaking}")
-                last_speaking_state = agent_speaking
+            # Detect if agent is speaking based on audio amplitude
+            currently_speaking = amplitude > AMPLITUDE_THRESHOLD
             
-            # Wait for agent to start speaking
-            if not agent_speaking:
+            if currently_speaking:
+                if not is_speaking:
+                    print(f"[DEBUG] ✓ Agent started speaking (amplitude={amplitude:.3f})")
+                    is_speaking = True
+                silence_count = 0
+            else:
+                if is_speaking:
+                    silence_count += 1
+                    if silence_count >= SILENCE_THRESHOLD:
+                        print(f"[DEBUG] ✓ Agent stopped speaking (silence frames={silence_count})")
+                        is_speaking = False
+                        silence_count = 0
+            
+            # Only play poses while speaking
+            if not is_speaking:
                 time.sleep(self._poll_interval)
                 continue
             
             if not self._running:
                 break
-                
-            print("[INFO] ✓ Agent started speaking — triggering talk poses")
             
             # Agent is speaking — continuously switch between random talk poses
-            pose_count = 0
-            while self._running:
+            if not self._talk_pose_keys:
+                # No talk poses available — just wait
+                print("[WARN] No talk poses available")
+                time.sleep(self._poll_interval)
+                continue
+            
+            # Pick a random talk pose
+            pose_key = random.choice(self._talk_pose_keys)
+            pose = self._poses[pose_key]
+            
+            # Apply the pose
+            print(f"[DEBUG] Playing pose: {pose_key} (a0={pose['a0']:.1f}, a1={pose['a1']:.1f}, a2={pose['a2']:.1f}, a3={pose['a3']:.1f}) [amp={amplitude:.3f}]")
+            self._apply_pose(pose)
+            
+            # Hold the pose for the specified duration (or until agent stops speaking)
+            start = time.time()
+            while time.time() - start < self._pose_duration:
                 bb_data = self._bb.read()
-                agent_speaking = bb_data.get("agent_speaking", False)
-                
-                if not agent_speaking:
-                    print(f"[INFO] ✓ Agent stopped speaking (played {pose_count} poses)")
-                    break
-                
-                if not self._talk_pose_keys:
-                    # No talk poses available — just wait
-                    print("[WARN] No talk poses available")
-                    time.sleep(self._poll_interval)
-                    continue
-                
-                # Pick a random talk pose
-                pose_key = random.choice(self._talk_pose_keys)
-                pose = self._poses[pose_key]
-                
-                # Apply the pose
-                print(f"[DEBUG] Playing pose: {pose_key} (a0={pose['a0']:.1f}, a1={pose['a1']:.1f}, a2={pose['a2']:.1f}, a3={pose['a3']:.1f})")
-                self._apply_pose(pose)
-                pose_count += 1
-                
-                # Hold the pose for the specified duration (or until agent stops speaking)
-                start = time.time()
-                while time.time() - start < self._pose_duration:
-                    bb_data = self._bb.read()
-                    if not bb_data.get("agent_speaking", False):
-                        print(f"[DEBUG] Agent stopped mid-pose (pose {pose_count})")
+                amplitude = bb_data.get("amplitude_fast", 0.0)
+                if amplitude <= AMPLITUDE_THRESHOLD:
+                    silence_count += 1
+                    if silence_count >= SILENCE_THRESHOLD:
+                        print(f"[DEBUG] Agent stopped mid-pose")
+                        is_speaking = False
                         break
-                    time.sleep(self._poll_interval)
+                else:
+                    silence_count = 0
+                time.sleep(self._poll_interval)
         
         print("[INFO] Talk pose loop stopped")
 
@@ -279,8 +292,9 @@ def main() -> None:
         print("[DEBUG] Starting runner thread...")
         runner.start()
         print("[INFO] ✓ Talk pose runner started successfully")
-        print("[INFO] Monitoring agent_speaking flag... Press Ctrl+C to stop")
+        print("[INFO] Monitoring amplitude_fast (TTS audio amplitude)... Press Ctrl+C to stop")
         print("[INFO] Talk poses will switch randomly when voice agent speaks")
+        print("[INFO] Using amplitude threshold (>0.01) as workaround for agent_speaking flag")
         print()
         print("=" * 60)
         print("WAITING FOR AGENT TO SPEAK...")
@@ -292,8 +306,9 @@ def main() -> None:
             time.sleep(5.0)
             check_count += 1
             bb_data = bb.read()
-            agent_speaking = bb_data.get("agent_speaking", False)
-            print(f"[STATUS] Check #{check_count}: agent_speaking = {agent_speaking}")
+            amplitude = bb_data.get("amplitude_fast", 0.0)
+            is_speaking = amplitude > 0.01
+            print(f"[STATUS] Check #{check_count}: amplitude_fast = {amplitude:.4f}, speaking = {is_speaking}")
             
     except KeyboardInterrupt:
         print("\n[INFO] Shutting down...")

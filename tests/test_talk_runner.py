@@ -166,8 +166,7 @@ class TalkAnimationRunner:
             pose = self._poses[pose_key]
             
             # Apply the pose
-            if self._debug:
-                print(f"[DEBUG] Playing pose: {pose_key} (a0={pose['a0']:.1f}, a1={pose['a1']:.1f}, a2={pose['a2']:.1f}, a3={pose['a3']:.1f})")
+            print(f"[DEBUG] Playing pose: {pose_key} (a0={pose['a0']:.1f}, a1={pose['a1']:.1f}, a2={pose['a2']:.1f}, a3={pose['a3']:.1f})")
             self._apply_pose(pose)
             
             # Hold the pose for the specified duration (or until agent stops speaking)
@@ -175,8 +174,7 @@ class TalkAnimationRunner:
             while time.time() - start < self._pose_duration:
                 is_speaking = read_speaking_flag()
                 if not is_speaking:
-                    if self._debug:
-                        print(f"[DEBUG] Agent stopped mid-pose")
+                    print(f"[DEBUG] Agent stopped mid-pose")
                     break
                 time.sleep(self._poll_interval)
         

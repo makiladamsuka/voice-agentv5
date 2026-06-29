@@ -12,11 +12,14 @@ const HUMAN_COL = 0x38bdf8;
 const OBSTACLE_COL = 0xf97316;
 const UNCERTAIN_COL = 0x6b7280;
 const ROBOT_COL = 0xc8d6e5;
+const ENC_COL = 0x38bdf8;
+const IMU_COL = 0xfb923c;
+const HOME_COL = 0x94a3b8;
 const KIND_COL = { human: HUMAN_COL, obstacle: OBSTACLE_COL, uncertain: UNCERTAIN_COL };
 const ZONE_ANGLE = { L: -45, C: 0, R: 45 };
 const deg = d => d * Math.PI / 180;
 const TRAIL_MAX = 28;
-const LERP = 0.12;
+const LERP = 0.14;
 // Robot base 550 mm diameter, centered at origin; sensors on front face (+Z)
 const ROBOT_RADIUS = 0.275;
 const SENSOR_MOUNT_Z = ROBOT_RADIUS; // front edge
@@ -56,21 +59,42 @@ floor.rotation.x = -Math.PI / 2;
 floor.position.y = 0;
 mapGroup.add(floor);
 
-// Startup forward marker (+Z world) — grey cone; rotates opposite body yaw
+// Startup forward marker (+Z world) — grey cone; map rotation = encoder from HOME
 const frontMarker = new THREE.Mesh(
-  new THREE.ConeGeometry(0.07, 0.12, 3),
-  new THREE.MeshBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.55 })
+  new THREE.ConeGeometry(0.08, 0.14, 3),
+  new THREE.MeshBasicMaterial({ color: HOME_COL, transparent: true, opacity: 0.6 })
 );
 frontMarker.rotation.x = -Math.PI / 2;
-frontMarker.position.set(0, 0.018, 1.05);
+frontMarker.position.set(0, 0.02, 1.1);
 mapGroup.add(frontMarker);
 const frontRing = new THREE.Mesh(
-  new THREE.RingGeometry(0.09, 0.11, 24),
-  new THREE.MeshBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+  new THREE.RingGeometry(0.1, 0.12, 32),
+  new THREE.MeshBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.4, side: THREE.DoubleSide })
 );
 frontRing.rotation.x = -Math.PI / 2;
-frontRing.position.set(0, 0.017, 1.05);
+frontRing.position.set(0, 0.018, 1.1);
 mapGroup.add(frontRing);
+
+// ±max_yaw limit arc (rotates with world)
+const limitGroup = new THREE.Group();
+mapGroup.add(limitGroup);
+let lastMaxYaw = 0;
+
+function updateLimitArc(maxYawDeg) {
+  limitGroup.clear();
+  if (!maxYawDeg || maxYawDeg < 5) return;
+  const r = 1.15;
+  const segments = 48;
+  const a0 = deg(-maxYawDeg);
+  const a1 = deg(maxYawDeg);
+  const pts = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = a0 + ((a1 - a0) * i) / segments;
+    pts.push(new THREE.Vector3(Math.sin(t) * r, 0.016, Math.cos(t) * r));
+  }
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  limitGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.35 })));
+}
 
 // ── Robot body (550 mm circle, always points screen-forward) ──
 const robot = new THREE.Group();
@@ -81,43 +105,33 @@ const body = new THREE.Mesh(
   new THREE.MeshBasicMaterial({ color: ROBOT_COL })
 );
 body.rotation.x = -Math.PI / 2;
-body.position.y = 0.012;
+body.position.y = 0.014;
 robot.add(body);
 
-// Center accent line (forward axis)
-const accentLine = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.04, ROBOT_RADIUS * 1.7),
-  new THREE.MeshBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
-);
-accentLine.rotation.x = -Math.PI / 2;
-accentLine.position.set(0, 0.014, 0);
-robot.add(accentLine);
-
-// Nose indicator at front edge
+// Nose = encoder forward (cyan)
 const nose = new THREE.Mesh(
-  new THREE.ConeGeometry(0.055, 0.09, 3),
-  new THREE.MeshBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0.85 })
+  new THREE.ConeGeometry(0.055, 0.1, 3),
+  new THREE.MeshBasicMaterial({ color: ENC_COL, transparent: true, opacity: 0.9 })
 );
 nose.rotation.x = -Math.PI / 2;
-nose.position.set(0, 0.015, SENSOR_MOUNT_Z + 0.04);
+nose.position.set(0, 0.016, ROBOT_RADIUS + 0.045);
 robot.add(nose);
 
-// Sensor origin marker (where ToF beams start)
-const sensorOrigin = new THREE.Mesh(
-  new THREE.RingGeometry(0.04, 0.055, 20),
-  new THREE.MeshBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+// IMU direction tick (orange) on robot rim
+const imuTick = new THREE.Mesh(
+  new THREE.BoxGeometry(0.04, 0.02, 0.14),
+  new THREE.MeshBasicMaterial({ color: IMU_COL, transparent: true, opacity: 0.85 })
 );
-sensorOrigin.rotation.x = -Math.PI / 2;
-sensorOrigin.position.set(0, 0.016, SENSOR_MOUNT_Z);
-robot.add(sensorOrigin);
+imuTick.position.set(0, 0.02, ROBOT_RADIUS - 0.02);
+robot.add(imuTick);
 
 // Robot outline ring
 const robotGlow = new THREE.Mesh(
   new THREE.RingGeometry(ROBOT_RADIUS - 0.01, ROBOT_RADIUS + 0.01, 64),
-  new THREE.MeshBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.45, side: THREE.DoubleSide })
+  new THREE.MeshBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
 );
 robotGlow.rotation.x = -Math.PI / 2;
-robotGlow.position.set(0, 0.004, 0);
+robotGlow.position.set(0, 0.012, 0);
 robot.add(robotGlow);
 
 // ── FOV wedges (from front sensor plane) ──
@@ -302,15 +316,27 @@ function fmtDeg(v) {
 }
 
 function updateRobotPose(data) {
-  const baseSign = Number(data.base_yaw_sign ?? -1);
-  const bodyYaw = Number(
-    data.front_offset_deg ?? data.encoder_yaw_deg ?? data.body_yaw_deg ?? 0
+  const sign = Number(data.base_yaw_sign ?? -1);
+  const enc = Number(
+    data.map_yaw_deg ?? data.from_home_enc_deg ?? data.encoder_yaw_deg ?? data.front_offset_deg ?? 0
   );
-  // Spin world under robot so nose stays screen-forward; front marker shows true +Z.
-  targetMapYawRad = -deg(bodyYaw) * baseSign;
-  mapYawRad += (targetMapYawRad - mapYawRad) * LERP;
+  const imu = Number(data.from_home_imu_deg ?? data.body_yaw_deg ?? 0);
+  const maxYaw = Number(data.max_yaw_deg ?? 120);
+
+  // Same as yaw_robot_viz: map follows encoder; nose stays screen-forward.
+  targetMapYawRad = -deg(enc) * sign;
+  // Encoder is ground truth — snap world immediately (LERP caused visible lag after spins).
+  mapYawRad = targetMapYawRad;
   mapGroup.rotation.y = mapYawRad;
   robot.rotation.y = 0;
+
+  imuTick.rotation.y = deg(imu) * sign;
+  imuTick.visible = Boolean(data.imu_online);
+
+  if (Math.abs(maxYaw - lastMaxYaw) > 0.5) {
+    lastMaxYaw = maxYaw;
+    updateLimitArc(maxYaw);
+  }
 }
 
 // ── Label sprites ──
@@ -340,28 +366,33 @@ function updateScene3d(data) {
   updateRobotPose(data);
   const hits = data.hits || [];
   const t = performance.now() * 0.001;
-  const bodyYawDeg = Number(data.body_yaw_deg ?? 0);
-  const encYaw = Number(data.encoder_yaw_deg ?? bodyYawDeg);
-  const frontOff = Number(data.front_offset_deg ?? bodyYawDeg);
+  const bodyYawDeg = Number(data.from_home_imu_deg ?? data.body_yaw_deg ?? 0);
+  const encYaw = Number(data.from_home_enc_deg ?? data.map_yaw_deg ?? data.encoder_yaw_deg ?? bodyYawDeg);
+  const frontOff = encYaw;
+  const disagreement = Number(data.disagreement_deg ?? (bodyYawDeg - encYaw));
   const aimErr = data.aim_error_deg;
   const drift = Number(data.imu_drift_correction_deg ?? 0);
   const stationary = data.fusion_stationary;
+  const tickDelta = Number(data.encoder_count_delta ?? 0);
 
   // HUD
   if (hudLeft) {
     const age = ((Date.now() / 1000) - (data.last_ts || 0));
-    const headOnBody = Number(data.head_yaw_on_body_deg ?? 0);
-    hudLeft.innerHTML = `SCAN <span class="val">${age < 2 ? 'ACTIVE' : 'STALE'}</span> · FWD <span class="val">${fmtDeg(frontOff)}</span>`;
+    const rotating = Boolean(data.base_rotating);
+    const scan = rotating ? 'ROTATING' : (age < 2 ? 'ACTIVE' : 'STALE');
+    hudLeft.innerHTML = `SCAN <span class="val">${scan}</span> · ENC <span class="val">${fmtDeg(frontOff)}</span>`;
     if (aimErr != null) {
       hudLeft.innerHTML += ` · AIM <span class="val">${fmtDeg(aimErr)}</span>`;
-    }
-    if (Math.abs(headOnBody) > 0.5) {
-      hudLeft.innerHTML += ` · HEAD <span class="val">${fmtDeg(headOnBody)}</span>`;
     }
   }
   if (hudOrient) {
     const st = stationary ? 'still' : 'move';
-    hudOrient.innerHTML = `BODY <span class="val">${fmtDeg(bodyYawDeg)}</span> · ENC <span class="val">${fmtDeg(encYaw)}</span> · DRIFT <span class="val">${fmtDeg(drift)}</span> · ${st}`;
+    hudOrient.innerHTML =
+      `<strong>FROM HOME</strong> enc <span class="val">${fmtDeg(encYaw)}</span>` +
+      ` · imu <span class="val">${fmtDeg(bodyYawDeg)}</span>` +
+      ` · Δ <span class="val">${fmtDeg(disagreement)}</span>` +
+      ` · ticksΔ <span class="val">${tickDelta >= 0 ? '+' : ''}${Math.round(tickDelta)}</span>` +
+      ` · ${st}`;
   }
   if (hudRight) {
     const ntracks = (data.tracks || []).length;

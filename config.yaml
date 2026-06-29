@@ -344,13 +344,17 @@ proximity:
   turn_step_deg: 35.0
   # Approach harness: turn base toward live ToF fused bearing (not only PROX velocity)
   tof_turn_enabled: true
-  tof_min_bearing_deg: 12.0
+  tof_min_bearing_deg: 3.0
   tof_min_dist_mm: 80
-  tof_max_dist_mm: 1600
-  tof_confirm_ticks: 3
-  tof_merge_radius_mm: 400
+  tof_max_dist_mm: 2000
+  tof_confirm_ticks: 1
+  tof_merge_radius_mm: 350
   tof_aim_tolerance_deg: 5.0
-  tof_align_cooldown_sec: 1.0
+  tof_bearing_undershoot_deg: 7.0
+  tof_align_cooldown_sec: 0.25
+  tof_stale_sec: 0.55
+  tof_spin_settle_sec: 0.2
+  tof_align_blanking_sec: 0.15
   tof_target_lock_sec: 2.5
   clear_return_enabled: true
   clear_return_sec: 2.5
@@ -360,7 +364,7 @@ proximity:
   # Counter-rotate neck to keep gaze during turn
   compensation_gain: 0.90
   # Ignore PROX after any base motion ends
-  post_motion_blanking_sec: 1.5
+  post_motion_blanking_sec: 0.5
   # How long to hold forward-search after prox turn
   search_timeout_sec: 3.0
   # How long to glance toward approach (during voice)

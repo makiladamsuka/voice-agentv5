@@ -100,8 +100,8 @@ const int     APPROACH_CONFIRM_FRAMES = 3;
 const unsigned long APPROACH_DWELL_MS = 800;       // walk-by filter
 const unsigned long BASELINE_FORCE_RELEARN_MS = 10000;
 const unsigned long TOF_EVENT_COOLDOWN_MS = 300;
-const unsigned long TOF_STREAM_MS = 200;           // 5 Hz viz stream
-const unsigned long TOF_STREAM_BUSY_MS = 500;      // 2 Hz while base spinning
+const unsigned long TOF_STREAM_MS = 100;           // 10 Hz viz stream
+const unsigned long TOF_STREAM_BUSY_MS = 250;      // 4 Hz while base spinning
 const float   DEPART_VEL_THRESHOLD = 50.0f;       // mm/s (positive = leaving)
 const int     DEPART_CONFIRM_FRAMES = 4;
 const int     DEPART_MIN_START_MM = 600;

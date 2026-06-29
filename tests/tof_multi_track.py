@@ -59,17 +59,23 @@ def _classify_track(
     age = len(history)
     motion = track.get("motion", "still")
     vel = abs(track.get("vel_mm_s") or 0)
+    sensor_count = int(track.get("sensor_count", 1))
+    dist = int(track.get("dist_mm", 9999))
 
     if motion in ("approach", "depart") or vel > 55:
         kind, conf, reason = "human", 0.9, "approach / retreat"
     elif motion in ("drift_in", "drift_out") or spread > 100:
         kind, conf, reason = "human", 0.75, "moving in place"
-    elif spread < 85 and motion == "still" and age >= 10:
+    elif sensor_count >= 2 and dist <= 2000 and age >= 1:
+        kind, conf, reason = "human", 0.78, "multi-beam target"
+    elif dist <= 1600 and vel > 8 and age >= 1:
+        kind, conf, reason = "human", 0.72, "motion in range"
+    elif age < 3:
+        kind, conf, reason = "uncertain", 0.5, "observing…"
+    elif spread < 85 and motion == "still" and age >= 12:
         kind, conf, reason = "obstacle", min(0.94, 0.5 + age * 0.02), "stationary object"
-    elif age < 6:
-        kind, conf, reason = "uncertain", 0.4, "observing…"
     else:
-        kind, conf, reason = "obstacle", 0.62, "low motion"
+        kind, conf, reason = "uncertain", 0.55, "in range"
 
     track["kind"] = kind
     track["confidence"] = round(conf, 2)

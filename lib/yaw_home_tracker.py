@@ -159,3 +159,20 @@ class YawHomeTracker:
             imu_correction_deg=float(self._imu_align),
             home_age_sec=ts - self._home.locked_at,
         )
+
+    def force_snap_imu_to_encoder(
+        self,
+        *,
+        encoder_deg: float,
+        imu_yaw_deg: float,
+        pan_mech_deg: float,
+    ) -> None:
+        """After a base maneuver, align IMU base-from-HOME to encoder (any disagreement)."""
+        if self._home is None:
+            return
+        enc_from_home = _delta(encoder_deg, self._home.encoder_deg)
+        pan_delta = _delta(pan_mech_deg, self._home.pan_mech_deg)
+        imu_total_delta = _delta(imu_yaw_deg, self._home.imu_yaw_deg)
+        imu_base_raw = _delta(imu_total_delta, pan_delta)
+        self._imu_align = _delta(imu_base_raw, enc_from_home)
+        self._still_since = None

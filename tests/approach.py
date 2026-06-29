@@ -2,10 +2,14 @@
 """
 Standalone ToF approach test harness.
 
-IMU + encoder fusion, PROX zone base turns, live proximity viz.
+IMU closed-loop base turns toward detected person; return HOME when clear.
 
   cd voice-agentv5
   /path/to/voice-agentv4/backend/venv/bin/python3 tests/approach.py --port /dev/ttyUSB0
+
+Or viz + control in one process:
+
+  python tests/tof_viz_server.py /dev/ttyUSB0 --control
 
 Stop start_robot.py / voice-robot before running (single serial port).
 Requires head_servo_hands v16+ (TOF stream + PROX).
@@ -14,7 +18,6 @@ Requires head_servo_hands v16+ (TOF stream + PROX).
 from __future__ import annotations
 
 import argparse
-import re
 import signal
 import sys
 import threading
@@ -24,47 +27,14 @@ from pathlib import Path
 
 import _bootstrap  # noqa: F401
 
-from approach_controller import ApproachController
+from approach_controller import ApproachController, lock_home, start_imu
 from base_motor_utils import apply_base_calibration_to_nano
-from core.blackboard import Blackboard
-from core.imu_service import ImuService
 from hardware.arduino_servo import ArduinoServoLink
+from lib.yaw_home_tracker import YawHomeTracker
 from tof_viz_server import (
-    FILTER_BANK,
     Handler,
     STATE,
-    _TOF_RE,
 )
-
-def _pose_publisher(bb: Blackboard, base_yaw_sign: float) -> None:
-    """Push IMU + encoder fusion into the shared ToF viz API."""
-    STATE.update_pose(base_yaw_sign=base_yaw_sign)
-    while bb.read("running")["running"]:
-        s = bb.read(
-            "body_yaw_deg",
-            "head_yaw_on_body_deg",
-            "base_encoder_deg",
-            "imu_available",
-            "imu_drift_correction_deg",
-            "imu_yaw_rel_deg",
-            "fusion_stationary",
-        )
-        enc = float(s["base_encoder_deg"])
-        body = (
-            float(s["body_yaw_deg"])
-            if s["imu_available"]
-            else enc
-        )
-        STATE.update_pose(
-            body_yaw_deg=body,
-            head_yaw_on_body_deg=float(s["head_yaw_on_body_deg"]),
-            encoder_yaw_deg=enc,
-            front_offset_deg=enc,
-            imu_drift_correction_deg=float(s["imu_drift_correction_deg"]),
-            imu_yaw_rel_deg=float(s["imu_yaw_rel_deg"]),
-            fusion_stationary=bool(s["fusion_stationary"]),
-        )
-        time.sleep(0.1)
 
 APP_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
@@ -82,47 +52,10 @@ def _load_yaml(path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
-def _wait_imu_ready(bb: Blackboard, timeout_sec: float = 12.0) -> None:
-    deadline = time.time() + timeout_sec
-    while time.time() < deadline:
-        if bb.read("imu_calibrated")["imu_calibrated"]:
-            return
-        time.sleep(0.05)
-    print("[Approach] WARNING: IMU calibration wait timed out.")
-
-
-def _wait_fusion_ready(bb: Blackboard, timeout_sec: float = 3.0) -> None:
-    deadline = time.time() + timeout_sec
-    while time.time() < deadline:
-        if not bb.read("base_fusion_resync_request")["base_fusion_resync_request"]:
-            return
-        time.sleep(0.05)
-    print("[Approach] WARNING: fusion resync wait timed out.")
-
-
-def _lock_yaw_reference(bb: Blackboard, link: ArduinoServoLink, base_cfg: dict) -> None:
-    if link.connected and base_cfg.get("zero_on_start", False):
-        link.zero_base()
-        print("[Approach] Base encoder zeroed at startup.")
-        time.sleep(0.2)
-    if link.connected:
-        try:
-            st = link.query_status()
-            if st is not None:
-                bb.write(
-                    base_encoder_deg=st.degrees,
-                    base_encoder_synced=True,
-                    base_motion_busy=st.busy,
-                )
-                print(f"[Approach] Encoder synced: {st.degrees:+.1f}°")
-        except Exception as exc:
-            print(f"[Approach] WARNING: encoder sync failed: {exc}")
-    bb.write(base_watchdog_reset=True, yaw_reference_locked=True)
-    time.sleep(0.15)
-    print("[Approach] Yaw reference locked.")
-
-
 def handle_tof_line(line: str) -> None:
+    """Legacy entry — prefer ApproachController.handle_tof_line."""
+    from tof_viz_server import FILTER_BANK, STATE, _TOF_RE
+
     m = _TOF_RE.search(line)
     if not m:
         return
@@ -138,24 +71,25 @@ def start_viz_server(host: str, port: int) -> ThreadingHTTPServer:
     return server
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="ToF approach test harness")
-    parser.add_argument("--port", default="", help="Serial port e.g. /dev/ttyUSB0")
-    parser.add_argument("--viz-port", type=int, default=8765, help="HTTP viz port")
-    parser.add_argument("--host", default="0.0.0.0", help="HTTP bind address")
-    parser.add_argument("--no-imu", action="store_true", help="Skip IMU service")
-    args = parser.parse_args()
-
+def run_approach(
+    *,
+    serial_port: str = "",
+    host: str = "0.0.0.0",
+    viz_port: int = 8765,
+    no_imu: bool = False,
+) -> None:
     cfg = _load_yaml(DEFAULT_CONFIG_PATH)
     base_cfg = cfg.get("base", {}) or {}
     imu_cfg = cfg.get("imu", {}) or {}
+    servo_cfg = cfg.get("servo", {}) or {}
+    prox_cfg = cfg.get("proximity", {}) or {}
     viz_cfg = cfg.get("debug_viz", {}) or {}
     base_yaw_sign = float(viz_cfg.get("base_yaw_sign", -1.0))
 
-    bb = Blackboard()
-    bb.write(running=True)
+    running = threading.Event()
+    running.set()
 
-    link = ArduinoServoLink(args.port or None)
+    link = ArduinoServoLink(serial_port or None)
     if not link.connect():
         print("ERROR: Could not connect to ESP32.")
         sys.exit(1)
@@ -170,23 +104,47 @@ def main() -> None:
         )
 
     apply_base_calibration_to_nano(link)
-    STATE.set_connected(link._port_name or args.port or "serial")
+    STATE.set_connected(link._port_name or serial_port or "serial")
+    STATE.update_pose(base_yaw_sign=base_yaw_sign)
 
-    controller = ApproachController(bb, link, config_path=DEFAULT_CONFIG_PATH)
+    reader = None
+    yaw_sign = float(imu_cfg.get("yaw_sign", 1.0))
+    if not no_imu and imu_cfg.get("enabled", True):
+        reader = start_imu(imu_cfg)
+
+    tracker = YawHomeTracker(
+        encoder_sign=float(base_cfg.get("encoder_sign", -1.0)),
+        still_hold_sec=float(imu_cfg.get("drift_stationary_hold_sec", 0.12)),
+        gyro_max_dps=float(imu_cfg.get("stationary_gyro_max_dps", 6.0)),
+        snap_max_disagreement_deg=float(
+            imu_cfg.get("snap_max_disagreement_deg", 5.0)
+        ),
+    )
+
+    pan = float(servo_cfg.get("pan_center", 100.0))
+    lock_home(
+        tracker,
+        link,
+        reader,
+        yaw_sign,
+        servo_cfg,
+        pan,
+        zero_encoder=bool(base_cfg.get("zero_on_start", False)),
+    )
+
+    controller = ApproachController(
+        link,
+        tracker,
+        reader,
+        yaw_sign=yaw_sign,
+        base_cfg=base_cfg,
+        servo_cfg=servo_cfg,
+        prox_cfg=prox_cfg,
+        base_yaw_sign=base_yaw_sign,
+        running=running.is_set,
+    )
     link._prox_callback = controller.handle_prox_line
-    link._tof_callback = handle_tof_line
-
-    imu_thread: threading.Thread | None = None
-    if not args.no_imu and imu_cfg.get("enabled", True):
-        imu = ImuService(bb, config_path=DEFAULT_CONFIG_PATH)
-        imu_thread = threading.Thread(target=imu.run, name="ImuService", daemon=True)
-        imu_thread.start()
-        _wait_imu_ready(bb)
-        _lock_yaw_reference(bb, link, base_cfg)
-        bb.write(base_fusion_resync_request=True)
-        _wait_fusion_ready(bb)
-    else:
-        _lock_yaw_reference(bb, link, base_cfg)
+    link._tof_callback = controller.handle_tof_line
 
     approach_thread = threading.Thread(
         target=controller.run,
@@ -195,40 +153,60 @@ def main() -> None:
     )
     approach_thread.start()
 
-    pose_thread = threading.Thread(
-        target=_pose_publisher,
-        args=(bb, base_yaw_sign),
-        name="PosePublisher",
-        daemon=True,
-    )
-    pose_thread.start()
+    def _serial_pump() -> None:
+        while running.is_set():
+            link._poll_prox_lines()
+            time.sleep(0.008)
 
-    viz = start_viz_server(args.host, args.viz_port)
-    print(f"[Approach] Viz: http://localhost:{args.viz_port}")
+    pump_thread = threading.Thread(target=_serial_pump, name="SerialPump", daemon=True)
+    pump_thread.start()
+
+    viz = start_viz_server(host, viz_port)
+    print(f"[Approach] Viz: http://localhost:{viz_port}")
     try:
         import socket
+
         hostname = socket.gethostname()
-        print(f"[Approach] Viz: http://{socket.gethostbyname(hostname)}:{args.viz_port}")
+        print(f"[Approach] Viz: http://{socket.gethostbyname(hostname)}:{viz_port}")
     except OSError:
         pass
-    print("[Approach] ToF zones aim base at person; clears return to front. Ctrl+C to stop.")
+    print(
+        "[Approach] Person detected → IMU goto bearing; "
+        "clear scene → HOME. Ctrl+C to stop."
+    )
 
     def shutdown(_signum=None, _frame=None) -> None:
-        bb.write(running=False)
+        running.clear()
         viz.shutdown()
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
     try:
-        while bb.read("running")["running"]:
+        while running.is_set():
             time.sleep(0.25)
     except KeyboardInterrupt:
         shutdown()
     finally:
-        bb.write(running=False)
+        running.clear()
         link.close()
         print("[Approach] Stopped.")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="ToF approach test harness")
+    parser.add_argument("--port", default="", help="Serial port e.g. /dev/ttyUSB0")
+    parser.add_argument("--viz-port", type=int, default=8765, help="HTTP viz port")
+    parser.add_argument("--host", default="0.0.0.0", help="HTTP bind address")
+    parser.add_argument("--no-imu", action="store_true", help="Skip IMU (no base turns)")
+    args = parser.parse_args()
+
+    run_approach(
+        serial_port=args.port,
+        host=args.host,
+        viz_port=args.viz_port,
+        no_imu=args.no_imu,
+    )
 
 
 if __name__ == "__main__":

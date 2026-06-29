@@ -300,6 +300,23 @@ class TofState:
         self.imu_drift_correction_deg = 0.0
         self.imu_yaw_rel_deg = 0.0
         self.fusion_stationary = False
+        self.from_home_enc_deg = 0.0
+        self.from_home_imu_deg = 0.0
+        self.map_yaw_deg = 0.0
+        self.disagreement_deg = 0.0
+        self.encoder_count_delta = 0
+        self.imu_online = False
+        self.max_yaw_deg = 120.0
+        self.base_rotating = False
+        try:
+            import yaml
+
+            if CONFIG_PATH.exists():
+                with open(CONFIG_PATH, encoding="utf-8") as f:
+                    base_cfg = (yaml.safe_load(f) or {}).get("base", {}) or {}
+                    self.max_yaw_deg = float(base_cfg.get("max_yaw_deg", 120.0))
+        except Exception:
+            pass
 
     def update_sample(
         self,
@@ -309,6 +326,8 @@ class TofState:
         open_flags: list[bool] | None = None,
     ) -> None:
         with self._lock:
+            if self.base_rotating:
+                return
             self.sample_count += 1
             self.mm = mm
             self.vel = vel
@@ -336,6 +355,17 @@ class TofState:
             self.connected = False
             self.error = msg
 
+    def set_base_rotating(self, rotating: bool) -> None:
+        """While base spins, ToF hits are body-fixed — world appears to rotate; drop samples."""
+        with self._lock:
+            self.base_rotating = bool(rotating)
+            if rotating:
+                self._tracker.reset()
+
+    def reset_tracks(self) -> None:
+        with self._lock:
+            self._tracker.reset()
+
     def update_pose(
         self,
         *,
@@ -347,6 +377,13 @@ class TofState:
         imu_drift_correction_deg: float | None = None,
         imu_yaw_rel_deg: float | None = None,
         fusion_stationary: bool | None = None,
+        from_home_enc_deg: float | None = None,
+        from_home_imu_deg: float | None = None,
+        map_yaw_deg: float | None = None,
+        disagreement_deg: float | None = None,
+        encoder_count_delta: int | None = None,
+        imu_online: bool | None = None,
+        max_yaw_deg: float | None = None,
     ) -> None:
         with self._lock:
             if body_yaw_deg is not None:
@@ -365,6 +402,20 @@ class TofState:
                 self.imu_yaw_rel_deg = float(imu_yaw_rel_deg)
             if fusion_stationary is not None:
                 self.fusion_stationary = bool(fusion_stationary)
+            if from_home_enc_deg is not None:
+                self.from_home_enc_deg = float(from_home_enc_deg)
+            if from_home_imu_deg is not None:
+                self.from_home_imu_deg = float(from_home_imu_deg)
+            if map_yaw_deg is not None:
+                self.map_yaw_deg = float(map_yaw_deg)
+            if disagreement_deg is not None:
+                self.disagreement_deg = float(disagreement_deg)
+            if encoder_count_delta is not None:
+                self.encoder_count_delta = int(encoder_count_delta)
+            if imu_online is not None:
+                self.imu_online = bool(imu_online)
+            if max_yaw_deg is not None:
+                self.max_yaw_deg = float(max_yaw_deg)
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -414,6 +465,14 @@ class TofState:
                 "base_yaw_sign": self.base_yaw_sign,
                 "encoder_yaw_deg": self.encoder_yaw_deg,
                 "front_offset_deg": self.front_offset_deg,
+                "from_home_enc_deg": self.from_home_enc_deg,
+                "from_home_imu_deg": self.from_home_imu_deg,
+                "map_yaw_deg": self.map_yaw_deg,
+                "disagreement_deg": self.disagreement_deg,
+                "encoder_count_delta": self.encoder_count_delta,
+                "imu_online": self.imu_online,
+                "base_rotating": self.base_rotating,
+                "max_yaw_deg": self.max_yaw_deg,
                 "imu_drift_correction_deg": self.imu_drift_correction_deg,
                 "imu_yaw_rel_deg": self.imu_yaw_rel_deg,
                 "fusion_stationary": self.fusion_stationary,
@@ -718,8 +777,9 @@ HTML_PAGE = """<!DOCTYPE html>
       <span><i style="color:#38bdf8;background:#38bdf8"></i>person (moving)</span>
       <span><i style="color:#f97316;background:#f97316"></i>obstacle (static)</span>
       <span><i style="color:#6b7280;background:#6b7280"></i>uncertain</span>
-      <span><i style="color:#e2e8f0;background:#e2e8f0"></i>robot (you)</span>
-      <span><i style="color:#94a3b8;background:#94a3b8"></i>startup front</span>
+      <span><i style="color:#38bdf8;background:#38bdf8"></i>cyan nose = encoder forward</span>
+      <span><i style="color:#fb923c;background:#fb923c"></i>orange tick = IMU base yaw</span>
+      <span><i style="color:#94a3b8;background:#94a3b8"></i>grey cone = HOME forward</span>
       <span style="opacity:0.5">⌖ drag · scroll to zoom</span>
     </div>
     <div class="object-readout" id="object-readout">Scanning…</div>
@@ -905,7 +965,28 @@ def main() -> None:
     parser.add_argument("serial_port", nargs="?", default="", help="e.g. /dev/ttyUSB0")
     parser.add_argument("--port", type=int, default=8765, help="HTTP port (default 8765)")
     parser.add_argument("--host", default="0.0.0.0", help="bind address")
+    parser.add_argument(
+        "--control",
+        action="store_true",
+        help="IMU base control: aim at person, return HOME when clear",
+    )
+    parser.add_argument(
+        "--no-imu",
+        action="store_true",
+        help="With --control: skip IMU (viz only, no turns)",
+    )
     args = parser.parse_args()
+
+    if args.control:
+        from approach import run_approach
+
+        run_approach(
+            serial_port=args.serial_port,
+            host=args.host,
+            viz_port=args.port,
+            no_imu=args.no_imu,
+        )
+        return
 
     viz_cfg = _load_viz_config()
     base_yaw_sign = float(viz_cfg.get("base_yaw_sign", -1.0))
@@ -934,7 +1015,7 @@ def main() -> None:
     except OSError:
         pass
     print(f"Serial: {port} @ {BAUD}")
-    print("Ctrl+C to stop")
+    print("Ctrl+C to stop  (add --control for IMU person-aim + HOME return)")
 
     try:
         server.serve_forever()

@@ -27,6 +27,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tof_filter import MAX_TRUST_MM, TofFilterBank
+from tof_multi_track import MultiTrackTracker, _bearing_deg
 
 try:
     import serial
@@ -44,15 +45,37 @@ _TOF_RE = re.compile(
     r"TOF\s+L=(-?\d+)\s+C=(-?\d+)\s+R=(-?\d+)"
     r"\s+VL=(-?\d+)\s+VC=(-?\d+)\s+VR=(-?\d+)"
 )
+_BASE_STATUS_RE = re.compile(
+    r"^POS\s+(-?\d+)\s+DEG\s+(-?\d+(?:\.\d+)?)\s+CPD\s+(-?\d+(?:\.\d+)?)\s+BUSY\s+([01])\s*$"
+)
+ENCODER_POLL_SEC = 0.2
 
 LABELS = ("LEFT", "CENTER", "RIGHT")
 ZONE_KEYS = ("L", "C", "R")
 COLORS = ("#3b82f6", "#a855f7", "#22c55e")
 # Front-mounted ToF: ±45° left/right, center forward (robot +Z)
 SENSOR_ANGLES_DEG = (-45, 0, 45)
+# Distance from robot center to front sensor plane (550 mm base → front at 275 mm)
+SENSOR_MOUNT_Z_MM = 275
+# Mirror L/R when physical wiring ≠ firmware labels (matches config.yaml)
+SWAP_LEFT_RIGHT = True
 
 APP_DIR = Path(__file__).resolve().parent.parent
+CONFIG_PATH = APP_DIR / "config.yaml"
 STATIC_DIR = APP_DIR / "static"
+
+
+def _load_viz_config() -> dict[str, Any]:
+    try:
+        import yaml
+
+        if CONFIG_PATH.exists():
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            return data.get("debug_viz", {}) or {}
+    except Exception:
+        pass
+    return {}
 _STATIC_MIME = {
     ".js": "application/javascript; charset=utf-8",
     ".mjs": "application/javascript; charset=utf-8",
@@ -152,29 +175,43 @@ def _compute_hits(
     vel: list[int | None],
     open_flags: list[bool],
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    # Map firmware channel → display zone + beam angle
+    channels: list[tuple[str, int, int]] = [
+        ("L", 0, -45),
+        ("C", 1, 0),
+        ("R", 2, 45),
+    ]
+    if SWAP_LEFT_RIGHT:
+        channels = [
+            ("R", 0, 45),
+            ("C", 1, 0),
+            ("L", 2, -45),
+        ]
+
     hits: list[dict[str, Any]] = []
-    for i, zone in enumerate(ZONE_KEYS):
-        if mm[i] < 0 or open_flags[i]:
+    for zone, idx, angle in channels:
+        if mm[idx] < 0 or open_flags[idx]:
             continue
-        angle = SENSOR_ANGLES_DEG[i]
         rad = math.radians(angle)
+        dist = mm[idx]
+        # Project from front sensor plane, not robot centroid
+        x_mm = round(math.sin(rad) * dist)
+        z_mm = round(SENSOR_MOUNT_Z_MM + math.cos(rad) * dist)
         hits.append(
             {
                 "zone": zone,
-                "label": LABELS[i],
+                "label": LABELS[ZONE_KEYS.index(zone)],
                 "angle_deg": angle,
-                "dist_mm": mm[i],
-                "x_mm": round(math.sin(rad) * mm[i]),
-                "z_mm": round(math.cos(rad) * mm[i]),
-                "vel_mm_s": vel[i],
-                "motion": _motion_class(vel[i]),
+                "dist_mm": dist,
+                "x_mm": x_mm,
+                "z_mm": z_mm,
+                "vel_mm_s": vel[idx],
+                "motion": _motion_class(vel[idx]),
             }
         )
 
     fused: dict[str, Any] | None = None
     if hits:
-        xs = [h["x_mm"] for h in hits]
-        zs = [h["z_mm"] for h in hits]
         motions = [h["motion"] for h in hits]
         if any(m in ("approach", "drift_in") for m in motions):
             motion = "approach"
@@ -182,12 +219,25 @@ def _compute_hits(
             motion = "depart"
         else:
             motion = "still"
-        fused = {
-            "x_mm": round(sum(xs) / len(xs)),
-            "z_mm": round(sum(zs) / len(zs)),
-            "zones": [h["zone"] for h in hits],
-            "motion": motion,
-        }
+        # Legacy single blob — prefer tracks[] + primary_target from MultiTrackTracker.
+        if len(hits) == 1:
+            h = hits[0]
+            fused = {
+                "x_mm": h["x_mm"],
+                "z_mm": h["z_mm"],
+                "zones": [h["zone"]],
+                "motion": motion,
+                "bearing_deg": round(_bearing_deg(h["x_mm"], h["z_mm"]), 1),
+            }
+        else:
+            xs = [h["x_mm"] for h in hits]
+            zs = [h["z_mm"] for h in hits]
+            fused = {
+                "x_mm": round(sum(xs) / len(xs)),
+                "z_mm": round(sum(zs) / len(zs)),
+                "zones": [h["zone"] for h in hits],
+                "motion": motion,
+            }
     return hits, fused
 
 
@@ -230,7 +280,26 @@ class TofState:
         ]
         self.boot: deque[str] = deque(maxlen=40)
         self.last_ts = 0.0
-        self._tracker = ObjectTracker()
+        viz_cfg = _load_viz_config()
+        prox_cfg: dict[str, Any] = {}
+        try:
+            import yaml
+
+            if CONFIG_PATH.exists():
+                with open(CONFIG_PATH, encoding="utf-8") as f:
+                    prox_cfg = (yaml.safe_load(f) or {}).get("proximity", {}) or {}
+        except Exception:
+            pass
+        merge_mm = float(prox_cfg.get("tof_merge_radius_mm", 400.0))
+        self._tracker = MultiTrackTracker(merge_radius_mm=merge_mm)
+        self.body_yaw_deg = 0.0
+        self.head_yaw_on_body_deg = 0.0
+        self.base_yaw_sign = -1.0
+        self.encoder_yaw_deg = 0.0
+        self.front_offset_deg = 0.0
+        self.imu_drift_correction_deg = 0.0
+        self.imu_yaw_rel_deg = 0.0
+        self.fusion_stationary = False
 
     def update_sample(
         self,
@@ -267,14 +336,56 @@ class TofState:
             self.connected = False
             self.error = msg
 
+    def update_pose(
+        self,
+        *,
+        body_yaw_deg: float | None = None,
+        head_yaw_on_body_deg: float | None = None,
+        base_yaw_sign: float | None = None,
+        encoder_yaw_deg: float | None = None,
+        front_offset_deg: float | None = None,
+        imu_drift_correction_deg: float | None = None,
+        imu_yaw_rel_deg: float | None = None,
+        fusion_stationary: bool | None = None,
+    ) -> None:
+        with self._lock:
+            if body_yaw_deg is not None:
+                self.body_yaw_deg = float(body_yaw_deg)
+            if head_yaw_on_body_deg is not None:
+                self.head_yaw_on_body_deg = float(head_yaw_on_body_deg)
+            if base_yaw_sign is not None:
+                self.base_yaw_sign = float(base_yaw_sign)
+            if encoder_yaw_deg is not None:
+                self.encoder_yaw_deg = float(encoder_yaw_deg)
+            if front_offset_deg is not None:
+                self.front_offset_deg = float(front_offset_deg)
+            if imu_drift_correction_deg is not None:
+                self.imu_drift_correction_deg = float(imu_drift_correction_deg)
+            if imu_yaw_rel_deg is not None:
+                self.imu_yaw_rel_deg = float(imu_yaw_rel_deg)
+            if fusion_stationary is not None:
+                self.fusion_stationary = bool(fusion_stationary)
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             ok = sum(1 for d in self.mm if d >= 0)
             mm = list(self.mm)
             vel = [v if v is None else int(v) for v in self.vel]
             open_flags = list(self.open)
-            hits, fused = _compute_hits(mm, vel, open_flags)
-            hits, fused = self._tracker.update(fused, hits, now=self.last_ts)
+            hits, fused_raw = _compute_hits(mm, vel, open_flags)
+            hits, tracks, primary = self._tracker.update(hits, now=self.last_ts)
+            fused = primary if primary else fused_raw
+            tof_bearing_deg: float | None = None
+            if primary:
+                tof_bearing_deg = float(primary.get("bearing_deg", 0.0))
+            elif fused:
+                tof_bearing_deg = round(
+                    _bearing_deg(float(fused["x_mm"]), float(fused["z_mm"])),
+                    1,
+                )
+            aim_error_deg: float | None = None
+            if primary:
+                aim_error_deg = float(primary.get("bearing_deg", 0.0))
             return {
                 "connected": self.connected,
                 "port": self.port,
@@ -292,8 +403,22 @@ class TofState:
                 "labels": list(LABELS),
                 "colors": list(COLORS),
                 "sensor_angles_deg": list(SENSOR_ANGLES_DEG),
+                "sensor_mount_z_mm": SENSOR_MOUNT_Z_MM,
+                "swap_left_right": SWAP_LEFT_RIGHT,
                 "hits": hits,
+                "tracks": tracks,
+                "primary_target": primary,
                 "fused": fused,
+                "body_yaw_deg": self.body_yaw_deg,
+                "head_yaw_on_body_deg": self.head_yaw_on_body_deg,
+                "base_yaw_sign": self.base_yaw_sign,
+                "encoder_yaw_deg": self.encoder_yaw_deg,
+                "front_offset_deg": self.front_offset_deg,
+                "imu_drift_correction_deg": self.imu_drift_correction_deg,
+                "imu_yaw_rel_deg": self.imu_yaw_rel_deg,
+                "fusion_stationary": self.fusion_stationary,
+                "aim_error_deg": aim_error_deg,
+                "tof_bearing_deg": tof_bearing_deg,
             }
 
 
@@ -340,7 +465,25 @@ def find_port(hint: str) -> str:
     return candidates[-1]
 
 
-def serial_reader(port_hint: str) -> None:
+def _handle_serial_line(line: str) -> None:
+    pos = _BASE_STATUS_RE.match(line)
+    if pos:
+        STATE.update_pose(body_yaw_deg=float(pos.group(2)))
+        return
+
+    m = _TOF_RE.search(line)
+    if m:
+        raw = [int(m.group(i)) for i in range(1, 4)]
+        mm, vel, open_flags = FILTER_BANK.update_all(raw)
+        STATE.update_sample(mm, vel, open_flags=open_flags)
+        return
+
+    if line and not line.startswith("TOF"):
+        STATE.add_boot(line)
+
+
+def serial_reader(port_hint: str, *, base_yaw_sign: float) -> None:
+    STATE.update_pose(base_yaw_sign=base_yaw_sign)
     while True:
         try:
             port = find_port(port_hint)
@@ -351,21 +494,22 @@ def serial_reader(port_hint: str) -> None:
             while time.time() < deadline:
                 line = ser.readline().decode("utf-8", errors="ignore").strip()
                 if line:
-                    STATE.add_boot(line)
+                    _handle_serial_line(line)
                 if "Streaming readings" in line:
                     break
 
+            last_enc_poll = 0.0
             while True:
+                now = time.time()
+                if now - last_enc_poll >= ENCODER_POLL_SEC:
+                    ser.write(b"?\n")
+                    ser.flush()
+                    last_enc_poll = now
+
                 line = ser.readline().decode("utf-8", errors="ignore").strip()
                 if not line:
                     continue
-                m = _TOF_RE.search(line)
-                if m:
-                    raw = [int(m.group(i)) for i in range(1, 4)]
-                    mm, vel, open_flags = FILTER_BANK.update_all(raw)
-                    STATE.update_sample(mm, vel, open_flags=open_flags)
-                elif line and not line.startswith("TOF"):
-                    STATE.add_boot(line)
+                _handle_serial_line(line)
         except Exception as exc:
             STATE.set_error(str(exc))
             time.sleep(2.0)
@@ -530,6 +674,10 @@ HTML_PAGE = """<!DOCTYPE html>
     .hud-tag .val { color: #e2e8f0; font-weight: 600; }
     .hud-tag .human-val { color: #38bdf8; font-weight: 700; }
     .hud-tag .obstacle-val { color: #f97316; font-weight: 700; }
+    .hud-orient {
+      left: 50%; transform: translateX(-50%); top: auto; bottom: 0.55rem;
+      text-align: center; min-width: 18rem;
+    }
     .viz-legend {
       display: flex; flex-wrap: wrap; gap: 1.2rem; margin-top: 0.75rem;
       font-size: 0.78rem; color: var(--muted); align-items: center;
@@ -563,13 +711,15 @@ HTML_PAGE = """<!DOCTYPE html>
       <div class="hud-overlay">
         <div class="hud-tag" id="hud-left">SCAN <span class="val">ACTIVE</span></div>
         <div class="hud-tag" id="hud-right">OBJECTS <span class="val">0</span></div>
+        <div class="hud-tag hud-orient" id="hud-orient">ORIENT —</div>
       </div>
     </div>
     <div class="viz-legend">
       <span><i style="color:#38bdf8;background:#38bdf8"></i>person (moving)</span>
       <span><i style="color:#f97316;background:#f97316"></i>obstacle (static)</span>
       <span><i style="color:#6b7280;background:#6b7280"></i>uncertain</span>
-      <span><i style="color:#e2e8f0;background:#e2e8f0"></i>robot</span>
+      <span><i style="color:#e2e8f0;background:#e2e8f0"></i>robot (you)</span>
+      <span><i style="color:#94a3b8;background:#94a3b8"></i>startup front</span>
       <span style="opacity:0.5">⌖ drag · scroll to zoom</span>
     </div>
     <div class="object-readout" id="object-readout">Scanning…</div>
@@ -757,13 +907,20 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0", help="bind address")
     args = parser.parse_args()
 
+    viz_cfg = _load_viz_config()
+    base_yaw_sign = float(viz_cfg.get("base_yaw_sign", -1.0))
+
     try:
         port = find_port(args.serial_port)
     except FileNotFoundError as exc:
         print(exc)
         sys.exit(1)
 
-    t = threading.Thread(target=serial_reader, args=(port,), daemon=True)
+    t = threading.Thread(
+        target=serial_reader,
+        kwargs={"port_hint": port, "base_yaw_sign": base_yaw_sign},
+        daemon=True,
+    )
     t.start()
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)

@@ -219,12 +219,13 @@ class ImuService:
             raw_yaw = self._reader.filter.yaw_integral_deg() * self.yaw_sign
 
             if bb_state.get("base_fusion_resync_request"):
+                # Re-anchor IMU↔encoder after a spin; keep startup forward fixed.
                 self._fusion.reset_reference(
                     pan_mech_deg=pan_mech,
                     base_encoder_deg=base_enc,
                     imu_yaw_total_deg=raw_yaw,
                     now=now,
-                    lock_startup=True,
+                    lock_startup=False,
                 )
                 self._drift.reset_motion_tracking()
                 self._fusion_initialized = True

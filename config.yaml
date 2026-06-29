@@ -338,10 +338,23 @@ proximity:
   # ESP32 approach confidence count before reacting
   min_confidence: 3
   # Budget: max proximity-triggered base turns in a time window
-  max_turns_per_window: 2
+  max_turns_per_window: 6
   turn_window_sec: 30.0
   # How far to turn toward a side sensor (~45° mounting angle)
   turn_step_deg: 35.0
+  # Approach harness: turn base toward live ToF fused bearing (not only PROX velocity)
+  tof_turn_enabled: true
+  tof_min_bearing_deg: 12.0
+  tof_min_dist_mm: 80
+  tof_max_dist_mm: 1600
+  tof_confirm_ticks: 3
+  tof_merge_radius_mm: 400
+  tof_aim_tolerance_deg: 5.0
+  tof_align_cooldown_sec: 1.0
+  tof_target_lock_sec: 2.5
+  clear_return_enabled: true
+  clear_return_sec: 2.5
+  clear_return_tolerance_deg: 6.0
   # Min time between proximity turns
   cooldown_sec: 5.0
   # Counter-rotate neck to keep gaze during turn

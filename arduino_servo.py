@@ -87,6 +87,7 @@ class ArduinoServoLink:
         self.home_smooth_sec = 0.9
         self.home_smooth_hz = 30.0
         self.base_command_scale = 1.0
+        self.encoder_sign = -1.0
         self.base_move_timeout_sec = BASE_MOVE_TIMEOUT_SEC
         self.last_base_error: Optional[str] = None
         self._error_logged = False
@@ -498,13 +499,18 @@ class ArduinoServoLink:
             timeout_sec=timeout_sec,
             poll_hz=poll_hz,
             positive_uses_left=positive_uses_left,
+            encoder_sign=self.encoder_sign,
         )
         return ok
 
     def write_base_relative(self, deg: float, *, wait: bool = False) -> bool:
-        """Plate-degree move — uses spin control (same as robottest M/N, automated)."""
+        """Plate-degree relative move (B+deg / B-deg)."""
         ok = self.write_base_step_spin(deg, timeout_sec=self.base_move_timeout_sec if wait else 12.0)
         return ok
+
+    def write_base_absolute(self, deg: float, *, wait: bool = True) -> bool:
+        """Closed-loop move to absolute encoder degrees (B0.0 = startup forward)."""
+        return self.send_line(f"B{deg:.1f}", wait_base=wait, drain_after=not wait)
 
     def write_base_jog(self, pwm: int, ms: int) -> bool:
         pwm = max(-150, min(150, int(pwm)))
@@ -583,6 +589,7 @@ class ArduinoServoLink:
 
     def set_encoder_sign(self, sign: float) -> bool:
         sign_val = -1.0 if sign < 0.0 else 1.0
+        self.encoder_sign = sign_val
         ok = self.send_line(f"E{sign_val:.0f}", drain_after=False)
         if not ok:
             return False

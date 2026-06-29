@@ -5,6 +5,7 @@ const view = document.getElementById('view3d');
 const vizLoading = document.getElementById('viz-loading');
 const hudLeft = document.getElementById('hud-left');
 const hudRight = document.getElementById('hud-right');
+const hudOrient = document.getElementById('hud-orient');
 const readout = document.getElementById('object-readout');
 
 const HUMAN_COL = 0x38bdf8;
@@ -14,18 +15,19 @@ const ROBOT_COL = 0xc8d6e5;
 const KIND_COL = { human: HUMAN_COL, obstacle: OBSTACLE_COL, uncertain: UNCERTAIN_COL };
 const ZONE_ANGLE = { L: -45, C: 0, R: 45 };
 const deg = d => d * Math.PI / 180;
-const MAP_R = 2.2;
 const TRAIL_MAX = 28;
 const LERP = 0.12;
+// Robot base 550 mm diameter, centered at origin; sensors on front face (+Z)
+const ROBOT_RADIUS = 0.275;
+const SENSOR_MOUNT_Z = ROBOT_RADIUS; // front edge
 
 // ── Renderer ──
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x080a0f);
-scene.fog = new THREE.FogExp2(0x080a0f, 0.18);
+scene.background = new THREE.Color(0x0a0c10);
 
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 30);
-camera.position.set(0.1, 3.6, 0.3);
-camera.lookAt(0, 0, 0.4);
+camera.position.set(0, 3.6, 0.55);
+camera.lookAt(0, 0, 0.55);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -33,7 +35,7 @@ view.appendChild(renderer.domElement);
 if (vizLoading) vizLoading.style.display = 'none';
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0, 0.4);
+controls.target.set(0, 0, 0.55);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.maxPolarAngle = Math.PI * 0.2;
@@ -41,146 +43,135 @@ controls.minPolarAngle = Math.PI * 0.05;
 controls.enableRotate = true;
 controls.rotateSpeed = 0.5;
 
-// ── Floor grid ──
-const gridHelper = new THREE.PolarGridHelper(MAP_R, 8, 6, 64, 0x1a1f2e, 0x1a1f2e);
-gridHelper.position.y = 0.001;
-scene.add(gridHelper);
+// World map spins under the robot (heading-up: robot nose = screen forward)
+const mapGroup = new THREE.Group();
+scene.add(mapGroup);
 
-// ── Range rings with glow ──
-for (const r of [0.5, 1.0, 1.5, 2.0]) {
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(r - 0.005, r + 0.005, 96),
-    new THREE.MeshBasicMaterial({
-      color: 0x38bdf8, side: THREE.DoubleSide,
-      transparent: true, opacity: r === 1.0 ? 0.18 : 0.08
-    })
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.003;
-  scene.add(ring);
-}
-
-// ── Range labels ──
-function makeTextSprite(text, x, z, col = '#4a5f7a') {
-  const c = document.createElement('canvas');
-  c.width = 128; c.height = 40;
-  const ctx = c.getContext('2d');
-  ctx.font = 'bold 22px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = col;
-  ctx.fillText(text, 64, 28);
-  const tex = new THREE.CanvasTexture(c);
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.7 }));
-  sp.scale.set(0.28, 0.09, 1);
-  sp.position.set(x, 0.02, z);
-  return sp;
-}
-for (const r of [0.5, 1.0, 1.5, 2.0]) {
-  scene.add(makeTextSprite(`${r * 1000}`, 0.18, r));
-}
-
-// ── Radar sweep line ──
-const sweepGeo = new THREE.BufferGeometry().setFromPoints([
-  new THREE.Vector3(0, 0.006, 0),
-  new THREE.Vector3(0, 0.006, MAP_R)
-]);
-const sweepLine = new THREE.Line(sweepGeo,
-  new THREE.LineBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0.35 })
+// Plain floor (rotates with world / front reference)
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(4.5, 4.5),
+  new THREE.MeshBasicMaterial({ color: 0x0e1117 })
 );
-scene.add(sweepLine);
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = 0;
+mapGroup.add(floor);
 
-// Sweep trail (fading arc)
-const sweepTrailGeo = new THREE.RingGeometry(0.02, MAP_R, 64, 1, 0, deg(30));
-const sweepTrail = new THREE.Mesh(sweepTrailGeo,
-  new THREE.MeshBasicMaterial({
-    color: HUMAN_COL, transparent: true, opacity: 0.04, side: THREE.DoubleSide
-  })
+// Startup forward marker (+Z world) — grey cone; rotates opposite body yaw
+const frontMarker = new THREE.Mesh(
+  new THREE.ConeGeometry(0.07, 0.12, 3),
+  new THREE.MeshBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.55 })
 );
-sweepTrail.rotation.x = -Math.PI / 2;
-sweepTrail.position.y = 0.005;
-scene.add(sweepTrail);
+frontMarker.rotation.x = -Math.PI / 2;
+frontMarker.position.set(0, 0.018, 1.05);
+mapGroup.add(frontMarker);
+const frontRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.09, 0.11, 24),
+  new THREE.MeshBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+);
+frontRing.rotation.x = -Math.PI / 2;
+frontRing.position.set(0, 0.017, 1.05);
+mapGroup.add(frontRing);
 
-// ── Robot body (sleek top-down) ──
+// ── Robot body (550 mm circle, always points screen-forward) ──
 const robot = new THREE.Group();
 scene.add(robot);
 
-const bodyShape = new THREE.Shape();
-const bw = 0.22, bd = 0.28, cr = 0.1;
-bodyShape.moveTo(-bw + cr, -bd);
-bodyShape.lineTo(bw - cr, -bd);
-bodyShape.quadraticCurveTo(bw, -bd, bw, -bd + cr);
-bodyShape.lineTo(bw, bd - cr);
-bodyShape.quadraticCurveTo(bw, bd, bw - cr, bd);
-bodyShape.lineTo(-bw + cr, bd);
-bodyShape.quadraticCurveTo(-bw, bd, -bw, bd - cr);
-bodyShape.lineTo(-bw, -bd + cr);
-bodyShape.quadraticCurveTo(-bw, -bd, -bw + cr, -bd);
-
 const body = new THREE.Mesh(
-  new THREE.ShapeGeometry(bodyShape),
+  new THREE.CircleGeometry(ROBOT_RADIUS, 64),
   new THREE.MeshBasicMaterial({ color: ROBOT_COL })
 );
 body.rotation.x = -Math.PI / 2;
 body.position.y = 0.012;
 robot.add(body);
 
-// Center accent line
+// Center accent line (forward axis)
 const accentLine = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.04, 0.48),
-  new THREE.MeshBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0.6, side: THREE.DoubleSide })
+  new THREE.PlaneGeometry(0.04, ROBOT_RADIUS * 1.7),
+  new THREE.MeshBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
 );
 accentLine.rotation.x = -Math.PI / 2;
-accentLine.position.set(0, 0.014, 0.02);
+accentLine.position.set(0, 0.014, 0);
 robot.add(accentLine);
 
-// Nose indicator
+// Nose indicator at front edge
 const nose = new THREE.Mesh(
-  new THREE.ConeGeometry(0.06, 0.1, 3),
-  new THREE.MeshBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0.8 })
+  new THREE.ConeGeometry(0.055, 0.09, 3),
+  new THREE.MeshBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0.85 })
 );
 nose.rotation.x = -Math.PI / 2;
-nose.position.set(0, 0.013, 0.34);
+nose.position.set(0, 0.015, SENSOR_MOUNT_Z + 0.04);
 robot.add(nose);
 
-// Robot glow ring
+// Sensor origin marker (where ToF beams start)
+const sensorOrigin = new THREE.Mesh(
+  new THREE.RingGeometry(0.04, 0.055, 20),
+  new THREE.MeshBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+);
+sensorOrigin.rotation.x = -Math.PI / 2;
+sensorOrigin.position.set(0, 0.016, SENSOR_MOUNT_Z);
+robot.add(sensorOrigin);
+
+// Robot outline ring
 const robotGlow = new THREE.Mesh(
-  new THREE.RingGeometry(0.34, 0.38, 32),
-  new THREE.MeshBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0.08, side: THREE.DoubleSide })
+  new THREE.RingGeometry(ROBOT_RADIUS - 0.01, ROBOT_RADIUS + 0.01, 64),
+  new THREE.MeshBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.45, side: THREE.DoubleSide })
 );
 robotGlow.rotation.x = -Math.PI / 2;
-robotGlow.position.y = 0.004;
+robotGlow.position.set(0, 0.004, 0);
 robot.add(robotGlow);
 
-// ── FOV wedges ──
-for (const [, angle] of Object.entries(ZONE_ANGLE)) {
+// ── FOV wedges (from front sensor plane) ──
+const fovGroup = new THREE.Group();
+fovGroup.position.set(0, 0, SENSOR_MOUNT_Z);
+robot.add(fovGroup);
+
+for (const [key, angle] of Object.entries(ZONE_ANGLE)) {
   const g = new THREE.Group();
   g.rotation.y = deg(angle);
   const wedge = new THREE.Mesh(
     new THREE.CircleGeometry(1.9, 48, -deg(11), deg(22)),
-    new THREE.MeshBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0.025, side: THREE.DoubleSide })
+    new THREE.MeshBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.04, side: THREE.DoubleSide })
   );
   wedge.rotation.x = -Math.PI / 2;
-  wedge.position.set(0, 0.003, 0.15);
+  wedge.position.set(0, 0.003, 0.02);
   g.add(wedge);
-  // Edge line
   for (const sign of [-1, 1]) {
-    const edgeAngle = deg(angle + sign * 11);
+    const edgeAngle = sign * 11;
     const pts = [
-      new THREE.Vector3(Math.sin(edgeAngle) * 0.15, 0.004, Math.cos(edgeAngle) * 0.15),
-      new THREE.Vector3(Math.sin(edgeAngle) * 1.9, 0.004, Math.cos(edgeAngle) * 1.9),
+      new THREE.Vector3(0, 0.004, 0),
+      new THREE.Vector3(Math.sin(deg(edgeAngle)) * 1.9, 0.004, Math.cos(deg(edgeAngle)) * 1.9),
     ];
     const line = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints(pts),
-      new THREE.LineBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0.06 })
+      new THREE.LineBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.12 })
     );
-    scene.add(line);
+    g.add(line);
   }
-  robot.add(g);
+  // Zone label at beam tip
+  const tip = new THREE.Mesh(
+    new THREE.SphereGeometry(0.018, 8, 8),
+    new THREE.MeshBasicMaterial({ color: key === 'C' ? 0xa855f7 : (key === 'L' ? 0x3b82f6 : 0x22c55e), transparent: true, opacity: 0.5 })
+  );
+  tip.position.set(0, 0.02, 0.35);
+  g.add(tip);
+  fovGroup.add(g);
 }
 
-// ── Entity factories ──
+// ── Detected objects (body frame — locked to ToF beams) ──
 const entityGroup = new THREE.Group();
-scene.add(entityGroup);
+robot.add(entityGroup);
+
+// Bearing line from sensor plane toward fused hit
+const bearingGeo = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(0, 0.02, SENSOR_MOUNT_Z),
+  new THREE.Vector3(0, 0.02, SENSOR_MOUNT_Z + 0.5),
+]);
+const bearingLine = new THREE.Line(
+  bearingGeo,
+  new THREE.LineBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0.55 })
+);
+bearingLine.visible = false;
+robot.add(bearingLine);
 
 function makePerson() {
   const g = new THREE.Group();
@@ -282,8 +273,15 @@ function makeUncertain() {
   return g;
 }
 
+function getEntity(kind) {
+  if (kind === 'human') return makePerson();
+  if (kind === 'obstacle') return makeObstacle();
+  return makeUncertain();
+}
+
 // ── State ──
 let mainEntity = null;
+const trackEntities = {};
 const hitMarkers = {};
 const trailDots = [];
 const trailHistory = [];
@@ -291,12 +289,28 @@ const targetPos = new THREE.Vector3();
 const currentPos = new THREE.Vector3();
 let hasTarget = false;
 let latest3d = null;
-let sweepAngle = 0;
+let mapYawRad = 0;
+let targetMapYawRad = 0;
 
-function getEntity(kind) {
-  if (kind === 'human') return makePerson();
-  if (kind === 'obstacle') return makeObstacle();
-  return makeUncertain();
+function bodyMmToLocal(xMm, zMm) {
+  return { x: xMm / 1000, z: zMm / 1000 };
+}
+
+function fmtDeg(v) {
+  const n = Math.round(Number(v) || 0);
+  return `${n >= 0 ? '+' : ''}${n}°`;
+}
+
+function updateRobotPose(data) {
+  const baseSign = Number(data.base_yaw_sign ?? -1);
+  const bodyYaw = Number(
+    data.front_offset_deg ?? data.encoder_yaw_deg ?? data.body_yaw_deg ?? 0
+  );
+  // Spin world under robot so nose stays screen-forward; front marker shows true +Z.
+  targetMapYawRad = -deg(bodyYaw) * baseSign;
+  mapYawRad += (targetMapYawRad - mapYawRad) * LERP;
+  mapGroup.rotation.y = mapYawRad;
+  robot.rotation.y = 0;
 }
 
 // ── Label sprites ──
@@ -323,20 +337,38 @@ function makeLabelSprite(text, hexCol) {
 // ── Scene update ──
 function updateScene3d(data) {
   latest3d = data;
+  updateRobotPose(data);
   const hits = data.hits || [];
-  const fused = data.fused;
   const t = performance.now() * 0.001;
+  const bodyYawDeg = Number(data.body_yaw_deg ?? 0);
+  const encYaw = Number(data.encoder_yaw_deg ?? bodyYawDeg);
+  const frontOff = Number(data.front_offset_deg ?? bodyYawDeg);
+  const aimErr = data.aim_error_deg;
+  const drift = Number(data.imu_drift_correction_deg ?? 0);
+  const stationary = data.fusion_stationary;
 
   // HUD
   if (hudLeft) {
     const age = ((Date.now() / 1000) - (data.last_ts || 0));
-    hudLeft.innerHTML = `SCAN <span class="val">${age < 2 ? 'ACTIVE' : 'STALE'}</span>`;
+    const headOnBody = Number(data.head_yaw_on_body_deg ?? 0);
+    hudLeft.innerHTML = `SCAN <span class="val">${age < 2 ? 'ACTIVE' : 'STALE'}</span> · FWD <span class="val">${fmtDeg(frontOff)}</span>`;
+    if (aimErr != null) {
+      hudLeft.innerHTML += ` · AIM <span class="val">${fmtDeg(aimErr)}</span>`;
+    }
+    if (Math.abs(headOnBody) > 0.5) {
+      hudLeft.innerHTML += ` · HEAD <span class="val">${fmtDeg(headOnBody)}</span>`;
+    }
+  }
+  if (hudOrient) {
+    const st = stationary ? 'still' : 'move';
+    hudOrient.innerHTML = `BODY <span class="val">${fmtDeg(bodyYawDeg)}</span> · ENC <span class="val">${fmtDeg(encYaw)}</span> · DRIFT <span class="val">${fmtDeg(drift)}</span> · ${st}`;
   }
   if (hudRight) {
-    hudRight.innerHTML = `OBJECTS <span class="val">${hits.length}</span>`;
+    const ntracks = (data.tracks || []).length;
+    hudRight.innerHTML = `TRACKS <span class="val">${ntracks}</span> · HITS <span class="val">${hits.length}</span>`;
   }
 
-  // Per-zone hit dots
+  // Per-zone hit dots (on floor at projected position)
   for (const key of ['L', 'C', 'R']) {
     const hit = hits.find(h => h.zone === key);
     if (!hit) {
@@ -344,101 +376,90 @@ function updateScene3d(data) {
       continue;
     }
     if (!hitMarkers[key]) {
-      // Small diamond marker
-      const geo = new THREE.OctahedronGeometry(0.03, 0);
-      const mat = new THREE.MeshBasicMaterial({ color: 0x555555, transparent: true, opacity: 0.6 });
+      const geo = new THREE.OctahedronGeometry(0.028, 0);
+      const mat = new THREE.MeshBasicMaterial({ color: 0x555555, transparent: true, opacity: 0.7 });
       hitMarkers[key] = new THREE.Mesh(geo, mat);
       entityGroup.add(hitMarkers[key]);
     }
     const col = KIND_COL[hit.kind] || UNCERTAIN_COL;
+    const local = bodyMmToLocal(hit.x_mm, hit.z_mm);
     hitMarkers[key].material.color.setHex(col);
-    hitMarkers[key].position.set(hit.x_mm / 1000, 0.025, hit.z_mm / 1000);
+    hitMarkers[key].position.set(local.x, 0.018, local.z);
     hitMarkers[key].rotation.y = t * 2;
     hitMarkers[key].visible = true;
   }
 
-  // Main fused entity
+  // Per-track entities (multiple people / obstacles)
+  const tracks = data.tracks || [];
+  const primaryId = data.primary_target?.id;
+  const liveIds = new Set();
+
+  for (const track of tracks) {
+    const id = String(track.id);
+    liveIds.add(id);
+    const kind = track.kind || 'uncertain';
+    const local = bodyMmToLocal(track.x_mm, track.z_mm);
+    const isPrimary = track.id === primaryId;
+
+    if (!trackEntities[id] || trackEntities[id].userData.kind !== kind) {
+      if (trackEntities[id]) entityGroup.remove(trackEntities[id]);
+      trackEntities[id] = getEntity(kind);
+      const label = isPrimary
+        ? (kind === 'human' ? 'TARGET' : kind === 'obstacle' ? 'TARGET' : '?')
+        : `#${id}`;
+      const lCol = isPrimary
+        ? (kind === 'human' ? '#38bdf8' : kind === 'obstacle' ? '#f97316' : '#9ca3af')
+        : '#6b7280';
+      trackEntities[id].add(makeLabelSprite(label, lCol));
+      trackEntities[id].userData.trackId = id;
+      entityGroup.add(trackEntities[id]);
+    }
+
+    const ent = trackEntities[id];
+    ent.position.set(local.x, 0, local.z);
+    ent.visible = true;
+    ent.scale.setScalar(isPrimary ? 1.0 : 0.82);
+    if (ent.material) ent.material.opacity = isPrimary ? 0.95 : 0.55;
+  }
+
+  for (const id of Object.keys(trackEntities)) {
+    if (!liveIds.has(id)) {
+      entityGroup.remove(trackEntities[id]);
+      delete trackEntities[id];
+    }
+  }
+
+  const fused = data.primary_target || data.fused;
   if (fused) {
     const kind = fused.kind || 'uncertain';
-    targetPos.set(fused.x_mm / 1000, 0, fused.z_mm / 1000);
+    const local = bodyMmToLocal(fused.x_mm, fused.z_mm);
 
-    if (!mainEntity || mainEntity.userData.kind !== kind) {
-      if (mainEntity) entityGroup.remove(mainEntity);
-      mainEntity = getEntity(kind);
-      const label = kind === 'human' ? 'PERSON' : kind === 'obstacle' ? 'OBSTACLE' : '?';
-      const lCol = kind === 'human' ? '#38bdf8' : kind === 'obstacle' ? '#f97316' : '#9ca3af';
-      mainEntity.add(makeLabelSprite(label, lCol));
-      entityGroup.add(mainEntity);
-      currentPos.copy(targetPos);
-      hasTarget = true;
+    bearingLine.geometry.setFromPoints([
+      new THREE.Vector3(0, 0.02, SENSOR_MOUNT_Z),
+      new THREE.Vector3(local.x, 0.02, local.z),
+    ]);
+    bearingLine.material.color.setHex(KIND_COL[kind] || UNCERTAIN_COL);
+    bearingLine.visible = true;
+
+    if (mainEntity) {
+      mainEntity.visible = false;
     }
-    hasTarget = true;
-
-    // Smooth lerp
-    currentPos.lerp(targetPos, LERP);
-    mainEntity.position.copy(currentPos);
-    mainEntity.visible = true;
-
-    // Animate human
-    if (kind === 'human') {
-      const breathe = 1 + 0.06 * Math.sin(t * 3);
-      mainEntity.scale.setScalar(breathe);
-      const glow = mainEntity.getObjectByName('glow');
-      if (glow) {
-        glow.scale.setScalar(1 + 0.3 * Math.sin(t * 4));
-        glow.material.opacity = 0.12 + 0.1 * Math.sin(t * 4);
-      }
-      const pulse = mainEntity.getObjectByName('pulse');
-      if (pulse) {
-        pulse.scale.setScalar(1 + 0.5 * Math.abs(Math.sin(t * 5)));
-        pulse.material.opacity = 0.35 * (0.5 + 0.5 * Math.sin(t * 5));
-      }
-    } else {
-      mainEntity.scale.setScalar(1);
-    }
-
-    // Uncertain spin
-    if (kind === 'uncertain') {
-      const ring = mainEntity.getObjectByName('ring');
-      if (ring) ring.rotation.z = t * 1.5;
-    }
-
-    // Trail (only for humans)
-    trailHistory.unshift(new THREE.Vector3(currentPos.x, 0.008, currentPos.z));
-    if (trailHistory.length > TRAIL_MAX) trailHistory.length = TRAIL_MAX;
-    while (trailDots.length < trailHistory.length) {
-      const d = new THREE.Mesh(
-        new THREE.CircleGeometry(0.015, 8),
-        new THREE.MeshBasicMaterial({ color: HUMAN_COL, transparent: true, opacity: 0, side: THREE.DoubleSide })
-      );
-      d.rotation.x = -Math.PI / 2;
-      entityGroup.add(d);
-      trailDots.push(d);
-    }
-    trailDots.forEach((d, i) => {
-      const p = trailHistory[i];
-      if (p && kind === 'human') {
-        d.position.copy(p);
-        d.material.opacity = 0.4 * (1 - i / TRAIL_MAX);
-        d.material.color.setHex(HUMAN_COL);
-        d.scale.setScalar(1 - i * 0.02);
-      } else {
-        d.material.opacity = 0;
-      }
-    });
 
     // Readout
-    const dist = Math.round(Math.hypot(fused.x_mm, fused.z_mm));
-    const bearing = Math.round(Math.atan2(fused.x_mm, fused.z_mm) * 180 / Math.PI);
+    const dist = Math.round(fused.dist_mm || Math.hypot(fused.x_mm, fused.z_mm - SENSOR_MOUNT_Z * 1000));
+    const bearing = Math.round(fused.bearing_deg ?? Math.atan2(fused.x_mm, fused.z_mm) * 180 / Math.PI);
     const tag = kind === 'human' ? 'PERSON' : kind === 'obstacle' ? 'OBSTACLE' : 'UNCERTAIN';
     const cls = kind === 'human' ? 'readout-human' : kind === 'obstacle' ? 'readout-obstacle' : 'readout-uncertain';
+    const ntracks = tracks.length;
     readout.className = 'object-readout ' + cls;
-    readout.innerHTML = `<strong>${tag}</strong> · ${dist} mm · ${bearing > 0 ? '+' : ''}${bearing}° · ${Math.round(fused.confidence * 100)}% — ${fused.reason}`;
+    readout.innerHTML = `<strong>${tag}</strong> #${fused.id ?? '?'} · ${ntracks} track${ntracks === 1 ? '' : 's'} · ${dist} mm · aim ${fmtDeg(aimErr ?? bearing)} · fwd ${fmtDeg(frontOff)} · ${Math.round((fused.confidence || 0) * 100)}% — ${fused.reason || ''}`;
   } else {
-    if (mainEntity) { entityGroup.remove(mainEntity); mainEntity = null; }
-    hasTarget = false;
-    trailHistory.length = 0;
-    trailDots.forEach(d => { d.material.opacity = 0; });
+    bearingLine.visible = false;
+    if (mainEntity) mainEntity.visible = false;
+    for (const id of Object.keys(trackEntities)) {
+      entityGroup.remove(trackEntities[id]);
+      delete trackEntities[id];
+    }
     readout.className = 'object-readout';
     readout.textContent = 'Clear — no object in sensor field';
   }
@@ -468,14 +489,6 @@ resize3d();
 // ── Animate ──
 function animate() {
   requestAnimationFrame(animate);
-  const t = performance.now() * 0.001;
-
-  // Radar sweep
-  sweepAngle += 0.012;
-  sweepLine.rotation.y = sweepAngle;
-  sweepTrail.rotation.z = -sweepAngle + deg(15);
-  sweepLine.material.opacity = 0.2 + 0.15 * Math.sin(t * 2);
-
   controls.update();
   if (latest3d) updateScene3d(latest3d);
   renderer.render(scene, camera);

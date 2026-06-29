@@ -100,6 +100,8 @@ const int     APPROACH_CONFIRM_FRAMES = 3;
 const unsigned long APPROACH_DWELL_MS = 800;       // walk-by filter
 const unsigned long BASELINE_FORCE_RELEARN_MS = 10000;
 const unsigned long TOF_EVENT_COOLDOWN_MS = 300;
+const unsigned long TOF_STREAM_MS = 200;           // 5 Hz viz stream
+const unsigned long TOF_STREAM_BUSY_MS = 500;      // 2 Hz while base spinning
 const float   DEPART_VEL_THRESHOLD = 50.0f;       // mm/s (positive = leaving)
 const int     DEPART_CONFIRM_FRAMES = 4;
 const int     DEPART_MIN_START_MM = 600;
@@ -144,6 +146,7 @@ TofChannel tofChannels[TOF_COUNT];
 unsigned long lastTofReadMs = 0;
 unsigned long lastTofReprobeMs = 0;
 unsigned long lastTofEventMs = 0;
+unsigned long lastTofStreamMs = 0;
 uint8_t lastZoneState = 0;
 bool tofSystemReady = false;
 bool tofMuted = false;
@@ -1102,9 +1105,7 @@ void readAndProcessTof() {
 
     if (tofMuted) {
         lastTofEventMs = now;
-        return;
-    }
-
+    } else {
     // ── Emit PROX approach event ──
     if (anyApproach && bestZone >= 0 && (now - lastTofEventMs) > TOF_EVENT_COOLDOWN_MS) {
         TofChannel &best = tofChannels[bestZone];
@@ -1157,6 +1158,38 @@ void readAndProcessTof() {
         Serial.println((zoneState & 4) ? 1 : 0);
         lastZoneState = zoneState;
     }
+    }
+
+    // ── Continuous TOF stream for viz (not blocked by TM mute) ──
+    unsigned long streamInterval = (baseBusy || spinPwm != 0) ? TOF_STREAM_BUSY_MS : TOF_STREAM_MS;
+    if (now - lastTofStreamMs >= streamInterval) {
+        lastTofStreamMs = now;
+        int mm[TOF_COUNT];
+        int vel[TOF_COUNT];
+        for (int i = 0; i < TOF_COUNT; i++) {
+            TofChannel &ch = tofChannels[i];
+            if (ch.initialized && ch.filtered_valid && ch.last_valid_mm > 0
+                    && ch.last_valid_mm <= TOF_TRUST_MAX_MM) {
+                mm[i] = ch.last_valid_mm;
+                vel[i] = (int)ch.velocity_mm_s;
+            } else {
+                mm[i] = -1;
+                vel[i] = 0;
+            }
+        }
+        Serial.print(F("TOF L="));
+        Serial.print(mm[0]);
+        Serial.print(F(" C="));
+        Serial.print(mm[1]);
+        Serial.print(F(" R="));
+        Serial.print(mm[2]);
+        Serial.print(F(" VL="));
+        Serial.print(vel[0]);
+        Serial.print(F(" VC="));
+        Serial.print(vel[1]);
+        Serial.print(F(" VR="));
+        Serial.println(vel[2]);
+    }
 }
 
 void setup() {
@@ -1196,7 +1229,7 @@ void setup() {
   // Initialize ToF sensors via TCA9548A mux (non-blocking, graceful fail)
   initTofSensors();
 
-  Serial.println(F("FW head_servo_hands_v15_prox"));
+  Serial.println(F("FW head_servo_hands_v16_tof_stream"));
   Serial.println(F("READY"));
   Serial.flush();
 }

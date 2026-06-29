@@ -132,11 +132,16 @@ echo "════════════════════════�
 echo "  DONE: $LABEL flashed to $PORT"
 echo "═══════════════════════════════════════════════"
 
-if [ "$MODE" = "test" ] || [ "$MODE" = "tof" ]; then
-    echo ""
-    echo "Next steps:"
-    echo "  1. Open serial monitor:  arduino-cli monitor -p $PORT -c baudrate=115200"
-    echo "  2. Or run Python monitor: python3 tests/test_tof_sensors.py $PORT"
-    echo "  3. Verify sensors show valid readings (VL53L0X / GY-VL53L0XV2)"
-    echo "  4. Then flash production:  $0 prod --port $PORT"
-fi
+    if [ "$MODE" = "test" ] || [ "$MODE" = "tof" ]; then
+        echo ""
+        echo "Next steps:"
+        echo "  1. Open serial monitor:  arduino-cli monitor -p $PORT -c baudrate=115200"
+        echo "  2. Or run Python monitor: python3 tests/test_tof_sensors.py $PORT"
+        echo "  3. Verify sensors show valid readings (VL53L0X / GY-VL53L0XV2)"
+        echo "  4. Then flash production:  $0 prod --port $PORT"
+    fi
+    if [ "$MODE" = "prod" ] || [ "$MODE" = "full" ] || [ "$MODE" = "main" ]; then
+        echo ""
+        echo "  Approach harness: python3 tests/approach.py $PORT"
+        echo "  (v16+ streams TOF lines for viz alongside PROX events)"
+    fi

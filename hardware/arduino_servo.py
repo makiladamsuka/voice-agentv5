@@ -93,11 +93,18 @@ class ArduinoServoLink:
         self._error_logged = False
         self._boot_banner = ""
         self._prox_callback = None  # callable(line: str) for PROX/ZONE events
+        self._tof_callback = None   # callable(line: str) for TOF stream lines
         self._rx_lines: deque[str] = deque(maxlen=64)
 
     def _route_or_queue_line(self, line: str) -> Optional[str]:
-        """Route PROX/ZONE to callback; queue other complete lines for ack readers."""
+        """Route PROX/ZONE/TOF to callbacks; queue other complete lines for ack readers."""
         if not line:
+            return None
+        if line.startswith("TOF") and self._tof_callback:
+            try:
+                self._tof_callback(line)
+            except Exception:
+                pass
             return None
         if (line.startswith("PROX") or line.startswith("ZONE")) and self._prox_callback:
             try:
@@ -109,7 +116,7 @@ class ArduinoServoLink:
         return line
 
     def _poll_prox_lines(self) -> None:
-        """Non-blocking read: deliver PROX/ZONE events without flushing servo acks."""
+        """Non-blocking read: deliver PROX/ZONE/TOF events without flushing servo acks."""
         if self._ser is None:
             return
         old_timeout = self._ser.timeout
@@ -230,6 +237,12 @@ class ArduinoServoLink:
             else:
                 line = self._ser.readline().decode("utf-8", errors="ignore").strip()
                 if not line:
+                    continue
+                if line.startswith("TOF") and self._tof_callback:
+                    try:
+                        self._tof_callback(line)
+                    except Exception:
+                        pass
                     continue
                 if (line.startswith("PROX") or line.startswith("ZONE")) and self._prox_callback:
                     try:

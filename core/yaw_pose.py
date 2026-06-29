@@ -80,7 +80,10 @@ def publish_tracker_pose(
     """Map tracker sample to BB yaw fields and optional TofState pose."""
     pan_mech = sample.pan_mech_deg
     from_home_imu = sample.from_home_imu_deg
+    from_home_enc = sample.from_home_enc_deg
     world_yaw = from_home_imu + pan_mech
+    # Map uses encoder for floor localization; IMU can drift when watchdog resets integral.
+    map_yaw = from_home_enc
 
     bb.write(
         from_home_enc_deg=sample.from_home_enc_deg,
@@ -105,7 +108,7 @@ def publish_tracker_pose(
         front_offset_deg=sample.from_home_enc_deg,
         from_home_enc_deg=sample.from_home_enc_deg,
         from_home_imu_deg=from_home_imu,
-        map_yaw_deg=from_home_imu,
+        map_yaw_deg=map_yaw,
         disagreement_deg=sample.disagreement_deg,
         encoder_count_delta=sample.encoder_count_delta,
         imu_online=imu_online,
@@ -145,22 +148,51 @@ def update_tracker(
         gyro_dps=gyro,
         base_busy=base_busy,
     )
-    if sample is not None and sample.stationary and not base_busy:
-        if abs(sample.disagreement_deg) > 0.5:
-            tracker.force_snap_imu_to_encoder(
-                encoder_deg=encoder_deg,
-                imu_yaw_deg=imu_yaw,
-                pan_mech_deg=pan_mech,
-            )
-            sample = tracker.update(
-                encoder_deg=encoder_deg,
-                encoder_count=encoder_count,
-                imu_yaw_deg=imu_yaw,
-                pan_mech_deg=pan_mech,
-                gyro_dps=gyro,
-                base_busy=False,
-            )
+    if sample is not None and not base_busy and abs(sample.disagreement_deg) > 0.5:
+        tracker.force_snap_imu_to_encoder(
+            encoder_deg=encoder_deg,
+            imu_yaw_deg=imu_yaw,
+            pan_mech_deg=pan_mech,
+        )
+        sample = tracker.update(
+            encoder_deg=encoder_deg,
+            encoder_count=encoder_count,
+            imu_yaw_deg=imu_yaw,
+            pan_mech_deg=pan_mech,
+            gyro_dps=gyro,
+            base_busy=False,
+        )
     return sample
+
+
+def notify_imu_yaw_reset(
+    tracker: YawHomeTracker,
+    bb: Blackboard,
+    *,
+    encoder_deg: float,
+    encoder_count: int,
+    pan: float,
+    servo_cfg: dict,
+    base_busy: bool = True,
+    imu_yaw_deg: float = 0.0,
+) -> YawHomeSample | None:
+    """Re-anchor tracker after IMU yaw integral reset (base watchdog per-spin)."""
+    state = bb.read("imu_gyro_dps")
+    gyro = float(state["imu_gyro_dps"])
+    pan_mech = signed_pan_mech_deg(pan, servo_cfg)
+    tracker.note_imu_yaw_reset(
+        encoder_deg=encoder_deg,
+        imu_yaw_deg=imu_yaw_deg,
+        pan_mech_deg=pan_mech,
+    )
+    return tracker.update(
+        encoder_deg=encoder_deg,
+        encoder_count=encoder_count,
+        imu_yaw_deg=imu_yaw_deg,
+        pan_mech_deg=pan_mech,
+        gyro_dps=gyro,
+        base_busy=base_busy,
+    )
 
 
 def resnap_tracker_after_spin(

@@ -176,3 +176,26 @@ class YawHomeTracker:
         imu_base_raw = _delta(imu_total_delta, pan_delta)
         self._imu_align = _delta(imu_base_raw, enc_from_home)
         self._still_since = None
+
+    def note_imu_yaw_reset(
+        self,
+        *,
+        encoder_deg: float,
+        imu_yaw_deg: float,
+        pan_mech_deg: float,
+    ) -> None:
+        """Re-anchor IMU HOME after watchdog integral reset; keep encoder-from-HOME."""
+        if self._home is None:
+            return
+        enc_from_home = _delta(encoder_deg, self._home.encoder_deg)
+        self._home = HomeSnapshot(
+            encoder_deg=self._home.encoder_deg,
+            encoder_count=self._home.encoder_count,
+            imu_yaw_deg=float(imu_yaw_deg),
+            pan_mech_deg=float(pan_mech_deg),
+            locked_at=self._home.locked_at,
+        )
+        # imu_base_raw becomes 0; align so compensated yaw matches encoder.
+        self._imu_align = _delta(0.0, enc_from_home)
+        self._still_since = None
+        self._last_enc_count = None

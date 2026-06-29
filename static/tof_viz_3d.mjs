@@ -322,9 +322,12 @@ function fmtDeg(v) {
 
 function updateRobotPose(data) {
   const sign = Number(data.base_yaw_sign ?? -1);
-  const yaw = Number(
-    data.map_yaw_deg ?? data.from_home_imu_deg ?? data.body_yaw_deg ?? 0
-  );
+  const encYaw = Number(data.from_home_enc_deg ?? data.encoder_yaw_deg ?? 0);
+  const imuYaw = Number(data.from_home_imu_deg ?? data.body_yaw_deg ?? 0);
+  const disagree = Math.abs(Number(data.disagreement_deg ?? (imuYaw - encYaw)));
+  const yaw = disagree > 3
+    ? encYaw
+    : Number(data.map_yaw_deg ?? encYaw ?? imuYaw);
   const maxYaw = Number(data.max_yaw_deg ?? 120);
 
   mapGroup.rotation.y = -deg(yaw) * sign;
@@ -390,9 +393,11 @@ function updateScene3d(data) {
   }
   if (hudOrient) {
     const st = stationary ? 'still' : 'move';
+    const mapSrc = Math.abs(disagreement) > 3 ? 'enc' : 'fused';
     hudOrient.innerHTML =
-      `<strong>FROM HOME</strong> imu <span class="val">${fmtDeg(bodyYawDeg)}</span>` +
-      ` · enc <span class="val">${fmtDeg(encYaw)}</span>` +
+      `<strong>FROM HOME</strong> enc <span class="val">${fmtDeg(encYaw)}</span>` +
+      ` · imu <span class="val">${fmtDeg(bodyYawDeg)}</span>` +
+      ` · map <span class="val">${mapSrc}</span>` +
       ` · Δ <span class="val">${fmtDeg(disagreement)}</span>` +
       ` · ticksΔ <span class="val">${tickDelta >= 0 ? '+' : ''}${Math.round(tickDelta)}</span>` +
       ` · ${st}`;

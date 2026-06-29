@@ -19,8 +19,16 @@ from core.eye_renderer import EyeRenderer
 from core.debug_dashboard import DebugDashboard
 from core.tof_state import STATE as TOF_STATE
 from core.tof_stream import TofStreamHandler
-from core.yaw_pose import lock_home_tracker, publish_tracker_pose, query_enc, update_tracker
+from core.yaw_pose import (
+    lock_home_tracker,
+    publish_tracker_pose,
+    query_enc,
+    resnap_tracker_after_spin,
+    update_tracker,
+)
 from lib.yaw_home_tracker import YawHomeTracker
+from lib.base_home_drive import drive_base_to_imu_zero
+from lib.head_mech import signed_pan_mech_deg
 from lib.live_tune import load_tune_defaults_from_config, sanitize_config
 from hardware.arduino_servo import ArduinoServoLink
 from base_motor_utils import apply_base_calibration_to_nano
@@ -245,6 +253,88 @@ def _shutdown_home_servos(
     time.sleep(0.12)
 
 
+def _shutdown_home_base(
+    link: ArduinoServoLink,
+    bb: Blackboard,
+    tracker: YawHomeTracker,
+    *,
+    servo_cfg: dict,
+    base_cfg: dict,
+) -> None:
+    """IMU closed-loop spin back to startup forward before exit (like approach HOME)."""
+    if not link.connected or not tracker.home_locked:
+        return
+
+    pan_center = float(servo_cfg.get("pan_center", 100.0))
+    tilt_center = float(servo_cfg.get("tilt_center", 110.0))
+    tol = float(base_cfg.get("home_success_tolerance_deg", 2.5))
+
+    state = bb.read("from_home_imu_deg", "from_home_enc_deg")
+    imu_off = float(state["from_home_imu_deg"])
+    enc_off = float(state["from_home_enc_deg"])
+    if abs(imu_off) <= tol and abs(enc_off) <= tol:
+        print(
+            f"[Bootstrap] Base already at HOME (imu={imu_off:+.1f}° enc={enc_off:+.1f}°)",
+            flush=True,
+        )
+        return
+
+    def query_imu_home() -> tuple[float, float, bool, float]:
+        enc, count, busy, cpd = query_enc(link, float(bb.read("base_encoder_deg")["base_encoder_deg"]))
+        imu_state = bb.read("imu_yaw_integral_deg", "imu_gyro_dps")
+        imu_yaw = float(imu_state["imu_yaw_integral_deg"])
+        gyro = float(imu_state["imu_gyro_dps"])
+        pan_mech = signed_pan_mech_deg(pan_center, servo_cfg)
+        tracker.counts_per_degree = max(cpd, 0.05)
+        sample = tracker.update(
+            encoder_deg=enc,
+            encoder_count=count,
+            imu_yaw_deg=imu_yaw,
+            pan_mech_deg=pan_mech,
+            gyro_dps=gyro,
+            base_busy=True,
+        )
+        imu_home = sample.from_home_imu_deg if sample is not None else imu_off
+        return imu_home, enc, busy, gyro
+
+    print(
+        f"[Bootstrap] Returning base to forward (imu {imu_off:+.1f}° from HOME)...",
+        flush=True,
+    )
+    try:
+        link.write_angles(pan_center, tilt_center)
+        link.mute_tof()
+        ok, final_imu = drive_base_to_imu_zero(
+            link,
+            base_cfg,
+            query_imu_home=query_imu_home,
+            log=print,
+        )
+        link.unmute_tof()
+        enc, count, _, _ = query_enc(link, 0.0)
+        sample = resnap_tracker_after_spin(
+            tracker,
+            bb,
+            encoder_deg=enc,
+            encoder_count=count,
+            pan=pan_center,
+            servo_cfg=servo_cfg,
+        )
+        enc_home = sample.from_home_enc_deg if sample is not None else enc_off
+        tag = "OK" if ok else "FAIL"
+        print(
+            f"[Bootstrap] Base HOME {tag}: imu={final_imu:+.1f}° enc={enc_home:+.1f}°",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"[Bootstrap] Base HOME return failed: {exc}", flush=True)
+        try:
+            link.write_base_stop()
+            link.unmute_tof()
+        except Exception:
+            pass
+
+
 def main():
     cfg = _load_yaml(DEFAULT_CONFIG_PATH)
     servo_cfg = cfg.get("servo", {}) or {}
@@ -430,7 +520,7 @@ def main():
     if debug_viz_cfg.get("enabled", True):
         threads.append(
             threading.Thread(
-                target=                DebugDashboard(
+                target=DebugDashboard(
                     bb,
                     host=str(debug_viz_cfg.get("host", "0.0.0.0")),
                     port=int(debug_viz_cfg.get("port", 8082)),
@@ -472,6 +562,15 @@ def main():
 
     def signal_handler(sig, frame):
         print("\nShutting down...")
+        bb.write(base_step_ready=False)
+        if link is not None and link.connected:
+            _shutdown_home_base(
+                link,
+                bb,
+                tracker,
+                servo_cfg=servo_cfg,
+                base_cfg=base_cfg,
+            )
         bb.write(running=False)
         if voice_thread is not None and voice_thread.is_alive():
             voice_thread.join(timeout=10.0)

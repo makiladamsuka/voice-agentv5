@@ -13,7 +13,7 @@ from typing import Any
 from PIL import Image
 
 from core.blackboard import Blackboard
-from core.tof_dashboard_html import build_tof_dashboard_html
+from core.debug_dashboard_html import build_debug_dashboard_html
 from head_debug_viz import serve_debug_static
 from lib.live_tune import (
     merge_tune_values,
@@ -32,6 +32,28 @@ def _read_cpu_temp_c() -> float | None:
 
 
 
+def _mode_display_label(
+    mode: str,
+    *,
+    forward_return: bool,
+    track_kind: str,
+) -> str:
+    if forward_return:
+        return "Returning forward"
+    if mode == "track":
+        kind = track_kind if track_kind not in ("", "none") else "target"
+        return f"Tracking ({kind})"
+    if mode == "last_seen":
+        return "Last seen"
+    if mode in ("manual", "manual_test"):
+        return "Manual"
+    if mode == "wander":
+        return "Wandering"
+    if mode == "memory_track":
+        return "Memory track"
+    return mode.capitalize() if mode else "Idle"
+
+
 def build_merged_state(
     bb_state: dict[str, Any],
     tof_snap: dict[str, Any],
@@ -45,6 +67,14 @@ def build_merged_state(
     merged["face_detected"] = bool(bb_state.get("face_detected", False))
     merged["prox_approach_zone"] = str(bb_state.get("prox_approach_zone", ""))
     merged["track_kind"] = str(bb_state.get("track_kind", "none"))
+    merged["body_detected"] = bool(bb_state.get("body_detected", False))
+    merged["servo_forward_return_active"] = bool(bb_state.get("servo_forward_return_active", False))
+    merged["prox_approach_active"] = bool(bb_state.get("prox_approach_active", False))
+    merged["mode_label"] = _mode_display_label(
+        str(bb_state.get("servo_mode", "idle")),
+        forward_return=merged["servo_forward_return_active"],
+        track_kind=merged["track_kind"],
+    )
     merged["base_motion_busy"] = bool(bb_state.get("base_motion_busy", False))
     merged["manual_control_enabled"] = bool(bb_state.get("manual_control_enabled", False))
     merged["head_step_deg"] = float(bb_state.get("debug_head_step_deg", 5.0))
@@ -247,10 +277,9 @@ class DebugDashboard:
 
     def run(self) -> None:
         poll_ms = int(self.debug_viz_cfg.get("map_poll_ms", 30))
-        dashboard_html = build_tof_dashboard_html(
-            include_camera_stream=self.include_camera_stream,
+        dashboard_html = build_debug_dashboard_html(
             poll_ms=poll_ms,
-            title="Robot debug — ToF map",
+            include_camera_stream=self.include_camera_stream,
         )
         handler = type(
             "BoundDashboardHandler",

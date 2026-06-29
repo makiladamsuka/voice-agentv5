@@ -22,7 +22,12 @@ except ImportError:
 
 from core.blackboard import Blackboard
 from core.tof_stream import TofStreamHandler
-from core.yaw_pose import publish_tracker_pose, resnap_tracker_after_spin, update_tracker
+from core.yaw_pose import (
+    notify_imu_yaw_reset,
+    publish_tracker_pose,
+    resnap_tracker_after_spin,
+    update_tracker,
+)
 from lib.head_mech import signed_pan_mech_deg
 from base_safety import BaseMotionGate, BaseMoveWatchdog, BaseSafetyConfig
 from lib.elastic_head_motion import smooth_toward
@@ -563,6 +568,16 @@ class ServoMixer:
                     commanded_deg=step,
                     encoder_deg=enc,
                     pan_offset_deg=pan_mech,
+                )
+            if self._tracker is not None and self._tracker.home_locked:
+                notify_imu_yaw_reset(
+                    self._tracker,
+                    self.bb,
+                    encoder_deg=enc,
+                    encoder_count=self._encoder_count,
+                    pan=pan,
+                    servo_cfg=self._servo_cfg,
+                    base_busy=True,
                 )
             self._send_angles(pan, tilt)
             self._link.mute_tof()

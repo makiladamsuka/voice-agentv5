@@ -99,3 +99,30 @@ def test_spin_direction_for_imu_homing():
 
     assert spin_left_toward_zero(12.0, positive_uses_left=False) is False
     assert spin_left_toward_zero(-12.0, positive_uses_left=False) is True
+
+
+def test_note_imu_yaw_reset_keeps_encoder_from_home():
+    t = _locked()
+    t.update(
+        encoder_deg=-90.0,
+        encoder_count=-2800,
+        imu_yaw_deg=50.0,
+        pan_mech_deg=10.0,
+        gyro_dps=5.0,
+        base_busy=False,
+        now=0.5,
+    )
+    t.note_imu_yaw_reset(encoder_deg=-90.0, imu_yaw_deg=0.0, pan_mech_deg=10.0)
+    s = t.update(
+        encoder_deg=-90.0,
+        encoder_count=-2800,
+        imu_yaw_deg=0.0,
+        pan_mech_deg=10.0,
+        gyro_dps=5.0,
+        base_busy=False,
+        now=0.6,
+    )
+    assert s is not None
+    assert abs(s.from_home_enc_deg - (-90.0)) < 0.01
+    assert abs(s.from_home_imu_deg - (-90.0)) < 0.01
+    assert abs(s.disagreement_deg) < 0.01

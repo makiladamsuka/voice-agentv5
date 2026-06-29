@@ -156,6 +156,7 @@ def run_approach(
     )
     link._prox_callback = controller.handle_prox_line
     link._tof_callback = controller.handle_tof_line
+    controller._fetch_enc()
 
     approach_thread = threading.Thread(
         target=controller.run,
@@ -178,7 +179,7 @@ def run_approach(
                 controller.publish_viz_pose()
             except Exception:
                 pass
-            time.sleep(0.02)
+            time.sleep(0.033)
 
     pose_thread = threading.Thread(target=_pose_publisher, name="VizPose", daemon=True)
     pose_thread.start()

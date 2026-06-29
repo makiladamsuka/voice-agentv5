@@ -222,28 +222,40 @@ class ApproachController:
         self._prox_active = False
         self.loop_hz = 50.0
         self._tracker_lock = threading.Lock()
+        self._cached_enc_deg = 0.0
+        self._cached_enc_count = 0
+        self._cached_busy = False
+        self._cached_cpd = 31.1667
 
         self._hold_head_home()
 
-    def publish_viz_pose(self) -> None:
-        """High-rate IMU pose for 3D map (same model as yaw_robot_viz)."""
-        if self._link is None or not self._link.connected:
-            return
+    def _fetch_enc(self) -> tuple[float, int, bool, float]:
         enc, count, busy, cpd = query_enc(self._link, 0.0)
+        self._cached_enc_deg = enc
+        self._cached_enc_count = count
+        self._cached_busy = busy
+        self._cached_cpd = max(cpd, 0.05)
+        return enc, count, busy, self._cached_cpd
+
+    def _publish_viz_from_cache(self) -> None:
         imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
         pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
         with self._tracker_lock:
-            self._tracker.counts_per_degree = cpd
+            self._tracker.counts_per_degree = self._cached_cpd
             sample = self._tracker.update(
-                encoder_deg=enc,
-                encoder_count=count,
+                encoder_deg=self._cached_enc_deg,
+                encoder_count=self._cached_enc_count,
                 imu_yaw_deg=imu_yaw,
                 pan_mech_deg=pan_mech,
                 gyro_dps=gyro,
-                base_busy=self._maneuvering or busy,
+                base_busy=self._maneuvering or self._cached_busy,
             )
         if sample is not None:
             self._publish_pose(sample, imu_online=imu_ok and self._reader is not None)
+
+    def publish_viz_pose(self) -> None:
+        """IMU-only viz refresh — never queries serial (avoids fighting base commands)."""
+        self._publish_viz_from_cache()
 
     def accept_tof_samples(self) -> bool:
         """False while base rotates or briefly after — ToF bearings are invalid then."""
@@ -252,14 +264,7 @@ class ApproachController:
         if time.time() < self._tof_ignore_until:
             return False
 
-        is_busy = False
-        if self._link is not None and self._link.connected:
-            try:
-                st = self._link.query_status()
-                if st is not None and st.busy:
-                    is_busy = True
-            except Exception:
-                pass
+        is_busy = self._cached_busy
 
         if is_busy:
             if not self._last_base_busy:
@@ -359,11 +364,11 @@ class ApproachController:
             self._link.write_angles(self.pan_center, self.tilt_center)
 
     def _query_imu_home(self) -> tuple[float, float, bool, float]:
-        enc, count, busy, cpd = query_enc(self._link, 0.0)
+        enc, count, busy, _cpd = self._fetch_enc()
         imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
         pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
         with self._tracker_lock:
-            self._tracker.counts_per_degree = cpd
+            self._tracker.counts_per_degree = self._cached_cpd
             sample = self._tracker.update(
                 encoder_deg=enc,
                 encoder_count=count,
@@ -378,7 +383,7 @@ class ApproachController:
         return imu_home, enc, busy, gyro
 
     def _refresh_tracker(self) -> tuple[float, float]:
-        enc, count, busy, cpd = query_enc(self._link, 0.0)
+        enc, count, busy, cpd = self._fetch_enc()
         imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
         pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
         with self._tracker_lock:
@@ -417,7 +422,7 @@ class ApproachController:
         return sample.from_home_imu_deg, sample.from_home_enc_deg
 
     def _resync_after_maneuver(self):
-        enc, count, busy, cpd = query_enc(self._link, 0.0)
+        enc, count, busy, cpd = self._fetch_enc()
         imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
         pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
         with self._tracker_lock:
@@ -467,7 +472,8 @@ class ApproachController:
     def _poll_during_spin(self) -> None:
         """Drain serial + push live IMU pose to viz while base rotates."""
         self._drain_serial_events()
-        self.publish_viz_pose()
+        self._fetch_enc()
+        self._publish_viz_from_cache()
 
     def _live_tof_snapshot(self) -> dict:
         if TOF_STATE is None or not self.accept_tof_samples():

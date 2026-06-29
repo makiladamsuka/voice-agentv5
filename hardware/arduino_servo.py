@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from collections import deque
 import os
 import re
+import threading
 import time
 from typing import Optional, Tuple
 
@@ -95,6 +96,7 @@ class ArduinoServoLink:
         self._prox_callback = None  # callable(line: str) for PROX/ZONE events
         self._tof_callback = None   # callable(line: str) for TOF stream lines
         self._rx_lines: deque[str] = deque(maxlen=64)
+        self._io_lock = threading.RLock()
 
     def _route_or_queue_line(self, line: str) -> Optional[str]:
         """Route PROX/ZONE/TOF to callbacks; queue other complete lines for ack readers."""
@@ -119,18 +121,19 @@ class ArduinoServoLink:
         """Non-blocking read: deliver PROX/ZONE/TOF events without flushing servo acks."""
         if self._ser is None:
             return
-        old_timeout = self._ser.timeout
-        try:
-            self._ser.timeout = 0
-            while self._ser.in_waiting:
-                line = self._ser.readline().decode("utf-8", errors="ignore").strip()
-                if not line:
-                    break
-                self._route_or_queue_line(line)
-        except Exception:
-            pass
-        finally:
-            self._ser.timeout = old_timeout
+        with self._io_lock:
+            old_timeout = self._ser.timeout
+            try:
+                self._ser.timeout = 0
+                while self._ser.in_waiting:
+                    line = self._ser.readline().decode("utf-8", errors="ignore").strip()
+                    if not line:
+                        break
+                    self._route_or_queue_line(line)
+            except Exception:
+                pass
+            finally:
+                self._ser.timeout = old_timeout
 
     def firmware_banner(self) -> str:
         return self._boot_banner
@@ -297,30 +300,31 @@ class ArduinoServoLink:
     ) -> bool:
         if not self.connected or self._ser is None:
             return False
-        try:
-            self._drain_rx()
-            if "B" in payload:
-                self.last_base_error = None
-            self._ser.write(payload.encode("ascii"))
-            if not payload.endswith("\n"):
-                self._ser.write(b"\n")
-            self._ser.flush()
-            if wait_ack or wait_servo:
-                if self._read_ack() is None:
-                    return False
-            if wait_base:
-                self._last_base_ack = self._read_base_ack()
-                if self._last_base_ack is None:
-                    return False
-            if drain_after and not (wait_ack or wait_servo or wait_base):
+        with self._io_lock:
+            try:
                 self._drain_rx()
-            return True
-        except Exception as e:
-            if not self._error_logged:
-                print(f"ESP32 serial write failed: {e}")
-                self._error_logged = True
-            self._connected = False
-            return False
+                if "B" in payload:
+                    self.last_base_error = None
+                self._ser.write(payload.encode("ascii"))
+                if not payload.endswith("\n"):
+                    self._ser.write(b"\n")
+                self._ser.flush()
+                if wait_ack or wait_servo:
+                    if self._read_ack() is None:
+                        return False
+                if wait_base:
+                    self._last_base_ack = self._read_base_ack()
+                    if self._last_base_ack is None:
+                        return False
+                if drain_after and not (wait_ack or wait_servo or wait_base):
+                    self._drain_rx()
+                return True
+            except Exception as e:
+                if not self._error_logged:
+                    print(f"ESP32 serial write failed: {e}")
+                    self._error_logged = True
+                self._connected = False
+                return False
 
     def configure_servo_stream(
         self,
@@ -635,20 +639,23 @@ class ArduinoServoLink:
         return st is not None and abs(st.counts_per_degree - BOOT_CPD) > 0.05
 
     def query_status(self) -> Optional[BaseStatus]:
-        if not self.send_line("?", drain_after=False):
+        if not self.connected or self._ser is None:
             return None
-        line = self._read_line_matching(ACK_TIMEOUT_SEC, _BASE_STATUS_RE)
-        if line is None:
-            return None
-        match = _BASE_STATUS_RE.match(line)
-        if not match:
-            return None
-        return BaseStatus(
-            encoder_count=int(match.group(1)),
-            degrees=float(match.group(2)),
-            counts_per_degree=float(match.group(3)),
-            busy=match.group(4) == "1",
-        )
+        with self._io_lock:
+            if not self.send_line("?", drain_after=False):
+                return None
+            line = self._read_line_matching(ACK_TIMEOUT_SEC, _BASE_STATUS_RE)
+            if line is None:
+                return None
+            match = _BASE_STATUS_RE.match(line)
+            if not match:
+                return None
+            return BaseStatus(
+                encoder_count=int(match.group(1)),
+                degrees=float(match.group(2)),
+                counts_per_degree=float(match.group(3)),
+                busy=match.group(4) == "1",
+            )
 
     def run_bench_sweep(self) -> bool:
         ok = self.send_line("S", drain_after=False)

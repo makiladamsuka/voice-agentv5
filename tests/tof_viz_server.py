@@ -367,6 +367,7 @@ class TofState:
     def reset_tracks(self) -> None:
         with self._lock:
             self._tracker.reset()
+            self.last_ts = 0.0
 
     def update_pose(
         self,

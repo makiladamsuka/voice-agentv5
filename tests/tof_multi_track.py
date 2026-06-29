@@ -69,7 +69,10 @@ def _classify_track(
     elif motion in ("drift_in", "drift_out") or vel > 12 or spread > 70:
         kind, conf, reason = "human", 0.75, "shifting / unstable"
     elif spread <= 70 and vel <= 12:
-        kind, conf, reason = "obstacle", min(0.95, 0.6 + age * 0.02), "stable fixed return"
+        if dist < 900:
+            kind, conf, reason = "uncertain", 0.72, "close still return"
+        else:
+            kind, conf, reason = "obstacle", min(0.95, 0.6 + age * 0.02), "stable fixed return"
     else:
         kind, conf, reason = "uncertain", 0.55, "fluctuating"
 

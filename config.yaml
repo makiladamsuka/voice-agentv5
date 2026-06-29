@@ -355,14 +355,19 @@ proximity:
   tof_min_bearing_deg: 3.0
   tof_min_dist_mm: 80
   tof_max_dist_mm: 2000
-  tof_confirm_ticks: 1
+  tof_confirm_ticks: 2
   tof_merge_radius_mm: 350
   tof_aim_tolerance_deg: 5.0
-  tof_bearing_undershoot_deg: 7.0
+  tof_bearing_undershoot_deg: 3.5
+  tof_undershoot_close_mm: 450   # at/below this distance → zero undershoot (aim full bearing)
+  tof_undershoot_far_mm: 1500    # at/above this distance → full undershoot_deg
+  tof_aim_obstacle_close_mm: 900  # still aim at nearby obstacle tracks (still person)
+  tof_bearing_flip_reject_deg: 20.0
   tof_align_cooldown_sec: 0.25
   tof_stale_sec: 0.55
-  tof_spin_settle_sec: 0.2
-  tof_align_blanking_sec: 0.15
+  tof_spin_settle_sec: 0.65
+  tof_gyro_settle_dps: 12.0
+  tof_align_blanking_sec: 0.5
   tof_target_lock_sec: 2.5
   clear_return_enabled: true
   clear_return_sec: 2.5

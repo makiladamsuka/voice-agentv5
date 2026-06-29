@@ -163,6 +163,7 @@ class ApproachController:
         self.pan_center = float(servo_cfg.get("pan_center", 100.0))
         self.tilt_center = float(servo_cfg.get("tilt_center", 110.0))
         self.max_yaw_deg = float(base_cfg.get("max_yaw_deg", 120.0))
+        self.base_sign = float(base_cfg.get("sign", -1.0))
         self.encoder_sign = float(base_cfg.get("encoder_sign", -1.0))
         self.spin_tolerance_deg = float(base_cfg.get("spin_stop_tolerance_deg", 1.5))
         self.spin_timeout_sec = float(base_cfg.get("spin_timeout_sec", 12.0))
@@ -186,15 +187,24 @@ class ApproachController:
         self.tof_min_bearing_deg = float(prox_cfg.get("tof_min_bearing_deg", 3.0))
         self.tof_min_dist_mm = int(prox_cfg.get("tof_min_dist_mm", 80))
         self.tof_max_dist_mm = int(prox_cfg.get("tof_max_dist_mm", 2000))
-        self.tof_confirm_ticks = int(prox_cfg.get("tof_confirm_ticks", 1))
+        self.tof_confirm_ticks = int(prox_cfg.get("tof_confirm_ticks", 2))
         self.tof_aim_tolerance_deg = float(prox_cfg.get("tof_aim_tolerance_deg", 5.0))
         self.tof_bearing_undershoot_deg = float(
-            prox_cfg.get("tof_bearing_undershoot_deg", 7.0)
+            prox_cfg.get("tof_bearing_undershoot_deg", 3.5)
+        )
+        self.tof_undershoot_close_mm = int(prox_cfg.get("tof_undershoot_close_mm", 450))
+        self.tof_undershoot_far_mm = int(prox_cfg.get("tof_undershoot_far_mm", 1500))
+        self.tof_aim_obstacle_close_mm = int(
+            prox_cfg.get("tof_aim_obstacle_close_mm", 900)
+        )
+        self.tof_bearing_flip_reject_deg = float(
+            prox_cfg.get("tof_bearing_flip_reject_deg", 20.0)
         )
         self.tof_align_cooldown_sec = float(prox_cfg.get("tof_align_cooldown_sec", 0.25))
         self.tof_target_lock_sec = float(prox_cfg.get("tof_target_lock_sec", 2.5))
         self.tof_stale_sec = float(prox_cfg.get("tof_stale_sec", 0.55))
-        self.tof_spin_settle_sec = float(prox_cfg.get("tof_spin_settle_sec", 0.2))
+        self.tof_spin_settle_sec = float(prox_cfg.get("tof_spin_settle_sec", 0.65))
+        self.tof_gyro_settle_dps = float(prox_cfg.get("tof_gyro_settle_dps", 12.0))
         self.clear_return_enabled = bool(prox_cfg.get("clear_return_enabled", True))
         self.clear_return_sec = float(prox_cfg.get("clear_return_sec", 2.5))
         self.clear_return_tolerance_deg = float(
@@ -212,6 +222,7 @@ class ApproachController:
         self._locked_z_mm = 0.0
         self._bearing_stable_ticks = 0
         self._last_target_bearing = 0.0
+        self._last_committed_bearing: float | None = None
         self._clear_since: float | None = None
         self._maneuvering = False
         self._tof_ignore_until = 0.0
@@ -263,23 +274,29 @@ class ApproachController:
             return False
         if time.time() < self._tof_ignore_until:
             return False
+        if TOF_STATE is not None and TOF_STATE.base_rotating:
+            return False
 
         is_busy = self._cached_busy
 
         if is_busy:
             if not self._last_base_busy:
-                # Rising edge: base started moving externally
                 if TOF_STATE is not None:
                     TOF_STATE.set_base_rotating(True)
             self._last_base_busy = True
             return False
-        else:
-            if self._last_base_busy:
-                # Falling edge: base stopped moving externally
-                self._last_base_busy = False
-                self._tof_ignore_until = time.time() + self.tof_spin_settle_sec
-                if TOF_STATE is not None:
-                    TOF_STATE.set_base_rotating(False)
+
+        if self._last_base_busy:
+            self._last_base_busy = False
+            self._tof_ignore_until = time.time() + self.tof_spin_settle_sec
+            self._reset_tof_after_motion()
+            if TOF_STATE is not None:
+                TOF_STATE.set_base_rotating(False)
+            return False
+
+        if self._reader is not None:
+            _, gyro, ok = read_imu(self._reader, self._yaw_sign)
+            if ok and gyro > self.tof_gyro_settle_dps:
                 return False
 
         return True
@@ -296,17 +313,32 @@ class ApproachController:
         mm, vel, open_flags = FILTER_BANK.update_all(raw)
         STATE.update_sample(mm, vel, open_flags=open_flags)
 
+    def _reset_tof_after_motion(self) -> None:
+        """Drop stale hits/tracks so post-spin bearings are not body-fixed ghosts."""
+        if TOF_STATE is None:
+            return
+        try:
+            from tof_viz_server import FILTER_BANK
+        except ImportError:
+            FILTER_BANK = None  # type: ignore[misc, assignment]
+        TOF_STATE.reset_tracks()
+        if FILTER_BANK is not None:
+            FILTER_BANK.reset()
+
     def _begin_base_motion(self) -> None:
         self._maneuvering = True
         self._last_base_busy = True
         self._bearing_stable_ticks = 0
         self._last_target_bearing = 0.0
+        self._locked_track_id = None
+        self._lock_track_until = 0.0
         if TOF_STATE is not None:
             TOF_STATE.set_base_rotating(True)
 
     def _end_base_motion(self) -> None:
         self._maneuvering = False
         self._tof_ignore_until = time.time() + self.tof_spin_settle_sec
+        self._bearing_stable_ticks = 0
         self._last_base_busy = False
         if self._link is not None and self._link.connected:
             try:
@@ -315,6 +347,7 @@ class ApproachController:
                     self._last_base_busy = bool(st.busy)
             except Exception:
                 pass
+        self._reset_tof_after_motion()
         if TOF_STATE is not None:
             TOF_STATE.set_base_rotating(False)
 
@@ -489,11 +522,18 @@ class ApproachController:
     ) -> dict | None:
         tracks = snap.get("tracks") or []
         if for_aim:
-            tracks = [t for t in tracks if self._aimable_kind(t.get("kind", ""))]
+            tracks = [
+                t
+                for t in tracks
+                if self._aimable_kind(
+                    t.get("kind", ""), dist_mm=int(t.get("dist_mm", 0))
+                )
+            ]
         if not tracks:
             primary = snap.get("primary_target")
             if for_aim and isinstance(primary, dict):
-                if not self._aimable_kind(primary.get("kind", "")):
+                dist = int(primary.get("dist_mm", 0))
+                if not self._aimable_kind(primary.get("kind", ""), dist_mm=dist):
                     return None
             return primary if isinstance(primary, dict) else None
 
@@ -510,9 +550,12 @@ class ApproachController:
             )
 
         primary = snap.get("primary_target")
+        chosen: dict | None = None
         if isinstance(primary, dict):
-            chosen = primary
-        else:
+            dist = int(primary.get("dist_mm", 0))
+            if not for_aim or self._aimable_kind(primary.get("kind", ""), dist_mm=dist):
+                chosen = primary
+        if chosen is None and tracks:
             chosen = max(
                 tracks,
                 key=lambda t: (
@@ -520,10 +563,15 @@ class ApproachController:
                     float(t.get("confidence", 0)),
                 ),
             )
+        if chosen is None:
+            return None
 
         tid = chosen.get("id")
         if tid is not None:
-            self._locked_track_id = int(tid)
+            new_id = int(tid)
+            if self._locked_track_id != new_id:
+                self._last_committed_bearing = None
+            self._locked_track_id = new_id
             self._locked_x_mm = float(chosen.get("x_mm", 0.0))
             self._locked_z_mm = float(chosen.get("z_mm", 0.0))
             self._lock_track_until = now + self.tof_target_lock_sec
@@ -536,42 +584,66 @@ class ApproachController:
             math.atan2(float(target["x_mm"]), float(target["z_mm"]))
         )
 
-    def _undershoot_bearing(self, bearing_deg: float) -> float:
-        """Rotate less than measured bearing — moving targets won't be overshot."""
-        if abs(bearing_deg) < self.tof_aim_tolerance_deg:
+    def _undershoot_scale(self, dist_mm: int) -> float:
+        """0 at close range (spot-on aim), 1 at far range (full undershoot)."""
+        close = self.tof_undershoot_close_mm
+        far = max(self.tof_undershoot_far_mm, close + 1)
+        if dist_mm <= close:
             return 0.0
-        reduced = abs(bearing_deg) - self.tof_bearing_undershoot_deg
-        if reduced < max(2.0, self.tof_aim_tolerance_deg * 0.5):
-            return 0.0
-        return math.copysign(reduced, bearing_deg)
+        if dist_mm >= far:
+            return 1.0
+        return (dist_mm - close) / (far - close)
 
-    def _aimable_kind(self, kind: str) -> bool:
-        return kind in ("human", "uncertain")
+    def _undershoot_bearing(self, bearing_deg: float, dist_mm: int) -> tuple[float, float]:
+        """Rotate toward bearing; less undershoot when person is close. Returns (spin, undershoot°)."""
+        if abs(bearing_deg) < self.tof_aim_tolerance_deg:
+            return 0.0, 0.0
+        mag = abs(bearing_deg)
+        undershoot = self.tof_bearing_undershoot_deg * self._undershoot_scale(dist_mm)
+        reduced = mag - undershoot
+        if reduced < max(1.5, self.tof_aim_tolerance_deg * 0.35):
+            return 0.0, undershoot
+        return math.copysign(reduced, bearing_deg), undershoot
+
+    def _track_in_range(self, track: dict) -> bool:
+        dist = int(track.get("dist_mm", 0))
+        return self.tof_min_dist_mm <= dist <= self.tof_max_dist_mm
+
+    def _aimable_kind(self, kind: str, *, dist_mm: int = 9999) -> bool:
+        """human/uncertain always; close 'obstacle' is usually a still person."""
+        if kind in ("human", "uncertain"):
+            return True
+        if kind == "obstacle" and dist_mm <= self.tof_aim_obstacle_close_mm:
+            return True
+        return False
 
     def _person_in_scene(self, snap: dict) -> bool:
         if not snap:
             return False
         for track in snap.get("tracks") or []:
-            if not self._aimable_kind(track.get("kind", "")):
-                continue
             dist = int(track.get("dist_mm", 0))
-            if self.tof_min_dist_mm <= dist <= self.tof_max_dist_mm:
+            if not self._track_in_range(track):
+                continue
+            if self._aimable_kind(track.get("kind", ""), dist_mm=dist):
                 return True
         primary = snap.get("primary_target")
-        if isinstance(primary, dict) and self._aimable_kind(primary.get("kind", "")):
+        if isinstance(primary, dict):
             dist = int(primary.get("dist_mm", 0))
-            if self.tof_min_dist_mm <= dist <= self.tof_max_dist_mm:
+            if self._track_in_range(primary) and self._aimable_kind(
+                primary.get("kind", ""), dist_mm=dist
+            ):
                 return True
         return False
 
     def _clip_bearing_step(self, bearing_deg: float, enc_from_home: float) -> float:
-        """Rotate body by bearing_deg (body frame), clipped to ±max_yaw from HOME."""
-        if abs(bearing_deg) < 0.05:
+        """Body-frame bearing → plate command (honors base.sign like BaseController)."""
+        plate_deg = bearing_deg * self.base_sign
+        if abs(plate_deg) < 0.05:
             return 0.0
-        enc_delta = expected_encoder_delta(bearing_deg, self.encoder_sign)
+        enc_delta = expected_encoder_delta(plate_deg, self.encoder_sign)
         projected = enc_from_home + enc_delta
         if abs(projected) <= self.max_yaw_deg:
-            return bearing_deg
+            return plate_deg
         clamped = max(-self.max_yaw_deg, min(self.max_yaw_deg, projected))
         allowed_delta = clamped - enc_from_home
         sign = 1.0 if self.encoder_sign >= 0.0 else -1.0
@@ -621,8 +693,20 @@ class ApproachController:
             return None
 
         bearing_deg = self._target_bearing(target)
+        if (
+            self._last_committed_bearing is not None
+            and bearing_deg * self._last_committed_bearing < 0
+            and min(abs(bearing_deg), abs(self._last_committed_bearing))
+            >= self.tof_bearing_flip_reject_deg
+        ):
+            self._bearing_stable_ticks = 0
+            return None
+
         if abs(bearing_deg - self._last_target_bearing) < 10.0:
-            self._bearing_stable_ticks += 1
+            if self._bearing_stable_ticks > 0 and bearing_deg * self._last_target_bearing < 0:
+                self._bearing_stable_ticks = 0
+            else:
+                self._bearing_stable_ticks += 1
         else:
             self._bearing_stable_ticks = 1
         self._last_target_bearing = bearing_deg
@@ -630,7 +714,7 @@ class ApproachController:
         if self._bearing_stable_ticks < self.tof_confirm_ticks:
             return None
 
-        spin_bearing = self._undershoot_bearing(bearing_deg)
+        spin_bearing, undershoot_deg = self._undershoot_bearing(bearing_deg, dist)
         if abs(spin_bearing) < 0.5:
             return None
         if abs(bearing_deg) < self.tof_min_bearing_deg:
@@ -650,6 +734,8 @@ class ApproachController:
             len(snap.get("tracks") or []),
             bearing_deg,
             step,
+            dist,
+            undershoot_deg,
         )
         self._bearing_stable_ticks = 0
         return step
@@ -665,6 +751,7 @@ class ApproachController:
         if abs(enc_from_home) < self.clear_return_tolerance_deg:
             self._clear_since = None
             self._locked_track_id = None
+            self._last_committed_bearing = None
             return False
 
         if self._clear_since is None:
@@ -677,6 +764,7 @@ class ApproachController:
 
         self._pending_log = ("HOME", enc_from_home)
         self._locked_track_id = None
+        self._last_committed_bearing = None
         return True
 
     def _plan_prox_bearing(self, now: float, enc_from_home: float) -> float | None:
@@ -693,15 +781,16 @@ class ApproachController:
         target = self._pick_target_track(snap, now, for_aim=True) if snap else None
         if target:
             bearing_deg = self._target_bearing(target)
-            spin_bearing = self._undershoot_bearing(bearing_deg)
+            dist = int(target.get("dist_mm", 0))
+            spin_bearing, _ = self._undershoot_bearing(bearing_deg, dist)
             if abs(spin_bearing) < 0.5:
                 return None
             step = self._clip_bearing_step(spin_bearing, enc_from_home)
             self._pending_log = ("PROX+TOF", self._prox_zone, bearing_deg, step)
-        elif self._prox_zone == "L":
+        elif not self.tof_turn_enabled and self._prox_zone == "L":
             step = self._clip_bearing_step(-self.prox_turn_step, enc_from_home)
             self._pending_log = ("PROX", "L", step)
-        elif self._prox_zone == "R":
+        elif not self.tof_turn_enabled and self._prox_zone == "R":
             step = self._clip_bearing_step(self.prox_turn_step, enc_from_home)
             self._pending_log = ("PROX", "R", step)
         else:
@@ -716,6 +805,7 @@ class ApproachController:
     def _execute_bearing_spin(self, bearing_deg: float, now: float) -> None:
         if self._link is None or not self._link.connected:
             return
+        self._last_committed_bearing = self._last_target_bearing
         self._begin_base_motion()
         try:
             self._hold_head_home()
@@ -789,12 +879,16 @@ class ApproachController:
         if bearing is not None:
             log = getattr(self, "_pending_log", None)
             if log and log[0] == "TOF":
-                _, tid, ntracks, bearing_deg, step = log
+                _, tid, ntracks, bearing_deg, step, dist_mm, undershoot_deg = log
+                us_label = (
+                    "spot-on"
+                    if undershoot_deg < 0.05
+                    else f"−{undershoot_deg:.1f}° undershoot"
+                )
                 print(
                     f"[Approach] TOF track {tid}/{ntracks} "
-                    f"bearing {bearing_deg:+.0f}° enc {enc_from_home:+.0f}° "
-                    f"→ spin {step:+.1f}° "
-                    f"(−{self.tof_bearing_undershoot_deg:.0f}° undershoot)"
+                    f"bearing {bearing_deg:+.0f}° dist {dist_mm}mm enc {enc_from_home:+.0f}° "
+                    f"→ spin {step:+.1f}° ({us_label})"
                 )
             self._execute_bearing_spin(bearing, now)
             return

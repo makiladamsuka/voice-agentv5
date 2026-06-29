@@ -1,0 +1,18 @@
+[Unit]
+Description=Voice Agent V5 Robot (hardware + LiveKit voice)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nema
+WorkingDirectory=/home/nema/Documents/voice-agentv5
+EnvironmentFile=/home/nema/Documents/voice-agentv5/.env
+ExecStart=/home/nema/Documents/voice-agentv5/venv/bin/python /home/nema/Documents/voice-agentv5/start_robot.py start
+Restart=on-failure
+RestartSec=15
+# Allow camera, serial, I2C access
+SupplementaryGroups=video dialout gpio i2c
+
+[Install]
+WantedBy=multi-user.target

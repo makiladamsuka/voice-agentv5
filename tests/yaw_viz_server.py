@@ -125,8 +125,8 @@ class YawVizState:
                 "imu_correction_deg": self.imu_correction_deg,
                 "head_pan": self.head_pan,
                 "head_tilt": self.head_tilt,
-                # Viz map rotation uses encoder offset from HOME.
-                "map_yaw_deg": self.from_home_enc_deg,
+                # Viz map rotation uses drift-corrected IMU base yaw (encoder anti-drift when still).
+                "map_yaw_deg": self.from_home_imu_deg,
             }
 
 
@@ -350,7 +350,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <button type="button" data-cmd="pan_right">D →</button>
     <span class="sep"></span>
     <button type="button" data-cmd="center">C center</button>
-    <button type="button" data-cmd="home_lock">H → enc 0</button>
+    <button type="button" data-cmd="home_lock">H → HOME IMU</button>
     <button type="button" data-cmd="zero_home">Z zero here</button>
   </div>
 
@@ -380,9 +380,9 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <p class="help">
     <strong>Browser or terminal:</strong> <code>M</code>/<code>N</code> hold base spin · <code>WASD</code> head ·
-    <code>C</code> center · <code>H</code> drive base to encoder 0° + HOME · <code>Z</code> zero encoder here (no move) ·
+    <code>C</code> center · <code>H</code> PID spin to HOME IMU yaw 0° · <code>Z</code> zero encoder here (no move) ·
     <code>?</code> status · <code>Q</code> quit.
-    Grey cone = startup forward. Robot nose = your forward now.
+    Grey cone = startup forward. Robot nose = IMU heading (encoder anti-drift when still).
   </p>
 
   <script type="module" src="/static/yaw_robot_viz.mjs"></script>

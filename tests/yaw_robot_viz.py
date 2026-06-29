@@ -2,8 +2,8 @@
 """
 Yaw rotation test — keyboard base spin + live 3D viz from HOME.
 
-Locks HOME (forward) once at start. Shows how many degrees the base has turned
-from that pose using encoder ticks and drift-corrected IMU base yaw.
+Locks HOME (forward) once at start. Heading follows IMU; when the base is still
+(no encoder tick change), IMU is snapped to the encoder offset to prevent drift.
 
   cd voice-agentv5/tests
   python yaw_robot_viz.py --port /dev/ttyUSB0
@@ -11,7 +11,7 @@ from that pose using encoder ticks and drift-corrected IMU base yaw.
   M / N     hold = spin base left / right  (same as robottest.py)
   W A S D   head tilt / pan
   C         center head
-  H         spin base to encoder 0° and re-lock HOME
+  H         PID spin base to HOME IMU yaw 0° + re-lock HOME
   Z         zero encoder here (no move) + re-lock HOME
   ?         print status
   Q         quit
@@ -34,7 +34,11 @@ import _bootstrap  # noqa: F401
 
 from arduino_servo import ArduinoServoLink
 from base_motor_utils import apply_base_calibration_to_nano
-from lib.base_home_drive import drive_base_to_encoder_zero, ensure_base_idle
+from lib.base_home_drive import (
+    drive_base_to_encoder_zero,
+    drive_base_to_imu_zero,
+    ensure_base_idle,
+)
 from lib.head_mech import signed_pan_mech_deg
 from lib.yaw_home_tracker import YawHomeTracker
 from robottest import (
@@ -125,6 +129,30 @@ def _query_enc(
     except Exception:
         pass
     return fallback, 0, False, 31.1667
+
+
+def _query_imu_home_pose(
+    tracker: YawHomeTracker,
+    link: ArduinoServoLink,
+    reader,
+    yaw_sign: float,
+    pan: float,
+    servo_cfg: dict,
+) -> tuple[float, float, bool, float]:
+    """IMU base yaw from HOME (no drift snap while homing), enc deg, busy, gyro."""
+    enc, count, busy, _cpd = _query_enc(link, 0.0)
+    imu_yaw, gyro, _ = _read_imu(reader, yaw_sign)
+    pan_mech = signed_pan_mech_deg(pan, servo_cfg)
+    sample = tracker.update(
+        encoder_deg=enc,
+        encoder_count=count,
+        imu_yaw_deg=imu_yaw,
+        pan_mech_deg=pan_mech,
+        gyro_dps=gyro,
+        base_busy=True,
+    )
+    imu_home = sample.from_home_imu_deg if sample is not None else 0.0
+    return imu_home, enc, busy, gyro
 
 
 def _lock_home(
@@ -246,12 +274,31 @@ def _apply_browser_cmd(
         link.write_base_stop()
         time.sleep(0.15)
         ensure_base_idle(link)
-        ok, final_enc = drive_base_to_encoder_zero(
-            link,
-            base_cfg,
-            query_enc=lambda fb: _query_enc(link, fb),
-            log=print,
-        )
+        if imu_reader is not None and tracker.home_locked:
+            ok, final_imu = drive_base_to_imu_zero(
+                link,
+                base_cfg,
+                query_imu_home=lambda: _query_imu_home_pose(
+                    tracker,
+                    link,
+                    imu_reader,
+                    yaw_sign,
+                    pan,
+                    servo_cfg,
+                ),
+                log=print,
+            )
+            fail_val = final_imu
+            fail_unit = "IMU"
+        else:
+            ok, final_enc = drive_base_to_encoder_zero(
+                link,
+                base_cfg,
+                query_enc=lambda fb: _query_enc(link, fb),
+                log=print,
+            )
+            fail_val = final_enc
+            fail_unit = "enc"
         if ok:
             _lock_home(
                 tracker,
@@ -264,7 +311,9 @@ def _apply_browser_cmd(
                 label="HOME",
             )
         else:
-            print(f"[YawViz] HOME not relocked — still {final_enc:+.1f}° (try again)")
+            print(
+                f"[YawViz] HOME not relocked — still {fail_val:+.1f}° {fail_unit} (try again)"
+            )
         return pan, tilt, 0, status, quit_requested
 
     if cmd == "zero_home":
@@ -484,6 +533,7 @@ def run(
     *,
     head_step: float,
     imu_reader,
+    imu_cfg: dict,
     yaw_sign: float,
     servo_cfg: dict,
     base_cfg: dict,
@@ -499,6 +549,8 @@ def run(
     tracker = YawHomeTracker(
         counts_per_degree=float(base_cfg.get("counts_per_degree", 31.1667)),
         encoder_sign=float(base_cfg.get("encoder_sign", -1.0)),
+        still_hold_sec=float(imu_cfg.get("drift_stationary_hold_sec", 0.35)),
+        gyro_max_dps=float(imu_cfg.get("drift_gyro_max_dps", 6.0)),
     )
     enc0, count0, _, cpd0 = _query_enc(link, 0.0)
     tracker.counts_per_degree = max(cpd0, 0.05)
@@ -515,7 +567,7 @@ def run(
 
     print(
         "\n[yaw_robot_viz] Controls: browser (click page + keys) or terminal\n"
-        f"  M/N hold spin   WASD head   C center   H drive enc 0 + HOME   Z zero here   ? status   Q quit\n"
+        f"  M/N hold spin   WASD head   C center   H PID → HOME IMU 0°   Z zero here   ? status   Q quit\n"
     )
 
     running = True
@@ -709,6 +761,8 @@ def main() -> int:
     base_cfg.setdefault("spin_positive_uses_left", bool(base_cfg.get("spin_positive_uses_left", False)))
     base_cfg.setdefault("spin_stall_sec", float(base_cfg.get("spin_stall_sec", 0.35)))
     base_cfg.setdefault("home_timeout_sec", float(base_cfg.get("spin_timeout_sec", 6.0)))
+    base_cfg.setdefault("home_pid_kp", 0.92)
+    base_cfg.setdefault("home_pid_kd", 0.14)
     servo_cfg = cfg.get("servo", {}) or {}
     yaw_sign = float(imu_cfg.get("yaw_sign", -1.0))
     zero_on_start = bool(base_cfg.get("zero_on_start", True)) and not args.no_zero_on_start
@@ -742,6 +796,7 @@ def main() -> int:
             link,
             head_step=args.head_step,
             imu_reader=imu_reader,
+            imu_cfg=imu_cfg,
             yaw_sign=yaw_sign,
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,

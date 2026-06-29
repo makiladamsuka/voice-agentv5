@@ -1,10 +1,9 @@
-"""HOME-relative base yaw: one lock at script start, encoder + IMU side-by-side.
+"""HOME-relative base yaw: IMU-primary heading with encoder anti-drift when still.
 
-Design (differs from HeadYawFusion / post-spin resync):
-  - HOME is captured once when the harness starts (or on Z / H).
-  - Encoder offset from HOME is the viz rotation (hardware ground truth).
-  - IMU base offset = (imu_total - imu_home) - (pan_mech - pan_home).
-  - When still, a slow bias pulls IMU base toward encoder (no startup re-lock).
+  - HOME locked once at start (or on Z / H).
+  - Base rotation from HOME follows IMU (pan-compensated) while moving.
+  - When the base is still (no encoder tick change), IMU base yaw is snapped to
+    the encoder offset so gyro integral cannot drift on a stationary base.
 """
 
 from __future__ import annotations
@@ -47,7 +46,7 @@ class YawHomeSample:
 
 
 class YawHomeTracker:
-    """Track base rotation from a fixed HOME pose."""
+    """Track base rotation from HOME: IMU while moving, encoder locks drift when still."""
 
     def __init__(
         self,
@@ -55,24 +54,17 @@ class YawHomeTracker:
         counts_per_degree: float = 31.1667,
         encoder_sign: float = -1.0,
         still_hold_sec: float = 0.35,
-        enc_stable_deg: float = 0.25,
-        pan_stable_deg: float = 0.25,
         gyro_max_dps: float = 6.0,
-        imu_pull_rate: float = 0.18,
     ) -> None:
         self.counts_per_degree = max(float(counts_per_degree), 0.05)
         sign = float(encoder_sign)
         self.encoder_sign = -1.0 if sign < 0.0 else 1.0
         self.still_hold_sec = still_hold_sec
-        self.enc_stable_deg = enc_stable_deg
-        self.pan_stable_deg = pan_stable_deg
         self.gyro_max_dps = gyro_max_dps
-        self.imu_pull_rate = imu_pull_rate
         self._home: HomeSnapshot | None = None
         self._imu_align = 0.0
         self._still_since: float | None = None
-        self._last_enc: float | None = None
-        self._last_pan: float | None = None
+        self._last_enc_count: int | None = None
 
     @property
     def home_locked(self) -> bool:
@@ -97,8 +89,7 @@ class YawHomeTracker:
         )
         self._imu_align = 0.0
         self._still_since = None
-        self._last_enc = float(encoder_deg)
-        self._last_pan = float(pan_mech_deg)
+        self._last_enc_count = int(encoder_count)
 
     def update(
         self,
@@ -121,19 +112,12 @@ class YawHomeTracker:
         imu_base_raw = _delta(imu_total_delta, pan_delta)
         imu_base = _delta(imu_base_raw, self._imu_align)
 
-        enc_stable = (
-            self._last_enc is None
-            or abs(_delta(encoder_deg, self._last_enc)) <= self.enc_stable_deg
-        )
-        pan_stable = (
-            self._last_pan is None
-            or abs(_delta(pan_mech_deg, self._last_pan)) <= self.pan_stable_deg
-        )
+        count = int(encoder_count)
+        ticks_stable = self._last_enc_count is None or count == self._last_enc_count
         gyro_stable = abs(gyro_dps) <= self.gyro_max_dps
-        self._last_enc = float(encoder_deg)
-        self._last_pan = float(pan_mech_deg)
+        self._last_enc_count = count
 
-        if enc_stable and pan_stable and gyro_stable and not base_busy:
+        if ticks_stable and gyro_stable and not base_busy:
             if self._still_since is None:
                 self._still_since = ts
         else:
@@ -146,24 +130,23 @@ class YawHomeTracker:
 
         disagreement = _delta(enc_from_home, imu_base)
 
-        raw_tick_delta = int(encoder_count) - self._home.encoder_count
-        # Firmware: deg = count / (CPD * encoder_sign). Display ticks with the same
-        # sign as rotation degrees (+deg → +ticks, −deg → −ticks).
+        raw_tick_delta = count - self._home.encoder_count
         tick_delta = int(round(enc_from_home * self.counts_per_degree))
         if abs(enc_from_home) <= 0.35:
             tick_delta = 0
 
         if stationary:
-            self._imu_align = _delta(self._imu_align, disagreement * self.imu_pull_rate)
-            imu_base = _delta(imu_base_raw, self._imu_align)
-            disagreement = _delta(enc_from_home, imu_base)
+            # Base not moving: encoder is truth — snap IMU base yaw to match (no drift).
+            self._imu_align = _delta(imu_base_raw, enc_from_home)
+            imu_base = enc_from_home
+            disagreement = 0.0
 
         return YawHomeSample(
             from_home_enc_deg=enc_from_home,
             from_home_imu_deg=imu_base,
             disagreement_deg=disagreement,
             encoder_deg=float(encoder_deg),
-            encoder_count=int(encoder_count),
+            encoder_count=count,
             encoder_count_delta=tick_delta,
             encoder_count_raw_delta=raw_tick_delta,
             imu_yaw_deg=float(imu_yaw_deg),

@@ -108,10 +108,10 @@ robot.add(body);
 
 // Black line = robot base forward (fixed on body; map rotates with IMU yaw)
 const headingLine = new THREE.Mesh(
-  new THREE.BoxGeometry(0.035, 0.016, ROBOT_RADIUS * 1.05),
+  new THREE.BoxGeometry(0.042, 0.02, ROBOT_RADIUS * 1.15),
   new THREE.MeshBasicMaterial({ color: HEADING_COL })
 );
-headingLine.position.set(0, 0.02, ROBOT_RADIUS * 0.42);
+headingLine.position.set(0, 0.025, ROBOT_RADIUS * 0.45);
 robot.add(headingLine);
 
 // Robot outline ring

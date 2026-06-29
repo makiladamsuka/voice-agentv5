@@ -244,6 +244,7 @@ def _compute_hits(
 def serve_static(handler: BaseHTTPRequestHandler, path: str) -> bool:
     if not path.startswith("/static/"):
         return False
+    path = path.split("?", 1)[0]
     rel = path[len("/static/") :].lstrip("/")
     if not rel or ".." in rel.replace("\\", "/"):
         handler.send_error(403)
@@ -806,7 +807,7 @@ HTML_PAGE = """<!DOCTYPE html>
     }
   }
   </script>
-  <script type="module" src="/static/tof_viz_3d.mjs"></script>
+  <script type="module" src="/static/tof_viz_3d.mjs?v=__MJS_V__"></script>
 
   <script>
     const sensorNames = ["LEFT", "CENTER", "RIGHT"];
@@ -934,6 +935,15 @@ HTML_PAGE = """<!DOCTYPE html>
 """
 
 
+def _html_body() -> bytes:
+    mjs = STATIC_DIR / "tof_viz_3d.mjs"
+    try:
+        v = int(mjs.stat().st_mtime)
+    except OSError:
+        v = 1
+    return HTML_PAGE.replace("__MJS_V__", str(v)).encode("utf-8")
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         pass
@@ -941,10 +951,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if serve_static(self, self.path):
             return
-        if self.path in ("/", "/index.html"):
-            body = HTML_PAGE.encode("utf-8")
+        if self.path.split("?", 1)[0] in ("/", "/index.html"):
+            body = _html_body()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

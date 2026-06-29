@@ -72,6 +72,9 @@ class Blackboard:
     imu_inferred_base_deg: float = 0.0
     body_yaw_deg: float = 0.0
     head_yaw_on_body_deg: float = 0.0
+    from_home_enc_deg: float = 0.0
+    from_home_imu_deg: float = 0.0
+    disagreement_deg: float = 0.0
     imu_yaw_rel_deg: float = 0.0
     head_imu_vs_servo_delta_deg: float = 0.0
     imu_pitch_deg: float = 0.0

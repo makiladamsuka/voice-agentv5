@@ -35,7 +35,7 @@ def _load_viz_config() -> dict[str, Any]:
 def serve_static(handler: BaseHTTPRequestHandler, path: str) -> bool:
     if not path.startswith("/static/"):
         return False
-    rel = path[len("/static/") :].lstrip("/")
+    rel = path[len("/static/") :].lstrip("/").split("?", 1)[0]
     if not rel or ".." in rel.replace("\\", "/"):
         handler.send_error(403)
         return True

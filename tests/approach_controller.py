@@ -19,7 +19,7 @@ from lib.yaw_home_tracker import YawHomeTracker
 from base_spin_motion import expected_encoder_delta, write_base_step_spin
 
 try:
-    from tof_viz_server import STATE as TOF_STATE
+    from core.tof_state import STATE as TOF_STATE
 except ImportError:
     TOF_STATE = None
 
@@ -302,7 +302,7 @@ class ApproachController:
         return True
 
     def handle_tof_line(self, line: str) -> None:
-        from tof_viz_server import FILTER_BANK, STATE, _TOF_RE
+        from core.tof_state import FILTER_BANK, STATE, _TOF_RE
 
         if not self.accept_tof_samples():
             return
@@ -318,7 +318,7 @@ class ApproachController:
         if TOF_STATE is None:
             return
         try:
-            from tof_viz_server import FILTER_BANK
+            from core.tof_state import FILTER_BANK
         except ImportError:
             FILTER_BANK = None  # type: ignore[misc, assignment]
         TOF_STATE.reset_tracks()

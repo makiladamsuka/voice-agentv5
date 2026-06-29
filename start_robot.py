@@ -17,6 +17,10 @@ from core.arm_controller import ArmController
 from core.emotion_engine import EmotionEngine
 from core.eye_renderer import EyeRenderer
 from core.debug_dashboard import DebugDashboard
+from core.tof_state import STATE as TOF_STATE
+from core.tof_stream import TofStreamHandler
+from core.yaw_pose import lock_home_tracker, publish_tracker_pose, query_enc, update_tracker
+from lib.yaw_home_tracker import YawHomeTracker
 from lib.live_tune import load_tune_defaults_from_config, sanitize_config
 from hardware.arduino_servo import ArduinoServoLink
 from base_motor_utils import apply_base_calibration_to_nano
@@ -38,7 +42,6 @@ def _load_yaml(path: Path) -> dict:
 
 
 def _wait_imu_ready(bb: Blackboard, timeout_sec: float = 12.0) -> None:
-    """Block until ImuService finishes startup calibration (or IMU disabled)."""
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         state = bb.read("imu_calibrated")
@@ -48,43 +51,33 @@ def _wait_imu_ready(bb: Blackboard, timeout_sec: float = 12.0) -> None:
     print("[Bootstrap] WARNING: IMU calibration wait timed out.")
 
 
-def _wait_fusion_ready(bb: Blackboard, timeout_sec: float = 3.0) -> None:
-    """Block until ImuService finishes startup fusion resync."""
-    deadline = time.time() + timeout_sec
-    while time.time() < deadline:
-        if not bb.read("base_fusion_resync_request")["base_fusion_resync_request"]:
-            return
-        time.sleep(0.05)
-    print("[Bootstrap] WARNING: fusion resync wait timed out.")
-
-
 def _print_yaw_decomposition(bb: Blackboard) -> None:
-    """Log the three-layer yaw model locked at startup."""
+    """Log YawHomeTracker pose locked at startup."""
     state = bb.read(
         "base_encoder_deg",
         "body_yaw_deg",
         "head_yaw_on_body_deg",
-        "imu_yaw_rel_deg",
+        "from_home_enc_deg",
+        "from_home_imu_deg",
+        "disagreement_deg",
         "base_world_yaw_deg",
-        "head_imu_vs_servo_delta_deg",
         "imu_available",
     )
-    print("[Bootstrap] Yaw model (true north = 0° fixed at startup):")
-    print(f"  encoder raw     {state['base_encoder_deg']:+.1f}°")
+    print("[Bootstrap] Yaw model (HOME = 0° at startup forward):")
+    print(f"  encoder raw       {state['base_encoder_deg']:+.1f}°")
     if state["imu_available"]:
         print(
-            f"  body (encoder)  {state['body_yaw_deg']:+.1f}°"
-            f"  |  head-on-body (IMU) {state['head_yaw_on_body_deg']:+.1f}°"
+            f"  FROM HOME enc     {state['from_home_enc_deg']:+.1f}°"
+            f"  |  imu {state['from_home_imu_deg']:+.1f}°"
+            f"  Δ {state['disagreement_deg']:+.1f}°"
         )
         print(
-            f"  world aim       {state['base_world_yaw_deg']:+.1f}°"
-            f"  |  imu rel {state['imu_yaw_rel_deg']:+.1f}°"
+            f"  body (imu)        {state['body_yaw_deg']:+.1f}°"
+            f"  |  pan-on-body {state['head_yaw_on_body_deg']:+.1f}°"
         )
-        delta = state["head_imu_vs_servo_delta_deg"]
-        if abs(delta) > 3.0:
-            print(f"  WARNING: head IMU vs servo pan Δ {delta:+.1f}°")
+        print(f"  world aim         {state['base_world_yaw_deg']:+.1f}°")
     else:
-        print("  IMU off — world yaw = encoder + servo pan (from ServoMixer)")
+        print("  IMU off — world yaw = encoder + servo pan")
 
 
 def _print_debug_viz_banner(debug_viz_cfg: dict) -> None:
@@ -99,40 +92,23 @@ def _print_debug_viz_banner(debug_viz_cfg: dict) -> None:
     if manual:
         print("[Bootstrap]   Manual WASD/Z/R enabled in browser when page is focused.")
     else:
-        print("[Bootstrap]   3D yaw lines: orange=body, pink=head-on-body, yellow=world aim.")
+        print("[Bootstrap]   ToF proximity map + camera stream on debug port.")
 
 
-def _lock_yaw_reference(bb: Blackboard, link, base_cfg: dict) -> None:
-    """Zero encoder + IMU yaw reference at current forward pose."""
-    if link is not None and link.connected:
-        if base_cfg.get("zero_on_start", False):
-            link.zero_base()
-            print("[Bootstrap] Base encoder zeroed at startup forward pose.")
-            time.sleep(0.2)
-        try:
-            st = link.query_status()
-            if st is not None:
-                bb.write(
-                    base_encoder_deg=st.degrees,
-                    base_encoder_synced=True,
-                    base_motion_busy=st.busy,
-                )
-                print(
-                    f"[Bootstrap] Encoder synced: {st.degrees:+.1f}° "
-                    f"(CPD={st.counts_per_degree:.2f}, counts={st.encoder_count})"
-                )
-                if abs(st.counts_per_degree - 1.0) < 0.1:
-                    print(
-                        "[Bootstrap] WARNING: firmware CPD≈1 — base cal (C/E) may not be applied. "
-                        "Moves will not stop correctly."
-                    )
-        except Exception as exc:
-            print(f"[Bootstrap] WARNING: encoder sync failed: {exc}")
-
-    bb.write(base_watchdog_reset=True)
-    time.sleep(0.15)
-    bb.write(yaw_reference_locked=True)
-    print("[Bootstrap] Yaw reference locked (world yaw = 0 at startup pose).")
+def _check_tof_firmware(link) -> None:
+    if link is None or not link.connected:
+        return
+    try:
+        banner = link.firmware_banner() or ""
+    except Exception:
+        banner = ""
+    if banner:
+        print(f"[Bootstrap] Firmware: {banner.strip().split(chr(10))[-1]}")
+    if "tof_stream" not in banner and "v16" not in banner:
+        print(
+            "[Bootstrap] WARNING: expected v16_tof_stream firmware for ToF dashboard map. "
+            "Reflash: ./firmware/flash.sh prod"
+        )
 
 
 def _bootstrap_home_arms(
@@ -275,7 +251,9 @@ def main():
     base_cfg = cfg.get("base", {}) or {}
     arms_cfg = cfg.get("arms", {}) or {}
     imu_cfg = cfg.get("imu", {}) or {}
+    prox_cfg = cfg.get("proximity", {}) or {}
     debug_viz_cfg = cfg.get("debug_viz", {}) or {}
+    base_yaw_sign = float(debug_viz_cfg.get("base_yaw_sign", -1.0))
     port = servo_cfg.get("port") or ""
     baud = int(servo_cfg.get("baud", 115200))
 
@@ -320,6 +298,7 @@ def main():
         link = None
 
     if link is not None and link.connected:
+        _check_tof_firmware(link)
         _bootstrap_home_arms(link, bb, arms_cfg, servo_cfg)
 
     base_gate = BaseMotionGate(backoff_sec=float(base_cfg.get("error_backoff_sec", 45.0)))
@@ -337,21 +316,65 @@ def main():
     else:
         _wait_imu_ready(bb, timeout_sec=2.0)
 
-    _lock_yaw_reference(bb, link, base_cfg)
-    if imu_cfg.get("enabled", False):
-        bb.write(base_fusion_resync_request=True)
-        _wait_fusion_ready(bb)
+    tracker = YawHomeTracker(
+        counts_per_degree=float(base_cfg.get("counts_per_degree", 31.1667)),
+        encoder_sign=float(base_cfg.get("encoder_sign", -1.0)),
+        still_hold_sec=float(imu_cfg.get("drift_stationary_hold_sec", 0.35)),
+        gyro_max_dps=float(imu_cfg.get("drift_gyro_max_dps", 6.0)),
+        snap_max_disagreement_deg=float(
+            imu_cfg.get("drift_snap_max_disagreement_deg", 5.0)
+        ),
+    )
+    tof_handler = TofStreamHandler(
+        TOF_STATE,
+        bb,
+        spin_settle_sec=float(prox_cfg.get("tof_spin_settle_sec", 0.65)),
+        gyro_settle_dps=float(prox_cfg.get("tof_gyro_settle_dps", 8.0)),
+    )
+
+    if link is not None and link.connected:
+        TOF_STATE.set_connected(link._port_name or port or "serial")
+        TOF_STATE.update_pose(base_yaw_sign=base_yaw_sign)
+        # Reset IMU yaw integral before locking HOME (matches old fusion resync timing).
+        bb.write(base_watchdog_reset=True)
+        time.sleep(0.2)
+        lock_home_tracker(
+            tracker,
+            link,
+            bb,
+            servo_cfg,
+            zero_encoder=bool(base_cfg.get("zero_on_start", False)),
+        )
+        _, _, _, cpd0 = query_enc(link, 0.0)
+        tracker.counts_per_degree = max(cpd0, 0.05)
+        pan = float(bb.read("servo_pan")["servo_pan"])
+        enc, count, _, cpd = query_enc(link, float(bb.read("base_encoder_deg")["base_encoder_deg"]))
+        sample = update_tracker(
+            tracker,
+            bb,
+            encoder_deg=enc,
+            encoder_count=count,
+            counts_per_degree=cpd,
+            pan=pan,
+            servo_cfg=servo_cfg,
+            base_busy=False,
+        )
+        if sample is not None:
+            imu_ok = bool(bb.read("imu_available")["imu_available"])
+            publish_tracker_pose(
+                bb,
+                TOF_STATE,
+                sample,
+                imu_online=imu_ok,
+                base_yaw_sign=base_yaw_sign,
+                max_yaw_deg=float(base_cfg.get("max_yaw_deg", 120.0)),
+            )
         if bb.read("imu_available")["imu_available"]:
             _print_yaw_decomposition(bb)
         else:
             print("[Bootstrap] IMU unavailable — world yaw falls back to encoder + servo pan.")
     else:
-        enc = bb.read("base_encoder_deg")["base_encoder_deg"]
-        bb.write(
-            body_yaw_deg=enc,
-            head_yaw_on_body_deg=0.0,
-            base_world_yaw_deg=enc,
-        )
+        bb.write(yaw_reference_locked=True)
 
     _print_debug_viz_banner(debug_viz_cfg)
 
@@ -364,6 +387,16 @@ def main():
                 "Flash firmware/head_servo_hands/ for arm gestures."
             )
 
+    if link is not None and link.connected:
+        link._tof_callback = tof_handler.handle_tof_line
+
+        def _serial_pump() -> None:
+            while bb.read("running")["running"]:
+                link._poll_prox_lines()
+                time.sleep(0.008)
+
+        threading.Thread(target=_serial_pump, name="SerialPump", daemon=True).start()
+
     # ── Phase 2: remaining services ───────────────────────────────────────────
     threads = [
         threading.Thread(target=FaceTracker(bb).run, daemon=True, name="FaceTracker"),
@@ -374,7 +407,15 @@ def main():
             name="BaseController",
         ),
         threading.Thread(
-            target=ServoMixer(bb, link, gate=base_gate).run,
+            target=ServoMixer(
+                bb,
+                link,
+                gate=base_gate,
+                tracker=tracker,
+                tof_state=TOF_STATE,
+                tof_handler=tof_handler,
+                base_yaw_sign=base_yaw_sign,
+            ).run,
             daemon=True,
             name="ServoMixer",
         ),
@@ -389,7 +430,7 @@ def main():
     if debug_viz_cfg.get("enabled", True):
         threads.append(
             threading.Thread(
-                target=DebugDashboard(
+                target=                DebugDashboard(
                     bb,
                     host=str(debug_viz_cfg.get("host", "0.0.0.0")),
                     port=int(debug_viz_cfg.get("port", 8082)),
@@ -397,6 +438,7 @@ def main():
                     debug_viz_cfg=debug_viz_cfg,
                     base_cfg=base_cfg,
                     config_path=DEFAULT_CONFIG_PATH,
+                    tof_state=TOF_STATE,
                 ).run,
                 daemon=True,
                 name="DebugDashboard",

@@ -34,6 +34,7 @@ debug_viz:
   port: 8082
   manual_control_enabled: false  # true = browser WASD/Z/R work alongside face tracking
   head_step_deg: 5.0
+  map_poll_ms: 30
   base_yaw_sign: -1.0         # flip 3D base rotation in world frame
   pan_yaw_sign: -1.0          # 3D neck pan; flip if viz pan left/right is mirrored
   tilt_sign: 1.0              # flip head tilt (W/S); flip to -1.0 if viz tilts opposite

@@ -54,7 +54,7 @@ def _load_yaml(path: Path) -> dict:
 
 def handle_tof_line(line: str) -> None:
     """Legacy entry — prefer ApproachController.handle_tof_line."""
-    from tof_viz_server import FILTER_BANK, STATE, _TOF_RE
+    from core.tof_state import FILTER_BANK, STATE, _TOF_RE
 
     m = _TOF_RE.search(line)
     if not m:

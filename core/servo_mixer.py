@@ -10,6 +10,7 @@ This is the hardware boundary — all other modules work with BB fields only.
 from __future__ import annotations
 
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -20,6 +21,8 @@ except ImportError:
     yaml = None
 
 from core.blackboard import Blackboard
+from core.tof_stream import TofStreamHandler
+from core.yaw_pose import publish_tracker_pose, resnap_tracker_after_spin, update_tracker
 from lib.head_mech import signed_pan_mech_deg
 from base_safety import BaseMotionGate, BaseMoveWatchdog, BaseSafetyConfig
 from lib.elastic_head_motion import smooth_toward
@@ -53,9 +56,18 @@ class ServoMixer:
         link,
         config_path: Path = DEFAULT_CONFIG_PATH,
         gate: BaseMotionGate | None = None,
+        *,
+        tracker=None,
+        tof_state=None,
+        tof_handler: TofStreamHandler | None = None,
+        base_yaw_sign: float = -1.0,
     ) -> None:
         self.bb = bb
         self._link = link
+        self._tracker = tracker
+        self._tof_state = tof_state
+        self._tof_handler = tof_handler
+        self._base_yaw_sign = float(base_yaw_sign)
         cfg = _load_yaml(config_path)
         s = _cfg(cfg, "servo", default={}) or {}
         b = _cfg(cfg, "base", default={}) or {}
@@ -100,9 +112,14 @@ class ServoMixer:
         self._last_send_ts = 0.0
         self._last_busy_check_ts = 0.0
         self._encoder_deg = 0.0
+        self._encoder_count = 0
+        self._counts_per_degree = 31.1667
         self._last_encoder_poll_ts = 0.0
         self._encoder_poll_hz = 2.0
         self._last_debug_cmd_seq = 0
+        self._viz_pose_hz = 40.0
+
+        self.max_yaw_deg = float(b.get("max_yaw_deg", 120.0))
 
         prox = _cfg(cfg, "proximity", default={}) or {}
         self._prox_swap_lr = bool(prox.get("swap_left_right", False))
@@ -147,15 +164,48 @@ class ServoMixer:
     def _pan_mech(self, pan_cmd: float) -> float:
         return signed_pan_mech_deg(pan_cmd, self._servo_cfg)
 
-    def _publish_encoder(self, enc: float, pan: float, busy: bool, *, synced: bool = True) -> None:
+    def _publish_encoder(
+        self,
+        enc: float,
+        pan: float,
+        busy: bool,
+        *,
+        synced: bool = True,
+        encoder_count: int | None = None,
+        counts_per_degree: float | None = None,
+    ) -> None:
         self._encoder_deg = enc
+        if encoder_count is not None:
+            self._encoder_count = encoder_count
+        if counts_per_degree is not None:
+            self._counts_per_degree = max(counts_per_degree, 0.05)
         writes: dict = {
             "base_motion_busy": busy,
             "base_encoder_deg": enc,
             "base_encoder_synced": synced,
         }
-        # When IMU fusion is active, ImuService owns decomposed world yaw.
-        if not self.bb.read("imu_available")["imu_available"]:
+        if self._tracker is not None and self._tracker.home_locked:
+            sample = update_tracker(
+                self._tracker,
+                self.bb,
+                encoder_deg=enc,
+                encoder_count=self._encoder_count,
+                counts_per_degree=self._counts_per_degree,
+                pan=pan,
+                servo_cfg=self._servo_cfg,
+                base_busy=busy,
+            )
+            if sample is not None:
+                imu_ok = bool(self.bb.read("imu_available")["imu_available"])
+                publish_tracker_pose(
+                    self.bb,
+                    self._tof_state,
+                    sample,
+                    imu_online=imu_ok,
+                    base_yaw_sign=self._base_yaw_sign,
+                    max_yaw_deg=self.max_yaw_deg,
+                )
+        elif not self.bb.read("imu_available")["imu_available"]:
             writes["base_world_yaw_deg"] = self._world_yaw(enc, pan)
             writes["body_yaw_deg"] = enc
             writes["head_yaw_on_body_deg"] = self._pan_mech(pan)
@@ -169,7 +219,13 @@ class ServoMixer:
             st = self._link.query_status()
             if st is None:
                 return False
-            self._publish_encoder(st.degrees, pan, st.busy)
+            self._publish_encoder(
+                st.degrees,
+                pan,
+                st.busy,
+                encoder_count=int(st.encoder_count),
+                counts_per_degree=float(st.counts_per_degree),
+            )
             return True
         except Exception:
             return False
@@ -227,10 +283,40 @@ class ServoMixer:
                 time.sleep(0.15)
                 pan = self._quantize(self.bb.read("servo_pan")["servo_pan"])
                 self._sync_encoder(pan)
-            self.bb.write(base_fusion_resync_request=True, debug_control_cmd="")
+                if self._tracker is not None and self._tracker.home_locked:
+                    from core.yaw_pose import lock_home_tracker
+
+                    lock_home_tracker(
+                        self._tracker,
+                        self._link,
+                        self.bb,
+                        self._servo_cfg,
+                        zero_encoder=False,
+                    )
+            self.bb.write(debug_control_cmd="")
             return True
         if cmd == "fusion_reset":
-            self.bb.write(base_fusion_resync_request=True, debug_control_cmd="")
+            if self._tracker is not None and self._tracker.home_locked:
+                pan = self._quantize(self.bb.read("servo_pan")["servo_pan"])
+                sample = resnap_tracker_after_spin(
+                    self._tracker,
+                    self.bb,
+                    encoder_deg=self._encoder_deg,
+                    encoder_count=self._encoder_count,
+                    pan=pan,
+                    servo_cfg=self._servo_cfg,
+                )
+                if sample is not None:
+                    imu_ok = bool(self.bb.read("imu_available")["imu_available"])
+                    publish_tracker_pose(
+                        self.bb,
+                        self._tof_state,
+                        sample,
+                        imu_online=imu_ok,
+                        base_yaw_sign=self._base_yaw_sign,
+                        max_yaw_deg=self.max_yaw_deg,
+                    )
+            self.bb.write(debug_control_cmd="")
             return True
         return False
 
@@ -254,13 +340,41 @@ class ServoMixer:
         if self._link is not None:
             self._link._prox_callback = self._handle_prox_line
 
+        if self._tracker is not None:
+            threading.Thread(
+                target=self._viz_pose_loop,
+                daemon=True,
+                name="VizPose",
+            ).start()
+
         while self.bb.read("running")["running"]:
             now = time.time()
-            if self._link is not None:
-                self._link._poll_prox_lines()
             if self._handle_debug_commands(now):
                 time.sleep(loop_delay)
                 continue
+
+            if self.bb.read("imu_drift_reset_request")["imu_drift_reset_request"]:
+                if self._tracker is not None and self._tracker.home_locked:
+                    pan = self._quantize(self.bb.read("servo_pan")["servo_pan"])
+                    sample = resnap_tracker_after_spin(
+                        self._tracker,
+                        self.bb,
+                        encoder_deg=self._encoder_deg,
+                        encoder_count=self._encoder_count,
+                        pan=pan,
+                        servo_cfg=self._servo_cfg,
+                    )
+                    if sample is not None:
+                        imu_ok = bool(self.bb.read("imu_available")["imu_available"])
+                        publish_tracker_pose(
+                            self.bb,
+                            self._tof_state,
+                            sample,
+                            imu_online=imu_ok,
+                            base_yaw_sign=self._base_yaw_sign,
+                            max_yaw_deg=self.max_yaw_deg,
+                        )
+                self.bb.write(imu_drift_reset_request=False)
 
             state = self.bb.read(
                 "servo_pan", "servo_tilt",
@@ -308,6 +422,21 @@ class ServoMixer:
             time.sleep(loop_delay)
 
         print("[ServoMixer] Stopped.")
+
+    def _viz_pose_loop(self) -> None:
+        """IMU-only pose refresh during base spins (no extra serial queries)."""
+        delay = 1.0 / max(1.0, self._viz_pose_hz)
+        while self.bb.read("running")["running"]:
+            if self.bb.read("base_motion_busy")["base_motion_busy"]:
+                pan = self._quantize(self.bb.read("servo_pan")["servo_pan"])
+                self._publish_encoder(
+                    self._encoder_deg,
+                    pan,
+                    True,
+                    encoder_count=self._encoder_count,
+                    counts_per_degree=self._counts_per_degree,
+                )
+            time.sleep(delay)
 
     # ── Proximity event routing ────────────────────────────────────────────
 
@@ -437,6 +566,8 @@ class ServoMixer:
                 )
             self._send_angles(pan, tilt)
             self._link.mute_tof()
+            if self._tof_handler is not None:
+                self._tof_handler.on_spin_start()
             self.bb.write(base_motion_busy=True)
             from base_spin_motion import write_base_step_spin
 
@@ -458,7 +589,32 @@ class ServoMixer:
             pan = self._quantize(self.bb.read("servo_pan")["servo_pan"])
             st = self._link.query_status()
             if st is not None:
-                self._publish_encoder(st.degrees, pan, False)
+                if self._tracker is not None and self._tracker.home_locked:
+                    sample = resnap_tracker_after_spin(
+                        self._tracker,
+                        self.bb,
+                        encoder_deg=float(st.degrees),
+                        encoder_count=int(st.encoder_count),
+                        pan=pan,
+                        servo_cfg=self._servo_cfg,
+                    )
+                    if sample is not None:
+                        imu_ok = bool(self.bb.read("imu_available")["imu_available"])
+                        publish_tracker_pose(
+                            self.bb,
+                            self._tof_state,
+                            sample,
+                            imu_online=imu_ok,
+                            base_yaw_sign=self._base_yaw_sign,
+                            max_yaw_deg=self.max_yaw_deg,
+                        )
+                self._publish_encoder(
+                    st.degrees,
+                    pan,
+                    False,
+                    encoder_count=int(st.encoder_count),
+                    counts_per_degree=float(st.counts_per_degree),
+                )
                 self._last_busy_check_ts = now
                 tag = "OK" if ok else "FAIL"
                 print(
@@ -466,12 +622,13 @@ class ServoMixer:
                     f"{tag} moved={moved_deg:+.1f}° enc={st.degrees:+.1f}° ({stop_reason})"
                 )
                 self.bb.write(
-                    base_fusion_resync_request=True,
                     base_last_spin_moved_deg=moved_deg,
                     base_last_spin_reason=stop_reason,
                 )
             else:
                 self.bb.write(base_motion_busy=False)
+            if self._tof_handler is not None:
+                self._tof_handler.on_spin_end()
             if not ok and abs(moved_deg) < max(0.5, abs(step) * 0.2):
                 self._gate.record_fault(
                     f"spin {stop_reason} moved {moved_deg:+.1f}° vs cmd {step:+.1f}° ({source})",
@@ -496,7 +653,13 @@ class ServoMixer:
                     return
             st = self._link.query_status()
             if st is not None:
-                self._publish_encoder(st.degrees, pan, st.busy)
+                self._publish_encoder(
+                    st.degrees,
+                    pan,
+                    st.busy,
+                    encoder_count=int(st.encoder_count),
+                    counts_per_degree=float(st.counts_per_degree),
+                )
                 if self._watchdog is not None and self._watchdog.active and not st.busy:
                     self._watchdog.finish_move()
             else:

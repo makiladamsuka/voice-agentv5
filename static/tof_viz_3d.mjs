@@ -3,6 +3,22 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const view = document.getElementById('view3d');
 const vizLoading = document.getElementById('viz-loading');
+
+function hideVizLoading() {
+  if (vizLoading) vizLoading.style.display = 'none';
+}
+
+function showVizError(msg) {
+  if (!vizLoading) return;
+  vizLoading.style.display = 'flex';
+  vizLoading.style.color = '#fca5a5';
+  vizLoading.textContent = msg;
+}
+
+if (!view) {
+  showVizError('3D view container missing');
+  window.updateScene3d = () => {};
+} else {
 const hudLeft = document.getElementById('hud-left');
 const hudRight = document.getElementById('hud-right');
 const hudOrient = document.getElementById('hud-orient');
@@ -32,8 +48,10 @@ camera.lookAt(0, 0, 0.55);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.domElement.style.position = 'relative';
+renderer.domElement.style.zIndex = '1';
 view.appendChild(renderer.domElement);
-if (vizLoading) vizLoading.style.display = 'none';
+hideVizLoading();
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0, 0.55);
@@ -325,9 +343,13 @@ function makeLabelSprite(text, hexCol) {
   const ctx = c.getContext('2d');
   ctx.fillStyle = 'rgba(0,0,0,0.6)';
   const pad = 10;
-  ctx.beginPath();
-  ctx.roundRect(pad, 14, 300, 52, 8);
-  ctx.fill();
+  if (typeof ctx.roundRect === 'function') {
+    ctx.beginPath();
+    ctx.roundRect(pad, 14, 300, 52, 8);
+    ctx.fill();
+  } else {
+    ctx.fillRect(pad, 14, 300, 52);
+  }
   ctx.fillStyle = hexCol;
   ctx.font = 'bold 30px system-ui, sans-serif';
   ctx.textAlign = 'center';
@@ -341,6 +363,8 @@ function makeLabelSprite(text, hexCol) {
 
 // ── Scene update ──
 function updateScene3d(data) {
+  hideVizLoading();
+  try {
   latest3d = data;
   updateRobotPose(data);
   const hits = data.hits || [];
@@ -473,6 +497,9 @@ function updateScene3d(data) {
     readout.className = 'object-readout';
     readout.textContent = 'Clear — no object in sensor field';
   }
+  } catch (err) {
+    console.error('[tof_viz_3d] updateScene3d', err);
+  }
 }
 
 window.updateScene3d = updateScene3d;
@@ -504,3 +531,5 @@ function animate() {
   renderer.render(scene, camera);
 }
 animate();
+
+} // end view init

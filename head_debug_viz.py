@@ -27,7 +27,7 @@ def serve_debug_static(handler: BaseHTTPRequestHandler, path: str) -> bool:
     """Serve files under /static/ (Three.js bundle). Returns True if handled."""
     if not path.startswith("/static/"):
         return False
-    rel = path[len("/static/") :].lstrip("/")
+    rel = path[len("/static/") :].lstrip("/").split("?", 1)[0]
     if not rel or ".." in rel.replace("\\", "/"):
         handler.send_error(403)
         return True

@@ -290,7 +290,7 @@ class TofState:
                     prox_cfg = (yaml.safe_load(f) or {}).get("proximity", {}) or {}
         except Exception:
             pass
-        merge_mm = float(prox_cfg.get("tof_merge_radius_mm", 400.0))
+        merge_mm = float(prox_cfg.get("tof_merge_radius_mm", 800.0))
         self._tracker = MultiTrackTracker(merge_radius_mm=merge_mm)
         self.body_yaw_deg = 0.0
         self.head_yaw_on_body_deg = 0.0

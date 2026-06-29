@@ -103,16 +103,18 @@ def _pick_primary(tracks: list[dict[str, Any]]) -> dict[str, Any] | None:
 class MultiTrackTracker:
     """Per-frame clustering with short-lived track IDs for viz + approach lock."""
 
-    def __init__(self, *, merge_radius_mm: float = 400.0, window: int = 24) -> None:
+    def __init__(self, *, merge_radius_mm: float = 800.0, window: int = 24) -> None:
         self.merge_radius_mm = merge_radius_mm
         self._window = window
         self._histories: dict[int, deque[tuple[int, int, float]]] = {}
         self._next_id = 1
         self._last_positions: dict[int, tuple[float, float]] = {}
+        self._missed_frames: dict[int, int] = {}
 
     def reset(self) -> None:
         self._histories.clear()
         self._last_positions.clear()
+        self._missed_frames.clear()
         self._next_id = 1
 
     def _fresh_id(self) -> int:
@@ -125,7 +127,7 @@ class MultiTrackTracker:
 
     def _assign_id(self, x_mm: float, z_mm: float) -> int:
         best_id: int | None = None
-        match_radius = self.merge_radius_mm * 1.15
+        match_radius = max(self.merge_radius_mm * 1.5, 900.0)
         best_d = match_radius
         for tid, (lx, lz) in self._last_positions.items():
             d = math.hypot(x_mm - lx, z_mm - lz)
@@ -143,6 +145,13 @@ class MultiTrackTracker:
         now: float,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
         if not hits:
+            stale = list(self._last_positions.keys())
+            for tid in stale:
+                self._missed_frames[tid] = self._missed_frames.get(tid, 0) + 1
+                if self._missed_frames[tid] > 8:
+                    self._histories.pop(tid, None)
+                    self._last_positions.pop(tid, None)
+                    self._missed_frames.pop(tid, None)
             return [], [], None
 
         clusters = _cluster_hits(hits, self.merge_radius_mm)
@@ -177,10 +186,21 @@ class MultiTrackTracker:
             }
             tracks.append(_classify_track(track, hist))
 
+        # Handle persistence and missed frames
+        for tid in list(self._last_positions.keys()):
+            if tid not in new_positions:
+                self._missed_frames[tid] = self._missed_frames.get(tid, 0) + 1
+                if self._missed_frames[tid] > 8:  # drop after ~8 frames
+                    self._histories.pop(tid, None)
+                    self._last_positions.pop(tid, None)
+                    self._missed_frames.pop(tid, None)
+                else:
+                    # Keep position alive
+                    new_positions[tid] = self._last_positions[tid]
+            else:
+                self._missed_frames[tid] = 0
+
         self._last_positions = new_positions
-        stale = set(self._histories) - set(new_positions)
-        for tid in stale:
-            self._histories.pop(tid, None)
 
         primary = _pick_primary(tracks)
         classified_hits: list[dict[str, Any]] = []

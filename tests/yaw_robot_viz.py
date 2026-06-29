@@ -56,8 +56,8 @@ from yaw_viz_server import CONTROL, STATE, start_server
 APP_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = APP_DIR / "config.yaml"
 
-POLL_SEC = 0.03
-ENCODER_POLL_SEC = 0.1
+POLL_SEC = 0.02
+ENCODER_POLL_SEC = 0.05
 
 try:
     import yaml
@@ -139,10 +139,15 @@ def _query_imu_home_pose(
     yaw_sign: float,
     pan: float,
     servo_cfg: dict,
+    *,
+    tilt: float = 0.0,
+    port: str = "",
+    spin_label: str = "homing",
+    publish: bool = False,
 ) -> tuple[float, float, bool, float]:
     """IMU base yaw from HOME (no drift snap while homing), enc deg, busy, gyro."""
     enc, count, busy, _cpd = _query_enc(link, 0.0)
-    imu_yaw, gyro, _ = _read_imu(reader, yaw_sign)
+    imu_yaw, gyro, imu_ok = _read_imu(reader, yaw_sign)
     pan_mech = signed_pan_mech_deg(pan, servo_cfg)
     sample = tracker.update(
         encoder_deg=enc,
@@ -153,6 +158,15 @@ def _query_imu_home_pose(
         base_busy=True,
     )
     imu_home = sample.from_home_imu_deg if sample is not None else 0.0
+    if publish:
+        _publish_state(
+            sample,
+            pan=pan,
+            tilt=tilt,
+            spin_label=spin_label,
+            imu_online=imu_ok,
+            port=port,
+        )
     return imu_home, enc, busy, gyro
 
 
@@ -250,6 +264,7 @@ def _apply_browser_cmd(
     servo_cfg: dict,
     base_cfg: dict,
     active_spin: int,
+    port: str = "",
 ) -> tuple[float, float, int, bool, bool]:
     """Returns (pan, tilt, active_spin, request_status, should_quit)."""
     quit_requested = False
@@ -286,6 +301,10 @@ def _apply_browser_cmd(
                     yaw_sign,
                     pan,
                     servo_cfg,
+                    tilt=tilt,
+                    port=port,
+                    spin_label="homing",
+                    publish=True,
                 ),
                 log=print,
             )
@@ -342,6 +361,10 @@ def _apply_browser_cmd(
                 yaw_sign,
                 pan,
                 servo_cfg,
+                tilt=tilt,
+                port=port,
+                spin_label="goto",
+                publish=True,
             ),
             log=print,
         )
@@ -408,6 +431,7 @@ def _apply_terminal_key(
     now: float,
     last_m: float,
     last_n: float,
+    port: str = "",
 ) -> tuple[float, float, int, float, float, bool, bool]:
     """Returns pan, tilt, spin, last_m, last_n, status, quit."""
     status = False
@@ -441,6 +465,7 @@ def _apply_terminal_key(
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
+            port=port,
         )
     elif key_l == "h":
         pan, tilt, active_spin, status, quit_requested = _apply_browser_cmd(
@@ -461,6 +486,7 @@ def _apply_terminal_key(
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
+            port=port,
         )
     elif key_l == "z":
         pan, tilt, active_spin, status, quit_requested = _apply_browser_cmd(
@@ -481,6 +507,7 @@ def _apply_terminal_key(
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
+            port=port,
         )
     elif key_l == "w":
         pan, tilt, _, _, _ = _apply_browser_cmd(
@@ -501,6 +528,7 @@ def _apply_terminal_key(
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
+            port=port,
         )
     elif key_l == "s":
         pan, tilt, _, _, _ = _apply_browser_cmd(
@@ -521,6 +549,7 @@ def _apply_terminal_key(
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
+            port=port,
         )
     elif key_l == "a":
         pan, tilt, _, _, _ = _apply_browser_cmd(
@@ -541,6 +570,7 @@ def _apply_terminal_key(
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
+            port=port,
         )
     elif key_l == "d":
         pan, tilt, _, _, _ = _apply_browser_cmd(
@@ -561,6 +591,7 @@ def _apply_terminal_key(
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
+            port=port,
         )
 
     return pan, tilt, active_spin, last_m, last_n, status, quit_requested
@@ -666,6 +697,7 @@ def run(
                             now=now,
                             last_m=last_m,
                             last_n=last_n,
+                            port=port,
                         )
                     )
                     if want_status:
@@ -727,7 +759,7 @@ def run(
             active_spin = apply_base_spin(link, want, active_spin)
             spin_label = {0: "stop", -1: "left", 1: "right"}.get(active_spin, "?")
 
-            if now - last_enc_poll >= ENCODER_POLL_SEC:
+            if now - last_enc_poll >= ENCODER_POLL_SEC or active_spin != 0 or base_busy:
                 enc_deg, enc_count, base_busy, cpd_live = _query_enc(link, enc_deg)
                 if cpd_live > 0.05:
                     tracker.counts_per_degree = cpd_live
@@ -744,6 +776,27 @@ def run(
                 base_busy=base_busy or active_spin != 0,
                 now=now,
             )
+            if (
+                sample is not None
+                and sample.stationary
+                and active_spin == 0
+                and not base_busy
+                and abs(sample.disagreement_deg) > 0.5
+            ):
+                tracker.force_snap_imu_to_encoder(
+                    encoder_deg=enc_deg,
+                    imu_yaw_deg=imu_yaw,
+                    pan_mech_deg=pan_mech,
+                )
+                sample = tracker.update(
+                    encoder_deg=enc_deg,
+                    encoder_count=enc_count,
+                    imu_yaw_deg=imu_yaw,
+                    pan_mech_deg=pan_mech,
+                    gyro_dps=gyro,
+                    base_busy=False,
+                    now=now,
+                )
             _publish_state(
                 sample,
                 pan=pan,

@@ -125,8 +125,8 @@ class YawVizState:
                 "imu_correction_deg": self.imu_correction_deg,
                 "head_pan": self.head_pan,
                 "head_tilt": self.head_tilt,
-                # Viz map follows encoder (stable after open-loop spins); IMU shown on orange tick.
-                "map_yaw_deg": self.from_home_enc_deg,
+                # Viz map follows IMU base yaw from HOME (encoder used only for drift snap).
+                "map_yaw_deg": self.from_home_imu_deg,
             }
 
 
@@ -419,7 +419,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <strong>Browser or terminal:</strong> <code>M</code>/<code>N</code> hold base spin · <code>WASD</code> head ·
     <code>C</code> center · <code>H</code> spin to HOME IMU yaw 0° · <code>Z</code> zero encoder here (no move) ·
     <code>?</code> status · <code>Q</code> quit.
-    Grey cone = startup forward. Map rotation = encoder; orange tick = IMU base yaw.
+    Grey cone = startup HOME forward. Black strip = base heading; map rotates with IMU yaw from HOME.
   </p>
 
   <script type="module" src="/static/yaw_robot_viz.mjs"></script>
@@ -452,8 +452,8 @@ HTML_PAGE = """<!DOCTYPE html>
         document.getElementById('delta-card').className = 'stat delta' + (d < 3 ? ' ok' : '');
         document.getElementById('v-ticks').textContent = fmtTicks(data.encoder_count_delta);
         document.getElementById('hud-bottom').innerHTML =
-          '<strong>FROM HOME</strong> enc ' + fmtDeg(data.map_yaw_deg) +
-          ' · imu ' + fmtDeg(data.from_home_imu_deg) +
+          '<strong>FROM HOME</strong> imu ' + fmtDeg(data.from_home_imu_deg) +
+          ' · enc ' + fmtDeg(data.from_home_enc_deg) +
           ' · Δ ' + fmtDeg(data.disagreement_deg) +
           ' · ticksΔ ' + fmtTicks(data.encoder_count_delta) +
           (data.stationary ? ' · <span style="color:#4ade80">still</span>' : '');
@@ -464,7 +464,7 @@ HTML_PAGE = """<!DOCTYPE html>
           gotoInput.max = String(Math.round(data.max_yaw_deg));
         }
       } catch (e) { /* retry */ }
-      setTimeout(poll, 80);
+      setTimeout(poll, 30);
     }
     poll();
 

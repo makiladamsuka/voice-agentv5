@@ -219,7 +219,7 @@ class ApproachController:
         self._prox_confidence = 0
         self._prox_approach_ts = 0.0
         self._prox_active = False
-        self.loop_hz = 40.0
+        self.loop_hz = 50.0
 
         self._hold_head_home()
 
@@ -339,17 +339,19 @@ class ApproachController:
     def _query_imu_home(self) -> tuple[float, float, bool, float]:
         enc, count, busy, cpd = query_enc(self._link, 0.0)
         self._tracker.counts_per_degree = cpd
-        imu_yaw, gyro, _ = read_imu(self._reader, self._yaw_sign)
+        imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
         pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
         sample = self._tracker.update(
             encoder_deg=enc,
             encoder_count=count,
-            imu_yaw_deg=imu_yaw,
+            imu_yaw_deg=imu_yaw if imu_ok else 0.0,
             pan_mech_deg=pan_mech,
             gyro_dps=gyro,
             base_busy=True,
         )
         imu_home = sample.from_home_imu_deg if sample is not None else 0.0
+        if sample is not None:
+            self._publish_pose(sample, imu_online=imu_ok and self._reader is not None)
         return imu_home, enc, busy, gyro
 
     def _refresh_tracker(self) -> tuple[float, float]:
@@ -419,7 +421,7 @@ class ApproachController:
             front_offset_deg=sample.from_home_enc_deg,
             from_home_enc_deg=sample.from_home_enc_deg,
             from_home_imu_deg=sample.from_home_imu_deg,
-            map_yaw_deg=sample.from_home_enc_deg,
+            map_yaw_deg=sample.from_home_imu_deg,
             disagreement_deg=sample.disagreement_deg,
             encoder_count_delta=sample.encoder_count_delta,
             imu_online=imu_online,

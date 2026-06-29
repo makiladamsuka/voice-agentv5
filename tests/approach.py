@@ -113,11 +113,12 @@ def run_approach(
         reader = start_imu(imu_cfg)
 
     tracker = YawHomeTracker(
+        counts_per_degree=float(base_cfg.get("counts_per_degree", 31.1667)),
         encoder_sign=float(base_cfg.get("encoder_sign", -1.0)),
-        still_hold_sec=float(imu_cfg.get("drift_stationary_hold_sec", 0.12)),
-        gyro_max_dps=float(imu_cfg.get("stationary_gyro_max_dps", 6.0)),
+        still_hold_sec=float(imu_cfg.get("drift_stationary_hold_sec", 0.35)),
+        gyro_max_dps=float(imu_cfg.get("drift_gyro_max_dps", 6.0)),
         snap_max_disagreement_deg=float(
-            imu_cfg.get("snap_max_disagreement_deg", 5.0)
+            imu_cfg.get("drift_snap_max_disagreement_deg", 5.0)
         ),
     )
 

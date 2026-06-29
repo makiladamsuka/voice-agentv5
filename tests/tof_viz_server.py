@@ -257,7 +257,7 @@ def serve_static(handler: BaseHTTPRequestHandler, path: str) -> bool:
     ctype = _STATIC_MIME.get(fp.suffix.lower(), "application/octet-stream")
     handler.send_response(200)
     handler.send_header("Content-Type", ctype)
-    handler.send_header("Cache-Control", "public, max-age=3600")
+    handler.send_header("Cache-Control", "no-store" if fp.suffix.lower() in (".mjs", ".js") else "public, max-age=3600")
     handler.send_header("Content-Length", str(len(data)))
     handler.end_headers()
     handler.wfile.write(data)
@@ -778,8 +778,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <span><i style="color:#38bdf8;background:#38bdf8"></i>person (moving)</span>
       <span><i style="color:#f97316;background:#f97316"></i>obstacle (static)</span>
       <span><i style="color:#6b7280;background:#6b7280"></i>uncertain</span>
-      <span><i style="color:#38bdf8;background:#38bdf8"></i>cyan nose = encoder forward</span>
-      <span><i style="color:#fb923c;background:#fb923c"></i>orange tick = IMU base yaw</span>
+      <span><i style="color:#111111;background:#111111"></i>black line = base heading (IMU)</span>
       <span><i style="color:#94a3b8;background:#94a3b8"></i>grey cone = HOME forward</span>
       <span style="opacity:0.5">⌖ drag · scroll to zoom</span>
     </div>
@@ -926,7 +925,7 @@ HTML_PAGE = """<!DOCTYPE html>
         const r = await fetch("/api/state");
         render(await r.json());
       } catch (e) { /* retry */ }
-      setTimeout(poll, 120);
+      setTimeout(poll, 30);
     }
     poll();
   </script>

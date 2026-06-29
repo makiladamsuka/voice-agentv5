@@ -27,7 +27,7 @@ from pathlib import Path
 
 import _bootstrap  # noqa: F401
 
-from approach_controller import ApproachController, lock_home, start_imu
+from approach_controller import ApproachController, lock_home, query_enc, start_imu
 from base_motor_utils import apply_base_calibration_to_nano
 from hardware.arduino_servo import ArduinoServoLink
 from lib.yaw_home_tracker import YawHomeTracker
@@ -108,7 +108,7 @@ def run_approach(
     STATE.update_pose(base_yaw_sign=base_yaw_sign)
 
     reader = None
-    yaw_sign = float(imu_cfg.get("yaw_sign", 1.0))
+    yaw_sign = float(imu_cfg.get("yaw_sign", -1.0))
     if not no_imu and imu_cfg.get("enabled", True):
         reader = start_imu(imu_cfg)
 
@@ -132,6 +132,8 @@ def run_approach(
         pan,
         zero_encoder=bool(base_cfg.get("zero_on_start", False)),
     )
+    _, _, _, cpd0 = query_enc(link, 0.0)
+    tracker.counts_per_degree = max(cpd0, 0.05)
 
     controller = ApproachController(
         link,
@@ -161,6 +163,17 @@ def run_approach(
 
     pump_thread = threading.Thread(target=_serial_pump, name="SerialPump", daemon=True)
     pump_thread.start()
+
+    def _pose_publisher() -> None:
+        while running.is_set():
+            try:
+                controller.publish_viz_pose()
+            except Exception:
+                pass
+            time.sleep(0.02)
+
+    pose_thread = threading.Thread(target=_pose_publisher, name="VizPose", daemon=True)
+    pose_thread.start()
 
     viz = start_viz_server(host, viz_port)
     print(f"[Approach] Viz: http://localhost:{viz_port}")

@@ -469,7 +469,7 @@ class TofState:
                 "front_offset_deg": self.front_offset_deg,
                 "from_home_enc_deg": self.from_home_enc_deg,
                 "from_home_imu_deg": self.from_home_imu_deg,
-                "map_yaw_deg": self.map_yaw_deg,
+                "map_yaw_deg": self.from_home_imu_deg,
                 "disagreement_deg": self.disagreement_deg,
                 "encoder_count_delta": self.encoder_count_delta,
                 "imu_online": self.imu_online,

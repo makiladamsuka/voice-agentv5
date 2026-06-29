@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
@@ -220,8 +221,29 @@ class ApproachController:
         self._prox_approach_ts = 0.0
         self._prox_active = False
         self.loop_hz = 50.0
+        self._tracker_lock = threading.Lock()
 
         self._hold_head_home()
+
+    def publish_viz_pose(self) -> None:
+        """High-rate IMU pose for 3D map (same model as yaw_robot_viz)."""
+        if self._link is None or not self._link.connected:
+            return
+        enc, count, busy, cpd = query_enc(self._link, 0.0)
+        imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
+        pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
+        with self._tracker_lock:
+            self._tracker.counts_per_degree = cpd
+            sample = self._tracker.update(
+                encoder_deg=enc,
+                encoder_count=count,
+                imu_yaw_deg=imu_yaw,
+                pan_mech_deg=pan_mech,
+                gyro_dps=gyro,
+                base_busy=self._maneuvering or busy,
+            )
+        if sample is not None:
+            self._publish_pose(sample, imu_online=imu_ok and self._reader is not None)
 
     def accept_tof_samples(self) -> bool:
         """False while base rotates or briefly after — ToF bearings are invalid then."""
@@ -338,17 +360,18 @@ class ApproachController:
 
     def _query_imu_home(self) -> tuple[float, float, bool, float]:
         enc, count, busy, cpd = query_enc(self._link, 0.0)
-        self._tracker.counts_per_degree = cpd
         imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
         pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
-        sample = self._tracker.update(
-            encoder_deg=enc,
-            encoder_count=count,
-            imu_yaw_deg=imu_yaw if imu_ok else 0.0,
-            pan_mech_deg=pan_mech,
-            gyro_dps=gyro,
-            base_busy=True,
-        )
+        with self._tracker_lock:
+            self._tracker.counts_per_degree = cpd
+            sample = self._tracker.update(
+                encoder_deg=enc,
+                encoder_count=count,
+                imu_yaw_deg=imu_yaw,
+                pan_mech_deg=pan_mech,
+                gyro_dps=gyro,
+                base_busy=True,
+            )
         imu_home = sample.from_home_imu_deg if sample is not None else 0.0
         if sample is not None:
             self._publish_pose(sample, imu_online=imu_ok and self._reader is not None)
@@ -356,33 +379,38 @@ class ApproachController:
 
     def _refresh_tracker(self) -> tuple[float, float]:
         enc, count, busy, cpd = query_enc(self._link, 0.0)
-        self._tracker.counts_per_degree = cpd
         imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
         pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
-        sample = self._tracker.update(
-            encoder_deg=enc,
-            encoder_count=count,
-            imu_yaw_deg=imu_yaw if imu_ok else 0.0,
-            pan_mech_deg=pan_mech,
-            gyro_dps=gyro,
-            base_busy=self._maneuvering or busy,
-        )
-        self._last_base_busy = bool(busy)
-        if sample is not None and sample.stationary and not self._maneuvering:
-            if abs(sample.disagreement_deg) > 0.5:
+        with self._tracker_lock:
+            self._tracker.counts_per_degree = cpd
+            sample = self._tracker.update(
+                encoder_deg=enc,
+                encoder_count=count,
+                imu_yaw_deg=imu_yaw,
+                pan_mech_deg=pan_mech,
+                gyro_dps=gyro,
+                base_busy=self._maneuvering or busy,
+            )
+            if (
+                sample is not None
+                and sample.stationary
+                and not self._maneuvering
+                and abs(sample.disagreement_deg) > 0.5
+            ):
                 self._tracker.force_snap_imu_to_encoder(
                     encoder_deg=enc,
-                    imu_yaw_deg=imu_yaw if imu_ok else 0.0,
+                    imu_yaw_deg=imu_yaw,
                     pan_mech_deg=pan_mech,
                 )
                 sample = self._tracker.update(
                     encoder_deg=enc,
                     encoder_count=count,
-                    imu_yaw_deg=imu_yaw if imu_ok else 0.0,
+                    imu_yaw_deg=imu_yaw,
                     pan_mech_deg=pan_mech,
                     gyro_dps=gyro,
                     base_busy=False,
                 )
+        self._last_base_busy = bool(busy)
         if sample is None:
             return 0.0, 0.0
         self._publish_pose(sample, imu_online=imu_ok and self._reader is not None)
@@ -390,22 +418,23 @@ class ApproachController:
 
     def _resync_after_maneuver(self):
         enc, count, busy, cpd = query_enc(self._link, 0.0)
-        self._tracker.counts_per_degree = cpd
         imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
         pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
-        self._tracker.force_snap_imu_to_encoder(
-            encoder_deg=enc,
-            imu_yaw_deg=imu_yaw if imu_ok else 0.0,
-            pan_mech_deg=pan_mech,
-        )
-        sample = self._tracker.update(
-            encoder_deg=enc,
-            encoder_count=count,
-            imu_yaw_deg=imu_yaw if imu_ok else 0.0,
-            pan_mech_deg=pan_mech,
-            gyro_dps=gyro,
-            base_busy=busy,
-        )
+        with self._tracker_lock:
+            self._tracker.counts_per_degree = cpd
+            self._tracker.force_snap_imu_to_encoder(
+                encoder_deg=enc,
+                imu_yaw_deg=imu_yaw,
+                pan_mech_deg=pan_mech,
+            )
+            sample = self._tracker.update(
+                encoder_deg=enc,
+                encoder_count=count,
+                imu_yaw_deg=imu_yaw,
+                pan_mech_deg=pan_mech,
+                gyro_dps=gyro,
+                base_busy=busy,
+            )
         if sample is not None:
             self._publish_pose(sample, imu_online=imu_ok and self._reader is not None)
         return sample
@@ -436,25 +465,9 @@ class ApproachController:
             self._link._poll_prox_lines()
 
     def _poll_during_spin(self) -> None:
-        """Drain serial + push live encoder pose to viz while base rotates."""
+        """Drain serial + push live IMU pose to viz while base rotates."""
         self._drain_serial_events()
-        if self._link is None or not self._link.connected:
-            return
-        enc, count, busy, cpd = query_enc(self._link, 0.0)
-        self._tracker.counts_per_degree = cpd
-        imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
-        pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
-        sample = self._tracker.update(
-            encoder_deg=enc,
-            encoder_count=count,
-            imu_yaw_deg=imu_yaw if imu_ok else 0.0,
-            pan_mech_deg=pan_mech,
-            gyro_dps=gyro,
-            base_busy=True,
-        )
-        self._last_base_busy = bool(busy)
-        if sample is not None:
-            self._publish_pose(sample, imu_online=imu_ok and self._reader is not None)
+        self.publish_viz_pose()
 
     def _live_tof_snapshot(self) -> dict:
         if TOF_STATE is None or not self.accept_tof_samples():
@@ -705,6 +718,7 @@ class ApproachController:
                 bearing_deg,
                 tolerance_deg=self.spin_tolerance_deg,
                 timeout_sec=self.spin_timeout_sec,
+                poll_hz=50.0,
                 positive_uses_left=self.spin_positive_uses_left,
                 encoder_sign=self.encoder_sign,
                 stall_sec=self.spin_stall_sec,

@@ -499,33 +499,53 @@ HTML_PAGE = """<!DOCTYPE html>
       color: var(--muted);
       line-height: 1.5;
     }
-    .view3d-card { margin-bottom: 1rem; }
+    .view3d-card { margin-bottom: 1rem; position: relative; }
     #view3d {
       position: relative;
       width: 100%;
-      height: min(58vh, 520px);
-      min-height: 320px;
-      border-radius: 10px;
+      height: min(65vh, 600px);
+      min-height: 380px;
+      border-radius: 14px;
       overflow: hidden;
-      border: 1px solid #2a2a2a;
-      background: #111111;
+      border: 1px solid rgba(56,189,248,0.15);
+      background: #080a0f;
+      box-shadow: 0 0 40px rgba(56,189,248,0.05), inset 0 0 60px rgba(0,0,0,0.5);
     }
     #view3d canvas { display: block; width: 100% !important; height: 100% !important; }
     #viz-loading {
       position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-      color: var(--muted); font-size: 0.9rem;
+      color: var(--accent); font-size: 0.9rem; letter-spacing: 0.15em; text-transform: uppercase;
     }
+    .hud-overlay {
+      position: absolute; top: 12px; left: 14px; right: 14px;
+      display: flex; justify-content: space-between; align-items: flex-start;
+      pointer-events: none; z-index: 10;
+    }
+    .hud-tag {
+      background: rgba(8,10,15,0.75); backdrop-filter: blur(8px);
+      border: 1px solid rgba(56,189,248,0.12); border-radius: 8px;
+      padding: 6px 12px; font-family: ui-monospace, monospace;
+      font-size: 0.72rem; color: var(--muted); line-height: 1.5;
+    }
+    .hud-tag .val { color: #e2e8f0; font-weight: 600; }
+    .hud-tag .human-val { color: #38bdf8; font-weight: 700; }
+    .hud-tag .obstacle-val { color: #f97316; font-weight: 700; }
     .viz-legend {
-      display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.75rem; font-size: 0.78rem; color: var(--muted);
+      display: flex; flex-wrap: wrap; gap: 1.2rem; margin-top: 0.75rem;
+      font-size: 0.78rem; color: var(--muted); align-items: center;
     }
-    .viz-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .viz-legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
     .viz-legend i {
       display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+      box-shadow: 0 0 6px currentColor;
     }
     .object-readout {
       margin-top: 0.65rem; font-size: 0.85rem; color: var(--text);
-      font-family: ui-monospace, monospace;
+      font-family: ui-monospace, monospace; letter-spacing: 0.02em;
     }
+    .readout-human { color: #38bdf8; }
+    .readout-obstacle { color: #f97316; }
+    .readout-uncertain { color: #6b7280; }
   </style>
 </head>
 <body>
@@ -538,13 +558,19 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <div class="card view3d-card">
     <h2>Proximity map</h2>
-    <div id="view3d"><div id="viz-loading">Loading proximity map…</div></div>
+    <div id="view3d">
+      <div id="viz-loading">Initializing proximity scanner…</div>
+      <div class="hud-overlay">
+        <div class="hud-tag" id="hud-left">SCAN <span class="val">ACTIVE</span></div>
+        <div class="hud-tag" id="hud-right">OBJECTS <span class="val">0</span></div>
+      </div>
+    </div>
     <div class="viz-legend">
-      <span><i style="background:#5b9bd5"></i>person (moving)</span>
-      <span><i style="background:#9ca3af"></i>obstacle (still)</span>
-      <span><i style="background:#6b7280"></i>uncertain</span>
-      <span><i style="background:#e5e7eb;border:1px solid #555"></i>robot</span>
-      <span>top-down · drag to pan · scroll to zoom</span>
+      <span><i style="color:#38bdf8;background:#38bdf8"></i>person (moving)</span>
+      <span><i style="color:#f97316;background:#f97316"></i>obstacle (static)</span>
+      <span><i style="color:#6b7280;background:#6b7280"></i>uncertain</span>
+      <span><i style="color:#e2e8f0;background:#e2e8f0"></i>robot</span>
+      <span style="opacity:0.5">⌖ drag · scroll to zoom</span>
     </div>
     <div class="object-readout" id="object-readout">Scanning…</div>
   </div>
@@ -570,316 +596,7 @@ HTML_PAGE = """<!DOCTYPE html>
     }
   }
   </script>
-  <script type="module">
-  import * as THREE from 'three';
-  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-
-  const view = document.getElementById('view3d');
-  const vizLoading = document.getElementById('viz-loading');
-  const KIND_COL = { human: 0x5b9bd5, obstacle: 0x9ca3af, uncertain: 0x6b7280 };
-  const ZONE_ANGLE = { L: -45, C: 0, R: 45 };
-  const deg = (d) => d * Math.PI / 180;
-  const TRAIL_LEN = 20;
-  const MAP_R = 2.0;
-
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x111111);
-  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 30);
-  camera.position.set(0.15, 3.2, 0.35);
-  camera.lookAt(0, 0, 0.45);
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  view.appendChild(renderer.domElement);
-  if (vizLoading) vizLoading.style.display = 'none';
-
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(0, 0, 0.45);
-  controls.enableDamping = true;
-  controls.maxPolarAngle = Math.PI * 0.22;
-  controls.minPolarAngle = Math.PI * 0.08;
-  controls.enableRotate = true;
-
-  // Floor + range rings (Tesla-style)
-  const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(MAP_R * 2.2, MAP_R * 2.2),
-    new THREE.MeshBasicMaterial({ color: 0x141414 })
-  );
-  floor.rotation.x = -Math.PI / 2;
-  scene.add(floor);
-  for (const r of [0.5, 1.0, 1.5, 2.0]) {
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(r - 0.004, r, 64),
-      new THREE.MeshBasicMaterial({ color: 0x2a2a2a, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.002;
-    scene.add(ring);
-  }
-  // Cross hairs
-  const crossMat = new THREE.LineBasicMaterial({ color: 0x252525 });
-  for (const sign of [-1, 1]) {
-    scene.add(new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0.003, 0), new THREE.Vector3(sign * MAP_R, 0.003, 0)]),
-      crossMat
-    ));
-    scene.add(new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0.003, 0), new THREE.Vector3(0, 0.003, sign * MAP_R)]),
-      crossMat
-    ));
-  }
-
-  // Robot top-down (rounded body)
-  const robot = new THREE.Group();
-  scene.add(robot);
-  const bodyShape = new THREE.Shape();
-  const bw = 0.28, bd = 0.32, cr = 0.08;
-  bodyShape.moveTo(-bw + cr, -bd);
-  bodyShape.lineTo(bw - cr, -bd);
-  bodyShape.quadraticCurveTo(bw, -bd, bw, -bd + cr);
-  bodyShape.lineTo(bw, bd - cr);
-  bodyShape.quadraticCurveTo(bw, bd, bw - cr, bd);
-  bodyShape.lineTo(-bw + cr, bd);
-  bodyShape.quadraticCurveTo(-bw, bd, -bw, bd - cr);
-  bodyShape.lineTo(-bw, -bd + cr);
-  bodyShape.quadraticCurveTo(-bw, -bd, -bw + cr, -bd);
-  const body = new THREE.Mesh(
-    new THREE.ShapeGeometry(bodyShape),
-    new THREE.MeshBasicMaterial({ color: 0xe5e7eb })
-  );
-  body.rotation.x = -Math.PI / 2;
-  body.position.y = 0.01;
-  robot.add(body);
-  const nose = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.12, 0.14),
-    new THREE.MeshBasicMaterial({ color: 0xf3f4f6, side: THREE.DoubleSide })
-  );
-  nose.rotation.x = -Math.PI / 2;
-  nose.position.set(0, 0.012, 0.36);
-  robot.add(nose);
-
-  // Sensor FOV wedges
-  const fovGroup = new THREE.Group();
-  robot.add(fovGroup);
-  for (const [key, angle] of Object.entries(ZONE_ANGLE)) {
-    const g = new THREE.Group();
-    g.rotation.y = deg(angle);
-    const wedge = new THREE.Mesh(
-      new THREE.CircleGeometry(1.8, 32, -deg(12), deg(24)),
-      new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.06, side: THREE.DoubleSide })
-    );
-    wedge.rotation.x = -Math.PI / 2;
-    wedge.position.set(0, 0.004, 0.2);
-    g.add(wedge);
-    fovGroup.add(g);
-  }
-
-  function makePerson() {
-    const g = new THREE.Group();
-    const mat = new THREE.MeshBasicMaterial({ color: KIND_COL.human, transparent: true, opacity: 0.92 });
-    const shadow = new THREE.Mesh(
-      new THREE.CircleGeometry(0.16, 20),
-      new THREE.MeshBasicMaterial({ color: 0x5b9bd5, transparent: true, opacity: 0.25 })
-    );
-    shadow.rotation.x = -Math.PI / 2;
-    shadow.position.y = 0.005;
-    g.add(shadow);
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.14, 4, 10), mat);
-    torso.rotation.x = Math.PI / 2;
-    torso.position.y = 0.09;
-    g.add(torso);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 12), mat);
-    head.position.y = 0.2;
-    g.add(head);
-    g.userData.label = 'PERSON';
-    return g;
-  }
-
-  function makeObstacle() {
-    const g = new THREE.Group();
-    const mat = new THREE.MeshBasicMaterial({ color: KIND_COL.obstacle, transparent: true, opacity: 0.9 });
-    const block = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.08, 0.22), mat);
-    block.position.y = 0.04;
-    g.add(block);
-    const base = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.3, 0.26),
-      new THREE.MeshBasicMaterial({ color: 0x9ca3af, transparent: true, opacity: 0.2, side: THREE.DoubleSide })
-    );
-    base.rotation.x = -Math.PI / 2;
-    base.position.y = 0.003;
-    g.add(base);
-    g.userData.label = 'OBSTACLE';
-    return g;
-  }
-
-  function makeUncertain() {
-    const g = new THREE.Group();
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.1, 0.14, 24),
-      new THREE.MeshBasicMaterial({ color: KIND_COL.uncertain, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.01;
-    g.add(ring);
-    g.userData.label = '?';
-    return g;
-  }
-
-  const entityGroup = new THREE.Group();
-  scene.add(entityGroup);
-  let mainEntity = null;
-  const hitEntities = { L: null, C: null, R: null };
-  const trailDots = [];
-  const trailHistory = [];
-
-  function getEntity(kind) {
-    if (kind === 'human') return makePerson();
-    if (kind === 'obstacle') return makeObstacle();
-    return makeUncertain();
-  }
-
-  function placeEntity(ent, xMm, zMm, kind, conf) {
-    ent.position.set(xMm / 1000, 0, zMm / 1000);
-    ent.visible = true;
-    ent.userData.kind = kind;
-    ent.userData.conf = conf;
-    const col = KIND_COL[kind] || KIND_COL.uncertain;
-    ent.traverse((c) => {
-      if (c.material && c.material.color) c.material.color.setHex(col);
-    });
-  }
-
-  function hideEntity(ent) {
-    if (ent) ent.visible = false;
-  }
-
-  function makeLabelSprite(text, color) {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256; canvas.height = 64;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(8, 12, 240, 44);
-    ctx.fillStyle = color;
-    ctx.font = 'bold 28px system-ui,sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(text, 128, 42);
-    const tex = new THREE.CanvasTexture(canvas);
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
-    sp.scale.set(0.42, 0.11, 1);
-    sp.position.y = 0.28;
-    return sp;
-  }
-
-  let pulse = 0;
-  let latest3d = null;
-
-  function resize3d() {
-    const w = view.clientWidth, h = view.clientHeight;
-    if (!w || !h) return;
-    const aspect = w / h;
-    const frustum = 1.15;
-    if (aspect > 1) {
-      camera.left = -frustum * aspect; camera.right = frustum * aspect;
-      camera.top = frustum; camera.bottom = -frustum;
-    } else {
-      camera.left = -frustum; camera.right = frustum;
-      camera.top = frustum / aspect; camera.bottom = -frustum / aspect;
-    }
-    camera.updateProjectionMatrix();
-    renderer.setSize(w, h, false);
-  }
-  window.addEventListener('resize', resize3d);
-  resize3d();
-
-  function updateScene3d(data) {
-    latest3d = data;
-    const hits = data.hits || [];
-    const fused = data.fused;
-
-    // Per-sensor mini markers (small dots on arc)
-    for (const key of ['L', 'C', 'R']) {
-      const hit = hits.find((h) => h.zone === key);
-      if (!hit) {
-        hideEntity(hitEntities[key]);
-        continue;
-      }
-      if (!hitEntities[key]) {
-        hitEntities[key] = new THREE.Mesh(
-          new THREE.SphereGeometry(0.035, 10, 10),
-          new THREE.MeshBasicMaterial({ color: 0x555555, transparent: true, opacity: 0.5 })
-        );
-        entityGroup.add(hitEntities[key]);
-      }
-      const col = KIND_COL[hit.kind] || KIND_COL.uncertain;
-      hitEntities[key].material.color.setHex(col);
-      hitEntities[key].material.opacity = 0.45;
-      hitEntities[key].position.set(hit.x_mm / 1000, 0.02, hit.z_mm / 1000);
-      hitEntities[key].visible = true;
-    }
-
-    if (fused) {
-      const kind = fused.kind || 'uncertain';
-      if (!mainEntity || mainEntity.userData.kind !== kind) {
-        if (mainEntity) entityGroup.remove(mainEntity);
-        mainEntity = getEntity(kind);
-        const labelText = kind === 'human' ? 'PERSON' : (kind === 'obstacle' ? 'OBSTACLE' : '?');
-        const labelCol = kind === 'human' ? '#5b9bd5' : (kind === 'obstacle' ? '#d1d5db' : '#9ca3af');
-        mainEntity.add(makeLabelSprite(labelText, labelCol));
-        entityGroup.add(mainEntity);
-      }
-      placeEntity(mainEntity, fused.x_mm, fused.z_mm, kind, fused.confidence);
-      if (kind === 'human') {
-        mainEntity.scale.setScalar(1 + 0.04 * pulse);
-      } else {
-        mainEntity.scale.setScalar(1);
-      }
-      trailHistory.unshift(new THREE.Vector3(fused.x_mm / 1000, 0.015, fused.z_mm / 1000));
-      if (trailHistory.length > TRAIL_LEN) trailHistory.length = TRAIL_LEN;
-      while (trailDots.length < trailHistory.length) {
-        const d = new THREE.Mesh(
-          new THREE.SphereGeometry(0.018, 6, 6),
-          new THREE.MeshBasicMaterial({ color: KIND_COL.human, transparent: true, opacity: 0 })
-        );
-        entityGroup.add(d);
-        trailDots.push(d);
-      }
-      trailDots.forEach((d, i) => {
-        const p = trailHistory[i];
-        if (p && kind === 'human') {
-          d.position.copy(p);
-          d.material.opacity = 0.5 * (1 - i / TRAIL_LEN);
-          d.material.color.setHex(KIND_COL.human);
-        } else {
-          d.material.opacity = 0;
-        }
-      });
-    } else {
-      if (mainEntity) { entityGroup.remove(mainEntity); mainEntity = null; }
-      trailHistory.length = 0;
-      trailDots.forEach((d) => { d.material.opacity = 0; });
-    }
-
-    const ro = document.getElementById('object-readout');
-    if (!fused) {
-      ro.textContent = 'Clear — no object in sensor field';
-    } else {
-      const tag = fused.kind === 'human' ? 'PERSON' : (fused.kind === 'obstacle' ? 'OBSTACLE' : 'UNCERTAIN');
-      const dist = Math.round(Math.hypot(fused.x_mm, fused.z_mm));
-      const bearing = Math.round(Math.atan2(fused.x_mm, fused.z_mm) * 180 / Math.PI);
-      ro.textContent = `${tag} · ${dist} mm ahead · ${bearing}° · ${Math.round(fused.confidence * 100)}% — ${fused.reason}`;
-    }
-  }
-
-  window.updateScene3d = updateScene3d;
-
-  function animate3d() {
-    requestAnimationFrame(animate3d);
-    pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.006);
-    controls.update();
-    if (latest3d) updateScene3d(latest3d);
-    renderer.render(scene, camera);
-  }
-  animate3d();
-  </script>
+  <script type="module" src="/static/tof_viz_3d.mjs"></script>
 
   <script>
     const sensorNames = ["LEFT", "CENTER", "RIGHT"];

@@ -125,8 +125,8 @@ class YawVizState:
                 "imu_correction_deg": self.imu_correction_deg,
                 "head_pan": self.head_pan,
                 "head_tilt": self.head_tilt,
-                # Viz map rotation uses drift-corrected IMU base yaw (encoder anti-drift when still).
-                "map_yaw_deg": self.from_home_imu_deg,
+                # Viz map follows encoder (stable after open-loop spins); IMU shown on orange tick.
+                "map_yaw_deg": self.from_home_enc_deg,
             }
 
 
@@ -251,9 +251,6 @@ HTML_PAGE = """<!DOCTYPE html>
       margin: 0.35rem 0 0.5rem;
     }
     .stats-label:first-of-type { margin-top: 0; }
-    .stat.raw .v { color: #cbd5e1; font-size: 1.15rem; }
-    .stat.raw.imu .v { color: var(--imu); }
-    .stat.raw.enc .v { color: var(--enc); }
     #view3d-wrap {
       position: relative;
       width: 100%;
@@ -320,6 +317,49 @@ HTML_PAGE = """<!DOCTYPE html>
       color: var(--accent);
     }
     #controls .sep { width: 1px; height: 1.4rem; background: rgba(148,163,184,0.2); margin: 0 0.2rem; }
+    #goto-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.45rem;
+      margin-bottom: 0.85rem;
+      padding: 0.55rem 0.75rem;
+      border-radius: 10px;
+      border: 1px solid rgba(56,189,248,0.15);
+      background: rgba(15,20,28,0.65);
+    }
+    #goto-row label {
+      font-size: 0.72rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    #goto-angle {
+      width: 4.5rem;
+      font-family: ui-monospace, monospace;
+      font-size: 0.9rem;
+      padding: 0.35rem 0.5rem;
+      border-radius: 8px;
+      border: 1px solid rgba(148,163,184,0.25);
+      background: #0a0c10;
+      color: var(--text);
+    }
+    #goto-row button {
+      font-family: ui-monospace, monospace;
+      font-size: 0.72rem;
+      padding: 0.35rem 0.65rem;
+      border-radius: 8px;
+      border: 1px solid rgba(148,163,184,0.25);
+      background: rgba(30,41,59,0.8);
+      color: var(--text);
+      cursor: pointer;
+    }
+    #goto-row button:hover { border-color: var(--accent); color: var(--accent); }
+    #goto-row button.primary {
+      border-color: rgba(56,189,248,0.45);
+      color: var(--accent);
+      font-weight: 600;
+    }
   </style>
   <script type="importmap">
   {
@@ -354,23 +394,20 @@ HTML_PAGE = """<!DOCTYPE html>
     <button type="button" data-cmd="zero_home">Z zero here</button>
   </div>
 
+  <div id="goto-row">
+    <label for="goto-angle">Go to ° from HOME</label>
+    <input type="number" id="goto-angle" value="45" step="1" min="-120" max="120" title="+ = clockwise">
+    <button type="button" class="primary" id="goto-cw">Go ↻ CW</button>
+    <button type="button" id="goto-ccw">Go ↺ CCW</button>
+    <span class="meta" style="font-size:0.72rem">+ clockwise · IMU closed-loop</span>
+  </div>
+
   <p class="stats-label">From HOME</p>
   <div class="stats">
     <div class="stat enc"><div class="k">Encoder from HOME</div><div class="v" id="v-enc">—</div></div>
     <div class="stat imu"><div class="k">IMU base from HOME</div><div class="v" id="v-imu">—</div></div>
     <div class="stat delta" id="delta-card"><div class="k">ENC − IMU</div><div class="v" id="v-delta">—</div></div>
     <div class="stat"><div class="k">Ticks Δ (rotation)</div><div class="v" id="v-ticks">—</div></div>
-    <div class="stat"><div class="k">POS Δ (raw counts)</div><div class="v" id="v-ticks-raw" style="font-size:1rem;color:var(--muted)">—</div></div>
-  </div>
-
-  <p class="stats-label">Hardware raw</p>
-  <div class="stats stats-raw">
-    <div class="stat raw imu"><div class="k">IMU yaw (raw)</div><div class="v" id="v-imu-raw">—</div></div>
-    <div class="stat raw enc"><div class="k">Encoder deg (abs)</div><div class="v" id="v-enc-deg">—</div></div>
-    <div class="stat raw enc"><div class="k">Encoder POS (ticks)</div><div class="v" id="v-enc-pos">—</div></div>
-    <div class="stat raw"><div class="k">Gyro Z</div><div class="v" id="v-gyro" style="font-size:1rem">—</div></div>
-    <div class="stat raw"><div class="k">Pan mech</div><div class="v" id="v-pan-mech" style="font-size:1rem">—</div></div>
-    <div class="stat raw"><div class="k">IMU align bias</div><div class="v" id="v-imu-bias" style="font-size:0.95rem;color:var(--muted)">—</div></div>
   </div>
 
   <div id="view3d-wrap">
@@ -380,9 +417,9 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <p class="help">
     <strong>Browser or terminal:</strong> <code>M</code>/<code>N</code> hold base spin · <code>WASD</code> head ·
-    <code>C</code> center · <code>H</code> PID spin to HOME IMU yaw 0° · <code>Z</code> zero encoder here (no move) ·
+    <code>C</code> center · <code>H</code> spin to HOME IMU yaw 0° · <code>Z</code> zero encoder here (no move) ·
     <code>?</code> status · <code>Q</code> quit.
-    Grey cone = startup forward. Robot nose = IMU heading (encoder anti-drift when still).
+    Grey cone = startup forward. Map rotation = encoder; orange tick = IMU base yaw.
   </p>
 
   <script type="module" src="/static/yaw_robot_viz.mjs"></script>
@@ -390,11 +427,6 @@ HTML_PAGE = """<!DOCTYPE html>
     function fmtDeg(v) {
       const n = Math.round(Number(v) || 0);
       return (n >= 0 ? '+' : '') + n + '°';
-    }
-    function fmtDeg1(v) {
-      const n = Number(v) || 0;
-      const r = Math.round(n * 10) / 10;
-      return (r >= 0 ? '+' : '') + r + '°';
     }
     function fmtTicks(v) {
       const n = Math.round(Number(v) || 0);
@@ -419,25 +451,18 @@ HTML_PAGE = """<!DOCTYPE html>
         document.getElementById('v-delta').textContent = fmtDeg(data.disagreement_deg);
         document.getElementById('delta-card').className = 'stat delta' + (d < 3 ? ' ok' : '');
         document.getElementById('v-ticks').textContent = fmtTicks(data.encoder_count_delta);
-        const raw = data.encoder_count_raw_delta ?? 0;
-        document.getElementById('v-ticks-raw').textContent = fmtTicks(raw);
-        document.getElementById('v-imu-raw').textContent = fmtDeg1(data.imu_yaw_deg);
-        document.getElementById('v-enc-deg').textContent = fmtDeg1(data.encoder_deg);
-        document.getElementById('v-enc-pos').textContent = String(Math.round(Number(data.encoder_count) || 0));
-        document.getElementById('v-gyro').textContent = fmtDeg1(data.gyro_dps).replace('°', ' dps');
-        document.getElementById('v-pan-mech').textContent = fmtDeg1(data.pan_mech_deg);
-        document.getElementById('v-imu-bias').textContent = fmtDeg1(data.imu_correction_deg);
         document.getElementById('hud-bottom').innerHTML =
           '<strong>FROM HOME</strong> enc ' + fmtDeg(data.map_yaw_deg) +
           ' · imu ' + fmtDeg(data.from_home_imu_deg) +
           ' · Δ ' + fmtDeg(data.disagreement_deg) +
           ' · ticksΔ ' + fmtTicks(data.encoder_count_delta) +
-          ' · rawΔ ' + fmtTicks(raw) +
-          '<br><strong>RAW</strong> imu ' + fmtDeg1(data.imu_yaw_deg) +
-          ' · enc ' + fmtDeg1(data.encoder_deg) +
-          ' · POS ' + Math.round(Number(data.encoder_count) || 0) +
           (data.stationary ? ' · <span style="color:#4ade80">still</span>' : '');
         if (window.updateYawScene) window.updateYawScene(data);
+        const gotoInput = document.getElementById('goto-angle');
+        if (gotoInput && data.max_yaw_deg) {
+          gotoInput.min = String(-Math.round(data.max_yaw_deg));
+          gotoInput.max = String(Math.round(data.max_yaw_deg));
+        }
       } catch (e) { /* retry */ }
       setTimeout(poll, 80);
     }
@@ -473,6 +498,32 @@ HTML_PAGE = """<!DOCTYPE html>
         });
       } catch (e) { console.warn('control', e); }
     }
+
+    async function sendGoto(signedDeg) {
+      try {
+        await fetch('/api/control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cmd: 'goto_imu', angle: signedDeg }),
+        });
+      } catch (e) { console.warn('goto', e); }
+    }
+
+    document.getElementById('goto-cw').addEventListener('click', () => {
+      const mag = Math.abs(Number(document.getElementById('goto-angle').value) || 0);
+      sendGoto(mag);
+    });
+    document.getElementById('goto-ccw').addEventListener('click', () => {
+      const mag = Math.abs(Number(document.getElementById('goto-angle').value) || 0);
+      sendGoto(-mag);
+    });
+    document.getElementById('goto-angle').addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        const v = Number(ev.target.value) || 0;
+        sendGoto(v);
+      }
+    });
 
     document.querySelectorAll('#controls [data-cmd]').forEach((btn) => {
       btn.addEventListener('click', () => sendCmd(btn.dataset.cmd));
@@ -591,6 +642,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "missing cmd"})
             return
         step = payload.get("step")
+        if cmd == "goto_imu":
+            angle = payload.get("angle")
+            if angle is None:
+                self._send_json(400, {"ok": False, "error": "missing angle"})
+                return
+            CONTROL.post_cmd(f"goto_imu:{float(angle)}")
+            self._send_json(200, {"ok": True, "cmd": cmd, "angle": float(angle)})
+            return
         CONTROL.post_cmd(cmd, step=float(step) if step is not None else None)
         self._send_json(200, {"ok": True, "cmd": cmd})
 

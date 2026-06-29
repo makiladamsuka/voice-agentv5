@@ -11,7 +11,7 @@ Locks HOME (forward) once at start. Heading follows IMU; when the base is still
   M / N     hold = spin base left / right  (same as robottest.py)
   W A S D   head tilt / pan
   C         center head
-  H         PID spin base to HOME IMU yaw 0° + re-lock HOME
+  H         spin base to HOME IMU yaw 0° + re-lock HOME
   Z         zero encoder here (no move) + re-lock HOME
   ?         print status
   Q         quit
@@ -36,6 +36,7 @@ from arduino_servo import ArduinoServoLink
 from base_motor_utils import apply_base_calibration_to_nano
 from lib.base_home_drive import (
     drive_base_to_encoder_zero,
+    drive_base_to_imu_angle,
     drive_base_to_imu_zero,
     ensure_base_idle,
 )
@@ -316,6 +317,43 @@ def _apply_browser_cmd(
             )
         return pan, tilt, 0, status, quit_requested
 
+    if cmd.startswith("goto_imu:"):
+        link.write_base_stop()
+        time.sleep(0.15)
+        ensure_base_idle(link)
+        try:
+            target = float(cmd.split(":", 1)[1])
+        except (IndexError, ValueError):
+            print("[YawViz] GOTO: invalid angle")
+            return pan, tilt, 0, status, quit_requested
+        max_yaw = float(base_cfg.get("max_yaw_deg", 120.0))
+        target = clamp(target, -max_yaw, max_yaw)
+        if imu_reader is None or not tracker.home_locked:
+            print("[YawViz] GOTO needs IMU and HOME locked")
+            return pan, tilt, 0, status, quit_requested
+        ok, final_imu = drive_base_to_imu_angle(
+            link,
+            base_cfg,
+            target,
+            query_imu_home=lambda: _query_imu_home_pose(
+                tracker,
+                link,
+                imu_reader,
+                yaw_sign,
+                pan,
+                servo_cfg,
+            ),
+            log=print,
+        )
+        if ok:
+            print(f"[YawViz] GOTO done — imu from HOME {final_imu:+.1f}° (target {target:+.1f}°)")
+        else:
+            print(
+                f"[YawViz] GOTO failed — imu {final_imu:+.1f}° "
+                f"(wanted {target:+.1f}°)"
+            )
+        return pan, tilt, 0, status, quit_requested
+
     if cmd == "zero_home":
         link.write_base_stop()
         link.zero_base()
@@ -551,6 +589,7 @@ def run(
         encoder_sign=float(base_cfg.get("encoder_sign", -1.0)),
         still_hold_sec=float(imu_cfg.get("drift_stationary_hold_sec", 0.35)),
         gyro_max_dps=float(imu_cfg.get("drift_gyro_max_dps", 6.0)),
+        snap_max_disagreement_deg=float(imu_cfg.get("drift_snap_max_disagreement_deg", 5.0)),
     )
     enc0, count0, _, cpd0 = _query_enc(link, 0.0)
     tracker.counts_per_degree = max(cpd0, 0.05)
@@ -567,7 +606,7 @@ def run(
 
     print(
         "\n[yaw_robot_viz] Controls: browser (click page + keys) or terminal\n"
-        f"  M/N hold spin   WASD head   C center   H PID → HOME IMU 0°   Z zero here   ? status   Q quit\n"
+        f"  M/N hold spin   WASD head   C center   H → HOME IMU 0°   Z zero here   ? status   Q quit\n"
     )
 
     running = True
@@ -642,8 +681,8 @@ def run(
                 last_n = api_n
             step = api_step if api_step > 0 else head_step
             for cmd in cmds:
-                if cmd == "home_lock":
-                    if homing or (now - last_home_ts) < 2.0:
+                if cmd == "home_lock" or cmd.startswith("goto_imu:"):
+                    if homing or (now - last_home_ts) < 1.5:
                         continue
                     homing = True
                     last_m = 0.0
@@ -674,7 +713,7 @@ def run(
                 if quit_req:
                     running = False
                     break
-                if cmd == "home_lock":
+                if cmd == "home_lock" or cmd.startswith("goto_imu:"):
                     homing = False
                     last_home_ts = time.time()
 
@@ -761,8 +800,8 @@ def main() -> int:
     base_cfg.setdefault("spin_positive_uses_left", bool(base_cfg.get("spin_positive_uses_left", False)))
     base_cfg.setdefault("spin_stall_sec", float(base_cfg.get("spin_stall_sec", 0.35)))
     base_cfg.setdefault("home_timeout_sec", float(base_cfg.get("spin_timeout_sec", 6.0)))
-    base_cfg.setdefault("home_pid_kp", 0.92)
-    base_cfg.setdefault("home_pid_kd", 0.14)
+    base_cfg.setdefault("home_imu_burst_sec", 1.6)
+    base_cfg.setdefault("home_imu_fine_burst_sec", 0.32)
     servo_cfg = cfg.get("servo", {}) or {}
     yaw_sign = float(imu_cfg.get("yaw_sign", -1.0))
     zero_on_start = bool(base_cfg.get("zero_on_start", True)) and not args.no_zero_on_start

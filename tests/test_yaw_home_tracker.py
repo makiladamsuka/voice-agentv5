@@ -35,7 +35,7 @@ def test_imu_tracks_while_base_ticks_change():
     assert not s.stationary
 
 
-def test_snaps_imu_to_encoder_when_ticks_stable():
+def test_snaps_imu_to_encoder_when_ticks_stable_and_close():
     t = _locked()
     t.update(
         encoder_deg=0.0,
@@ -59,6 +59,24 @@ def test_snaps_imu_to_encoder_when_ticks_stable():
     assert abs(s.disagreement_deg) < 0.01
 
 
+def test_no_imu_snap_when_encoder_disagrees_after_spin():
+    t = _locked()
+    t.update(encoder_deg=0.0, encoder_count=0, imu_yaw_deg=0.0, pan_mech_deg=0.0, gyro_dps=0.0, now=0.05)
+    s = t.update(
+        encoder_deg=4.0,
+        encoder_count=125,
+        imu_yaw_deg=18.0,
+        pan_mech_deg=0.0,
+        gyro_dps=0.0,
+        now=0.25,
+    )
+    assert s is not None
+    assert s.stationary
+    # Large post-spin mismatch: keep IMU heading, do not yank to encoder.
+    assert abs(s.from_home_imu_deg - 18.0) < 0.01
+    assert abs(s.disagreement_deg) > 10.0
+
+
 def test_head_pan_does_not_block_base_drift_correction():
     t = _locked()
     t.update(encoder_deg=0.0, encoder_count=0, imu_yaw_deg=0.0, pan_mech_deg=0.0, gyro_dps=0.0, now=0.05)
@@ -72,5 +90,12 @@ def test_head_pan_does_not_block_base_drift_correction():
     )
     assert s is not None
     assert s.stationary
-    # imu_total +8, pan +15 → imu_base_raw = -7; encoder still 0 → snap base to 0
-    assert abs(s.from_home_imu_deg) < 0.01
+    # imu_total +8, pan +15 → imu_base_raw = -7; encoder still 0
+    assert abs(s.from_home_imu_deg - (-7.0)) < 0.01
+
+
+def test_spin_direction_for_imu_homing():
+    from lib.base_home_drive import spin_left_toward_zero
+
+    assert spin_left_toward_zero(12.0, positive_uses_left=False) is False
+    assert spin_left_toward_zero(-12.0, positive_uses_left=False) is True

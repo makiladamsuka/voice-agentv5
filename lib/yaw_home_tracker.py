@@ -55,12 +55,14 @@ class YawHomeTracker:
         encoder_sign: float = -1.0,
         still_hold_sec: float = 0.35,
         gyro_max_dps: float = 6.0,
+        snap_max_disagreement_deg: float = 5.0,
     ) -> None:
         self.counts_per_degree = max(float(counts_per_degree), 0.05)
         sign = float(encoder_sign)
         self.encoder_sign = -1.0 if sign < 0.0 else 1.0
         self.still_hold_sec = still_hold_sec
         self.gyro_max_dps = gyro_max_dps
+        self.snap_max_disagreement_deg = snap_max_disagreement_deg
         self._home: HomeSnapshot | None = None
         self._imu_align = 0.0
         self._still_since: float | None = None
@@ -135,8 +137,8 @@ class YawHomeTracker:
         if abs(enc_from_home) <= 0.35:
             tick_delta = 0
 
-        if stationary:
-            # Base not moving: encoder is truth — snap IMU base yaw to match (no drift).
+        if stationary and abs(disagreement) <= self.snap_max_disagreement_deg:
+            # Idle drift only — snap when IMU and encoder already agree.
             self._imu_align = _delta(imu_base_raw, enc_from_home)
             imu_base = enc_from_home
             disagreement = 0.0

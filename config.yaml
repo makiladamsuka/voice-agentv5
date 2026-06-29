@@ -120,6 +120,14 @@ base:
   spin_timeout_sec: 4.0       # hard cap; small steps use shorter internal deadline
   spin_stall_sec: 0.28       # stop if encoder counts stop advancing
   spin_positive_uses_left: false  # +step = R spin; -step = L spin (encoder DEG axis)
+  home_success_tolerance_deg: 2.5
+  home_fine_threshold_deg: 6.0
+  home_imu_burst_sec: 0.45       # max L/R burst when far from HOME (IMU loop)
+  home_imu_fine_burst_sec: 0.12  # max burst when within home_fine_threshold_deg
+  home_imu_close_ratio: 0.88      # stop burst when this fraction of error is closed
+  home_imu_gyro_brake_dps: 10.0   # stop when near target and gyro is quiet
+  home_imu_overshoot_burst_scale: 0.35  # burst multiplier after crossing target
+  home_imu_poll_hz: 40.0
   # --- behavior (safe to tune) ---
   error_backoff_sec: 45.0
   require_calibrated_cpd: true

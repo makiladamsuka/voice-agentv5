@@ -79,12 +79,20 @@ def run_approach(
     no_imu: bool = False,
 ) -> None:
     cfg = _load_yaml(DEFAULT_CONFIG_PATH)
-    base_cfg = cfg.get("base", {}) or {}
+    base_cfg = dict(cfg.get("base", {}) or {})
     imu_cfg = cfg.get("imu", {}) or {}
     servo_cfg = cfg.get("servo", {}) or {}
     prox_cfg = cfg.get("proximity", {}) or {}
     viz_cfg = cfg.get("debug_viz", {}) or {}
     base_yaw_sign = float(viz_cfg.get("base_yaw_sign", -1.0))
+    base_cfg.setdefault("home_imu_burst_sec", 0.45)
+    base_cfg.setdefault("home_imu_fine_burst_sec", 0.12)
+    base_cfg.setdefault("home_imu_close_ratio", 0.88)
+    base_cfg.setdefault("home_imu_gyro_brake_dps", 10.0)
+    base_cfg.setdefault("home_imu_overshoot_burst_scale", 0.35)
+    base_cfg.setdefault("home_fine_threshold_deg", 6.0)
+    base_cfg.setdefault("home_success_tolerance_deg", 2.5)
+    base_cfg.setdefault("home_imu_poll_hz", 40.0)
 
     running = threading.Event()
     running.set()

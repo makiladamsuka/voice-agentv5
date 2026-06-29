@@ -853,8 +853,8 @@ def main() -> int:
     base_cfg.setdefault("spin_positive_uses_left", bool(base_cfg.get("spin_positive_uses_left", False)))
     base_cfg.setdefault("spin_stall_sec", float(base_cfg.get("spin_stall_sec", 0.35)))
     base_cfg.setdefault("home_timeout_sec", float(base_cfg.get("spin_timeout_sec", 6.0)))
-    base_cfg.setdefault("home_imu_burst_sec", 1.6)
-    base_cfg.setdefault("home_imu_fine_burst_sec", 0.32)
+    base_cfg.setdefault("home_imu_burst_sec", 0.45)
+    base_cfg.setdefault("home_imu_fine_burst_sec", 0.12)
     servo_cfg = cfg.get("servo", {}) or {}
     yaw_sign = float(imu_cfg.get("yaw_sign", -1.0))
     zero_on_start = bool(base_cfg.get("zero_on_start", True)) and not args.no_zero_on_start

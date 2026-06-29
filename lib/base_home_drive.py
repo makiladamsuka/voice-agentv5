@@ -48,9 +48,10 @@ def spin_left_toward_zero(error_deg: float, *, positive_uses_left: bool) -> bool
 
 
 def _burst_sec(abs_err: float, *, fine_threshold: float, coarse_cap: float, fine_cap: float) -> float:
+    """Timed L/R burst length — short when close to target to avoid IMU overshoot."""
     if abs_err <= fine_threshold:
-        return min(fine_cap, max(0.10, abs_err * 0.035))
-    return min(coarse_cap, max(0.22, abs_err * 0.050))
+        return min(fine_cap, max(0.06, abs_err * 0.014))
+    return min(coarse_cap, max(0.12, abs_err * 0.020))
 
 
 def _stop_and_wait(link: BaseLink, timeout_sec: float = 3.0) -> None:
@@ -223,10 +224,13 @@ def _run_imu_spin_home(
     stall = float(base_cfg.get("spin_stall_sec", base_cfg.get("home_stall_sec", 0.35)))
     fine_threshold = float(base_cfg.get("home_fine_threshold_deg", 8.0))
     positive_left = bool(base_cfg.get("spin_positive_uses_left", False))
-    coarse_burst = float(base_cfg.get("home_imu_burst_sec", 1.6))
-    fine_burst = float(base_cfg.get("home_imu_fine_burst_sec", 0.32))
-    poll_sec = 1.0 / float(base_cfg.get("home_imu_poll_hz", 25.0))
+    coarse_burst = float(base_cfg.get("home_imu_burst_sec", 0.45))
+    fine_burst = float(base_cfg.get("home_imu_fine_burst_sec", 0.12))
+    poll_sec = 1.0 / float(base_cfg.get("home_imu_poll_hz", 40.0))
     settle_sec = float(base_cfg.get("home_imu_settle_sec", 0.14))
+    close_ratio = float(base_cfg.get("home_imu_close_ratio", 0.88))
+    gyro_brake_dps = float(base_cfg.get("home_imu_gyro_brake_dps", 10.0))
+    overshoot_scale = float(base_cfg.get("home_imu_overshoot_burst_scale", 0.35))
 
     _stop_and_wait(link)
     time.sleep(settle_sec)
@@ -246,6 +250,7 @@ def _run_imu_spin_home(
     )
 
     stall_retries = 0
+    burst_scale = 1.0
     for _attempt in range(36):
         imu_pos, enc, busy, gyro = query_imu_home()
         imu_err = _err(imu_pos)
@@ -262,9 +267,10 @@ def _run_imu_spin_home(
             fine_threshold=fine_threshold,
             coarse_cap=coarse_burst,
             fine_cap=fine_burst,
-        )
+        ) * burst_scale
         err_at_start = imu_err
         imu_at_start = imu_pos
+        start_abs_err = max(abs(err_at_start), 0.5)
         st0 = link.query_status()
         start_count = int(st0.encoder_count) if st0 is not None else 0
         last_count = start_count
@@ -285,6 +291,13 @@ def _run_imu_spin_home(
                     break
                 if err_at_start != 0.0 and (err_at_start * imu_err) < 0:
                     stop_reason = "crossed"
+                    break
+                closed = 1.0 - abs(imu_err) / start_abs_err
+                if closed >= close_ratio:
+                    stop_reason = "near"
+                    break
+                if abs(imu_err) <= success_tol * 2.5 and abs(gyro) <= gyro_brake_dps:
+                    stop_reason = "settled"
                     break
                 st = link.query_status()
                 if st is not None:
@@ -315,8 +328,10 @@ def _run_imu_spin_home(
         if abs(imu_err) <= success_tol:
             break
 
-        improved = abs(imu_err) < abs(err_at_start) - 0.35
-        if improved:
+        if stop_reason in ("crossed", "near", "settled", "target"):
+            burst_scale = overshoot_scale
+        elif abs(imu_err) < abs(err_at_start) - 0.35:
+            burst_scale = min(1.0, burst_scale + 0.2)
             stall_retries = 0
         else:
             stall_retries += 1

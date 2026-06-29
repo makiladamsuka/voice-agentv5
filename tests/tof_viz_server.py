@@ -361,6 +361,7 @@ class TofState:
             self.base_rotating = bool(rotating)
             if rotating:
                 self._tracker.reset()
+                FILTER_BANK.reset()
 
     def reset_tracks(self) -> None:
         with self._lock:
@@ -528,13 +529,10 @@ def _handle_serial_line(line: str) -> None:
     pos = _BASE_STATUS_RE.match(line)
     if pos:
         STATE.update_pose(body_yaw_deg=float(pos.group(2)))
-        STATE.set_base_rotating(pos.group(4) == "1")
         return
 
     m = _TOF_RE.search(line)
     if m:
-        if STATE.base_rotating:
-            return  # Drop ToF when base is spinning to avoid false triggers
         raw = [int(m.group(i)) for i in range(1, 4)]
         mm, vel, open_flags = FILTER_BANK.update_all(raw)
         STATE.update_sample(mm, vel, open_flags=open_flags)

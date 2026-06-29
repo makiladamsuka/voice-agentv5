@@ -229,16 +229,32 @@ class ApproachController:
             return False
         if time.time() < self._tof_ignore_until:
             return False
-        if self._last_base_busy:
-            return False
+
+        is_busy = False
         if self._link is not None and self._link.connected:
             try:
                 st = self._link.query_status()
                 if st is not None and st.busy:
-                    self._last_base_busy = True
-                    return False
+                    is_busy = True
             except Exception:
                 pass
+
+        if is_busy:
+            if not self._last_base_busy:
+                # Rising edge: base started moving externally
+                if TOF_STATE is not None:
+                    TOF_STATE.set_base_rotating(True)
+            self._last_base_busy = True
+            return False
+        else:
+            if self._last_base_busy:
+                # Falling edge: base stopped moving externally
+                self._last_base_busy = False
+                self._tof_ignore_until = time.time() + self.tof_spin_settle_sec
+                if TOF_STATE is not None:
+                    TOF_STATE.set_base_rotating(False)
+                return False
+
         return True
 
     def handle_tof_line(self, line: str) -> None:

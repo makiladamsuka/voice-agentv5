@@ -46,6 +46,12 @@ class TofChannelFilter:
         self._last_avg_ts: float = 0.0
         self._last_good_ts: float = 0.0
 
+    def reset(self) -> None:
+        self._window.clear()
+        self._last_avg = None
+        self._last_avg_ts = 0.0
+        self._last_good_ts = 0.0
+
     def _trusted(self, mm: int) -> bool:
         return self.min_trust_mm <= mm <= self.max_trust_mm
 
@@ -94,6 +100,10 @@ class TofFilterBank:
 
     def __init__(self, channels: int = 3) -> None:
         self._filters = [TofChannelFilter() for _ in range(channels)]
+
+    def reset(self) -> None:
+        for f in self._filters:
+            f.reset()
 
     def update_all(self, raw_mm: list[int], *, now: float | None = None) -> tuple[list[int], list[int | None], list[bool]]:
         ts = time.time() if now is None else now

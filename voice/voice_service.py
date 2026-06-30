@@ -317,6 +317,24 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         try:
             payload = packet.data.decode("utf-8")
             data = json.loads(payload)
+            if data.get("type") == "change_eye_color":
+                color_name = data.get("color", "white").lower()
+                colors = {
+                    "white": (255, 255, 255),
+                    "red": (255, 0, 0),
+                    "green": (0, 255, 0),
+                    "blue": (0, 0, 255),
+                    "yellow": (255, 255, 0),
+                    "cyan": (0, 255, 255),
+                    "magenta": (255, 0, 255),
+                    "pistachio": (147, 197, 114),
+                    "coral": (255, 127, 80),
+                }
+                if color_name in colors and _bb is not None:
+                    _bb.write(eye_color=colors[color_name])
+                    print(f"[VoiceService] Changed eye color to {color_name} via UI")
+                return
+
             if data.get("type") != "event_focus":
                 return
             event = data.get("event", {})

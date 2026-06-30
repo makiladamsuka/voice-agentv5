@@ -72,6 +72,30 @@ _STATIC_MIME = {
     ".wasm": "application/wasm",
 }
 
+
+def serve_static(handler: BaseHTTPRequestHandler, path: str) -> bool:
+    if not path.startswith("/static/"):
+        return False
+    rel = path[len("/static/") :].lstrip("/").split("?", 1)[0]
+    if not rel or ".." in rel.replace("\\", "/"):
+        handler.send_error(403)
+        return True
+    fp = (STATIC_DIR / rel).resolve()
+    root = STATIC_DIR.resolve()
+    if not str(fp).startswith(str(root)) or not fp.is_file():
+        handler.send_error(404)
+        return True
+    data = fp.read_bytes()
+    ctype = _STATIC_MIME.get(fp.suffix.lower(), "application/octet-stream")
+    handler.send_response(200)
+    handler.send_header("Content-Type", ctype)
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Content-Length", str(len(data)))
+    handler.end_headers()
+    handler.wfile.write(data)
+    return True
+
+
 def list_serial_ports() -> list[str]:
     return [p for p in DEFAULT_PORTS if os.path.exists(p)]
 

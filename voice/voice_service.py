@@ -237,7 +237,11 @@ def _trigger_reindex() -> None:
         print(f"[VoiceService] Re-index failed: {exc}")
 
 
-def _init_image_server(port: int = 8080, kiosk_config: dict | None = None) -> None:
+def _init_image_server(
+    port: int = 8080,
+    kiosk_config: dict | None = None,
+    blackboard: "Blackboard | None" = None,
+) -> None:
     global _global_image_server, _global_map_navigator
     if _global_image_server is None:
         assets_dir = APP_DIR / "assets"
@@ -250,8 +254,30 @@ def _init_image_server(port: int = 8080, kiosk_config: dict | None = None) -> No
             kiosk_config=kiosk_config,
             map_navigator=_global_map_navigator,
             on_reindex=_trigger_reindex,
+            blackboard=blackboard or _bb,
         )
         _global_image_server.start()
+    elif blackboard is not None or _bb is not None:
+        _global_image_server.set_blackboard(blackboard or _bb)
+
+
+def ensure_media_server(bb: "Blackboard", cfg: dict | None = None) -> None:
+    """Start kiosk media server early with blackboard for eye-color HTTP API."""
+    if cfg is None:
+        import yaml
+
+        config_path = APP_DIR / "config.yaml"
+        if config_path.is_file():
+            try:
+                with open(config_path, encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f) or {}
+            except Exception:
+                cfg = {}
+        else:
+            cfg = {}
+    kiosk_cfg = (cfg or {}).get("kiosk", {}) or {}
+    port = int(kiosk_cfg.get("port", 8080))
+    _init_image_server(port=port, kiosk_config=kiosk_cfg, blackboard=bb)
 
 
 def _build_event_db_sync() -> None:
@@ -279,7 +305,7 @@ def prewarm(proc: agents.JobProcess) -> None:
         except Exception:
             pass
     port = int(kiosk_cfg.get("port", 8080))
-    _init_image_server(port=port, kiosk_config=kiosk_cfg)
+    _init_image_server(port=port, kiosk_config=kiosk_cfg, blackboard=_bb)
     _build_event_db_sync()
     proc.userdata["vad"] = silero.VAD.load(
         min_speech_duration=0.1,
@@ -537,6 +563,7 @@ def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
     """
     global _bb
     _bb = bb
+    ensure_media_server(bb)
 
     env_path = APP_DIR / ".env"
     load_dotenv(env_path)

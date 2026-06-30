@@ -16,6 +16,7 @@ from voice.upload_handler import get_upload_status, handle_upload_poster, serve_
 from voice.weather_feed import get_weather
 
 if TYPE_CHECKING:
+    from core.blackboard import Blackboard
     from voice.map_navigation import MapNavigator
 
 
@@ -32,6 +33,7 @@ class MediaServer:
         kiosk_config: dict | None = None,
         map_navigator: MapNavigator | None = None,
         on_reindex: Callable[[], None] | None = None,
+        blackboard: Blackboard | None = None,
     ):
         self.assets_dir = assets_dir
         self.app_dir = app_dir or assets_dir.parent
@@ -42,6 +44,7 @@ class MediaServer:
         self._server_host: str | None = None
         self.map_navigator = map_navigator
         self.on_reindex = on_reindex
+        self.blackboard = blackboard
 
         kiosk = kiosk_config or {}
         self.facebook_cache_minutes = int(kiosk.get("facebook_cache_minutes", 10))
@@ -60,6 +63,9 @@ class MediaServer:
 
     def set_on_reindex(self, callback: Callable[[], None] | None) -> None:
         self.on_reindex = callback
+
+    def set_blackboard(self, blackboard: Blackboard | None) -> None:
+        self.blackboard = blackboard
 
     def _get_local_ip(self) -> str:
         try:
@@ -178,6 +184,28 @@ class MediaServer:
                         self._bytes_response(500, str(exc).encode(), "text/plain")
                     return
 
+                if path == "/api/eye-color":
+                    try:
+                        from core.eye_themes import resolve_eye_color
+
+                        data = json.loads(body.decode("utf-8"))
+                        theme = data.get("theme", "default")
+                        rgb = resolve_eye_color(theme)
+                        if media_server.blackboard is None:
+                            self._json_response(
+                                503, {"error": "Robot blackboard not available"}
+                            )
+                            return
+                        media_server.blackboard.write(eye_color=rgb)
+                        print(f"[MediaServer] eye-color -> {theme!r} {rgb}")
+                        self._json_response(
+                            200,
+                            {"success": True, "theme": theme, "rgb": list(rgb)},
+                        )
+                    except Exception as exc:
+                        self._json_response(500, {"error": str(exc)})
+                    return
+
                 if path == "/api/map":
                     try:
                         def _on_saved(floor: str) -> None:
@@ -212,6 +240,7 @@ class MediaServer:
                   <li><code>GET/POST /api/map?floor=floor_1</code></li>
                   <li><code>POST /api/upload-poster</code></li>
                   <li><code>GET /api/upload-status</code></li>
+                  <li><code>POST /api/eye-color</code></li>
                   <li><code>POST /trigger-index</code></li>
                 </ul>
                 </body></html>

@@ -559,6 +559,10 @@ def main():
         )
         threads.append(voice_thread)
 
+    from voice.voice_service import ensure_media_server
+
+    ensure_media_server(bb, cfg)
+
     for t in threads:
         t.start()
 

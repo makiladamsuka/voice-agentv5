@@ -1,6 +1,6 @@
 """EyeRenderer: BlockyEye animation + ST7735 SPI display output.
 
-Reads from BB: emotion, emotion_intensity, face_detected, running
+Reads from BB: emotion, emotion_intensity, eye_color, face_detected, running
 Writes to BB:  nothing
 
 Eyes stay fixed at screen center — no face-driven x/y offset or rotation.
@@ -17,12 +17,12 @@ except ImportError:
 
 from core.blackboard import Blackboard
 from core.emotion_presets import EMOTION_PRESETS, resolve_emotion_name
+from core.eye_themes import normalize_rgb
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
 
 SCREEN_WIDTH, SCREEN_HEIGHT = 128, 160
-EYE_COLOR = (255, 255, 255)
 BG_COLOR = (0, 0, 0)
 EYE_SIZE = 120
 MAX_DRAW_W = SCREEN_WIDTH - 4
@@ -219,7 +219,7 @@ class BlockyEye:
             lid_y = int(y1 + 13 - lid_src.height)
             eye_img.alpha_composite(lid_src, (lid_x, lid_y))
 
-    def draw(self, bg_image):
+    def draw(self, bg_image, eye_color: tuple[int, int, int]):
         from PIL import Image, ImageDraw
         draw_w = max(6, min(int(self.w), MAX_DRAW_W))
         draw_h = max(6, min(int(self.h), MAX_DRAW_H))
@@ -233,7 +233,7 @@ class BlockyEye:
         y0 = cy - draw_h / 2
         x1 = cx + draw_w / 2
         y1 = cy + draw_h / 2
-        eye_draw.ellipse([x0, y0, x1, y1], fill=EYE_COLOR)
+        eye_draw.ellipse([x0, y0, x1, y1], fill=eye_color)
         self.draw_eyelids(eye_img, x0, y0, x1, y1)
 
         cx_pos, cy_pos = _clamp_eye_pos(self.current_pos[0], self.current_pos[1], draw_w, draw_h)
@@ -297,6 +297,7 @@ class EyeRenderer:
             state = self.bb.read(
                 "emotion",
                 "emotion_intensity",
+                "eye_color",
                 "running",
                 "amplitude_fast",
                 "amplitude_slow",
@@ -304,6 +305,7 @@ class EyeRenderer:
                 "agent_speaking",
                 "conv_state",
             )
+            eye_color = normalize_rgb(state.get("eye_color"))
             emotion   = state["emotion"]
             intensity = state["emotion_intensity"]
             af        = float(state.get("amplitude_fast", 0.0) or 0.0)
@@ -371,7 +373,8 @@ class EyeRenderer:
                 try:
                     bg_l = Image.new("RGBA", (SCREEN_WIDTH, SCREEN_HEIGHT), (*BG_COLOR, 255))
                     bg_r = Image.new("RGBA", (SCREEN_WIDTH, SCREEN_HEIGHT), (*BG_COLOR, 255))
-                    left_eye.draw(bg_l); right_eye.draw(bg_r)
+                    left_eye.draw(bg_l, eye_color)
+                    right_eye.draw(bg_r, eye_color)
                     if disp_l: disp_l.image(bg_l.convert("RGB"))
                     if disp_r: disp_r.image(bg_r.convert("RGB"))
                 except Exception as e:

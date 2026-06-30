@@ -19,6 +19,9 @@ class MapNavigator:
         self._load()
 
     def _load(self) -> None:
+        self._graph = {}
+        self._nodes = {}
+        self._edges = []
         if not self.graph_path.is_file():
             print(f"Map graph not found at {self.graph_path} (static map images still work)")
             return
@@ -42,6 +45,13 @@ class MapNavigator:
             print(f"Map graph loaded: {len(self._nodes)} location(s)")
         except Exception as exc:
             print(f"Failed to load map graph: {exc}")
+
+    def reload(self) -> None:
+        """Re-read graph JSON from disk (after map-builder POST)."""
+        self._load()
+
+    def get_graph(self) -> dict[str, Any]:
+        return dict(self._graph)
 
     @property
     def available(self) -> bool:

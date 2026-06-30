@@ -28,12 +28,13 @@ from livekit.plugins import openai, deepgram, silero
 
 from voice.amplitude_tts import AmplitudeTTS, drain_to_zero
 from voice.text_filters import filter_leaked_tool_syntax
-from voice.image_server import ImageServer
+from voice.media_server import ImageServer, MediaServer
 from voice.image_manager import ImageManager
 from voice.map_navigation import MapNavigator
 from voice.event_database import build_event_database
 from voice.greetings import generate_presence_greeting
-from voice.tools import TimeTools, SearchTools, ContentTools
+from voice.tools import TimeTools, SearchTools, ContentTools, AppearanceTools
+from core.eye_themes import resolve_eye_color
 
 if TYPE_CHECKING:
     from core.blackboard import Blackboard
@@ -42,7 +43,8 @@ APP_DIR = Path(__file__).resolve().parent.parent
 
 # ── Module-level state ────────────────────────────────────────────────────────
 _bb: Blackboard | None = None
-_global_image_server: ImageServer | None = None
+_global_image_server: MediaServer | None = None
+_global_map_navigator: MapNavigator | None = None
 _global_event_db = None
 _active_session: AgentSession | None = None
 
@@ -139,15 +141,17 @@ def _set_conv_state(state: str) -> None:
 
 # ── Agent class ──────────────────────────────────────────────────────────────
 
-class CampusAgent(Agent, TimeTools, SearchTools):
-    def __init__(self, image_server: ImageServer | None, event_db=None):
+class CampusAgent(Agent, TimeTools, SearchTools, AppearanceTools):
+    def __init__(self, image_server: MediaServer | None, event_db=None):
         from voice.prompt import SYSTEM_INSTRUCTIONS
 
         assets_dir = APP_DIR / "assets"
         self.image_manager = ImageManager(assets_dir)
         self.image_server = image_server
         self.event_db = event_db
-        self.map_navigator = MapNavigator()
+        self.map_navigator = _global_map_navigator or MapNavigator()
+        if image_server is not None:
+            image_server.set_map_navigator(self.map_navigator)
         self._room: rtc.Room | None = None
         self.content_tools = ContentTools(
             image_manager=self.image_manager,
@@ -219,11 +223,34 @@ class CampusAgent(Agent, TimeTools, SearchTools):
 
 # ── Prewarm & Entrypoint ─────────────────────────────────────────────────────
 
-def _init_image_server(port: int = 8080) -> None:
-    global _global_image_server
+def _trigger_reindex() -> None:
+    """Force event DB rebuild after poster upload or manual trigger."""
+    global _global_event_db
+    try:
+        manifest_path = APP_DIR / "voice" / "event_db" / "event_manifest.json"
+        if manifest_path.exists():
+            manifest_path.unlink()
+        assets_dir = APP_DIR / "assets"
+        _global_event_db = build_event_database(assets_dir)
+        print("[VoiceService] Event database re-indexed")
+    except Exception as exc:
+        print(f"[VoiceService] Re-index failed: {exc}")
+
+
+def _init_image_server(port: int = 8080, kiosk_config: dict | None = None) -> None:
+    global _global_image_server, _global_map_navigator
     if _global_image_server is None:
         assets_dir = APP_DIR / "assets"
-        _global_image_server = ImageServer(assets_dir, port=port)
+        assets_dir.mkdir(exist_ok=True)
+        _global_map_navigator = MapNavigator()
+        _global_image_server = MediaServer(
+            assets_dir,
+            app_dir=APP_DIR,
+            port=port,
+            kiosk_config=kiosk_config,
+            map_navigator=_global_map_navigator,
+            on_reindex=_trigger_reindex,
+        )
         _global_image_server.start()
 
 
@@ -239,8 +266,20 @@ def _build_event_db_sync() -> None:
 
 def prewarm(proc: agents.JobProcess) -> None:
     """Heavy init runs once per worker process before any frontend connect."""
-    print("[VoiceService] Prewarming worker (image server, event DB, VAD)...")
-    _init_image_server()
+    print("[VoiceService] Prewarming worker (media server, event DB, VAD)...")
+    import yaml
+
+    kiosk_cfg: dict = {}
+    config_path = APP_DIR / "config.yaml"
+    if config_path.is_file():
+        try:
+            with open(config_path, encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            kiosk_cfg = cfg.get("kiosk", {}) or {}
+        except Exception:
+            pass
+    port = int(kiosk_cfg.get("port", 8080))
+    _init_image_server(port=port, kiosk_config=kiosk_cfg)
     _build_event_db_sync()
     proc.userdata["vad"] = silero.VAD.load(
         min_speech_duration=0.1,
@@ -295,7 +334,17 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         try:
             payload = packet.data.decode("utf-8")
             data = json.loads(payload)
-            if data.get("type") != "event_focus":
+            msg_type = data.get("type")
+
+            if msg_type == "theme_change":
+                theme = data.get("theme", "default")
+                rgb = resolve_eye_color(theme)
+                if _bb is not None:
+                    _bb.write(eye_color=rgb)
+                print(f"[VoiceService] theme_change: {theme!r} -> {rgb}")
+                return
+
+            if msg_type != "event_focus":
                 return
             event = data.get("event", {})
             title = event.get("message") or event.get("title") or "this item"

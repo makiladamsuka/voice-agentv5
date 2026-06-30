@@ -349,12 +349,16 @@ def main():
 
     print("=== Voice Agent V5 (Modular) ===")
 
+    eyes_cfg = cfg.get("eyes", {}) or {}
+    default_eye_color = tuple(eyes_cfg.get("eye_color", [255, 255, 255]))
+
     bb = Blackboard()
     bb.write(
         running=True,
         yaw_reference_locked=False,
         imu_calibrated=False,
         base_encoder_synced=False,
+        eye_color=default_eye_color,
         manual_control_enabled=bool(debug_viz_cfg.get("manual_control_enabled", False)),
         debug_control_cmd="",
         debug_control_seq=0,

@@ -129,6 +129,9 @@ class Blackboard:
     emotion_intensity: float = 1.0
     manual_emotion: str = None     # set via terminal/API override
 
+    # ── Eyes (written by VoiceService / theme sync; read by EyeRenderer) ───────
+    eye_color: tuple = (255, 255, 255)  # TFT fill RGB
+
     # ── Voice / Conversation (written by VoiceService) ────────────────────────
     # Layer 2 priority: overrides surroundings emotion when voice session active.
     voice_session_active: bool = False       # True when LiveKit room is connected

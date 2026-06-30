@@ -559,10 +559,16 @@ def main():
         t.start()
 
     worker_threads = list(threads)
+    shutdown_event = threading.Event()
 
     def signal_handler(sig, frame):
+        if shutdown_event.is_set():
+            return
+        # Ignore further signals while cleanup runs (avoids re-entrant sys.exit during threading shutdown)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         print("\nShutting down...")
-        bb.write(base_step_ready=False)
+        bb.write(base_step_ready=False, running=False)
         if link is not None and link.connected:
             _shutdown_home_base(
                 link,
@@ -571,7 +577,6 @@ def main():
                 servo_cfg=servo_cfg,
                 base_cfg=base_cfg,
             )
-        bb.write(running=False)
         if voice_thread is not None and voice_thread.is_alive():
             voice_thread.join(timeout=10.0)
             if voice_thread.is_alive():
@@ -589,7 +594,7 @@ def main():
                 servo_cfg=servo_cfg,
             )
             link.close(skip_home=True)
-        sys.exit(0)
+        shutdown_event.set()
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -603,8 +608,8 @@ def main():
 
     print("Robot running. Press Ctrl+C to exit.")
 
-    while True:
-        time.sleep(1.0)
+    while not shutdown_event.is_set():
+        shutdown_event.wait(timeout=1.0)
 
 
 if __name__ == "__main__":

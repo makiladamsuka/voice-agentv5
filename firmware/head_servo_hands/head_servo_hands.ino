@@ -96,7 +96,7 @@ const float   BASELINE_ALPHA = 0.05f;
 const int     BASELINE_DRIFT_MM = 50;
 const int     APPROACH_THRESHOLD_MM = 80;
 const float   APPROACH_VEL_THRESHOLD = -30.0f;    // mm/s (negative = closer)
-const int     APPROACH_CONFIRM_FRAMES = 3;
+const int     APPROACH_CONFIRM_FRAMES = 2;
 const unsigned long APPROACH_DWELL_MS = 800;       // walk-by filter
 const unsigned long BASELINE_FORCE_RELEARN_MS = 10000;
 const unsigned long TOF_EVENT_COOLDOWN_MS = 300;

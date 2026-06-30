@@ -427,11 +427,14 @@ DEBUG_DASHBOARD_HTML = """<!DOCTYPE html>
       }
 
       const cpuEl = document.getElementById("cpu-meta");
-      if (data.cpu_temp_c != null) {
-        cpuEl.textContent = `${data.cpu_temp_c.toFixed(0)}°C`;
-      } else {
-        cpuEl.textContent = "";
+      const cpuParts = [];
+      if (data.cpu_load_pct != null) {
+        cpuParts.push(`CPU ${Math.round(data.cpu_load_pct)}%`);
       }
+      if (data.cpu_temp_c != null) {
+        cpuParts.push(`${data.cpu_temp_c.toFixed(0)}°C`);
+      }
+      cpuEl.textContent = cpuParts.join(" · ");
 
       sensorNames.forEach((_, i) => {
         const mm = data.mm[i];

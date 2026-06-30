@@ -25,6 +25,8 @@ SCREEN_WIDTH, SCREEN_HEIGHT = 128, 160
 EYE_COLOR = (255, 255, 255)
 BG_COLOR = (0, 0, 0)
 EYE_SIZE = 120
+MAX_DRAW_W = SCREEN_WIDTH - 4
+MAX_DRAW_H = SCREEN_HEIGHT - 4
 FLOOR_Y = SCREEN_HEIGHT - 5
 EMOTION_CHANGE_COOLDOWN = 0.75
 
@@ -34,6 +36,16 @@ def _load_yaml(path):
         return {}
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def _clamp_eye_pos(x: float, y: float, w: float, h: float) -> tuple[float, float]:
+    """Keep eye center on-screen; safe when w/h briefly exceed screen during blink."""
+    hw = min(max(2.0, w * 0.5), SCREEN_WIDTH * 0.5 - 1.0)
+    hh = min(max(2.0, h * 0.5), SCREEN_HEIGHT * 0.5 - 1.0)
+    return (
+        max(hw, min(SCREEN_WIDTH - hw, x)),
+        max(hh, min(SCREEN_HEIGHT - hh, y)),
+    )
 
 
 class BlockyEye:
@@ -161,22 +173,25 @@ class BlockyEye:
         else:
             self.vel_w=self.vel_h=0
         self.w=self.current_w; self.h=self.current_h
-        hw=max(2.0,self.w*0.5); hh=max(2.0,self.h*0.5)
-        self.current_pos[0]=max(hw,min(SCREEN_WIDTH-hw,self.current_pos[0]))
-        self.current_pos[1]=max(hh,min(SCREEN_HEIGHT-hh,self.current_pos[1]))
+        if self.blink_state == "IDLE":
+            self.current_pos[0], self.current_pos[1] = _clamp_eye_pos(
+                self.current_pos[0], self.current_pos[1], self.w, self.h
+            )
 
     @staticmethod
     def _solid_lid_block(width: int, height: int, angle: float):
         """Opaque eyelid rectangle; bicubic rotate fringe is forced to solid black."""
         from PIL import Image
-        lid = Image.new("RGBA", (max(1, width), max(1, height)), (*BG_COLOR, 255))
+        w = max(1, min(int(width), MAX_DRAW_W * 3))
+        h = max(1, min(int(height), MAX_DRAW_H * 2))
+        lid = Image.new("RGBA", (w, h), (*BG_COLOR, 255))
         if abs(angle) <= 0.1:
             return lid
         rotated = lid.rotate(angle, resample=Image.BICUBIC, expand=True)
         px = rotated.load()
-        w, h = rotated.size
-        for y in range(h):
-            for x in range(w):
+        rw, rh = rotated.size
+        for y in range(rh):
+            for x in range(rw):
                 if px[x, y][3] > 32:
                     px[x, y] = (*BG_COLOR, 255)
                 else:
@@ -206,8 +221,8 @@ class BlockyEye:
 
     def draw(self, bg_image):
         from PIL import Image, ImageDraw
-        draw_w = max(6, min(int(self.w), SCREEN_WIDTH - 4))
-        draw_h = max(6, min(int(self.h), SCREEN_HEIGHT - 4))
+        draw_w = max(6, min(int(self.w), MAX_DRAW_W))
+        draw_h = max(6, min(int(self.h), MAX_DRAW_H))
         eye_img_size = int(max(self.base_w, self.base_h) * 2.6)
         eye_img = Image.new("RGBA", (eye_img_size, eye_img_size), (0, 0, 0, 0))
         eye_draw = ImageDraw.Draw(eye_img)
@@ -221,8 +236,11 @@ class BlockyEye:
         eye_draw.ellipse([x0, y0, x1, y1], fill=EYE_COLOR)
         self.draw_eyelids(eye_img, x0, y0, x1, y1)
 
-        paste_x = int(self.current_pos[0] - eye_img_size / 2)
-        paste_y = int(self.current_pos[1] - eye_img_size / 2)
+        cx_pos, cy_pos = _clamp_eye_pos(self.current_pos[0], self.current_pos[1], draw_w, draw_h)
+        paste_x = int(cx_pos - eye_img_size / 2)
+        paste_y = int(cy_pos - eye_img_size / 2)
+        paste_x = max(-eye_img_size, min(SCREEN_WIDTH, paste_x))
+        paste_y = max(-eye_img_size, min(SCREEN_HEIGHT, paste_y))
         bg_image.alpha_composite(eye_img, (paste_x, paste_y))
 
 
@@ -235,7 +253,7 @@ class EyeRenderer:
         s = cfg.get("stream", {}) or {}
         e = cfg.get("eyes", {}) or {}
 
-        self.render_fps = int(s.get("render_fps", 24))
+        self.render_fps = int(e.get("render_fps", s.get("render_fps", 24)))
         self.blink_speed_min = float(e.get("blink_speed_min", 3.2))
         self.blink_speed_max = float(e.get("blink_speed_max", 4.2))
 
@@ -271,8 +289,10 @@ class EyeRenderer:
         delay = 1.0 / max(1, self.render_fps)
         current_emotion = "idle"
         amp_prev_fast = 0.0
+        print(f"[EyeRenderer] Target refresh: {self.render_fps} fps")
 
         while self.bb.read("running")["running"]:
+            frame_start = time.perf_counter()
             now = time.time()
             state = self.bb.read(
                 "emotion",
@@ -357,6 +377,9 @@ class EyeRenderer:
                 except Exception as e:
                     print(f"[EyeRenderer] Display error: {e}")
 
-            time.sleep(delay)
+            frame_elapsed = time.perf_counter() - frame_start
+            sleep_left = delay - frame_elapsed
+            if sleep_left > 0:
+                time.sleep(sleep_left)
 
         print("[EyeRenderer] Stopped.")

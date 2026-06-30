@@ -310,6 +310,7 @@ arms:
   loop_hz: 50.0
 
 eyes:
+  render_fps: 40          # ST7735 eye update rate (independent of camera stream)
   blink_speed_min: 3.2
   blink_speed_max: 4.2
 

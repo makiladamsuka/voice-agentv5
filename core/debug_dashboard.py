@@ -31,6 +31,43 @@ def _read_cpu_temp_c() -> float | None:
         return None
 
 
+class _CpuLoadReader:
+    """Rolling CPU utilization from /proc/stat deltas (no psutil)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._prev_total: int | None = None
+        self._prev_idle: int | None = None
+        self._last_pct: float | None = None
+
+    def read_pct(self) -> float | None:
+        try:
+            with open("/proc/stat", encoding="ascii") as f:
+                line = f.readline()
+        except OSError:
+            return self._last_pct
+        if not line.startswith("cpu "):
+            return self._last_pct
+        parts = [int(x) for x in line.split()[1:]]
+        idle = parts[3] + (parts[4] if len(parts) > 4 else 0)
+        total = sum(parts)
+        with self._lock:
+            if self._prev_total is None:
+                self._prev_total = total
+                self._prev_idle = idle
+                return self._last_pct
+            dt_total = total - self._prev_total
+            dt_idle = idle - self._prev_idle
+            self._prev_total = total
+            self._prev_idle = idle
+            if dt_total <= 0:
+                return self._last_pct
+            pct = 100.0 * (1.0 - dt_idle / dt_total)
+            self._last_pct = max(0.0, min(100.0, pct))
+            return self._last_pct
+
+
+_CPU_LOAD = _CpuLoadReader()
 
 def _mode_display_label(
     mode: str,
@@ -87,6 +124,9 @@ def build_merged_state(
     cpu_temp = _read_cpu_temp_c()
     if cpu_temp is not None:
         merged["cpu_temp_c"] = cpu_temp
+    cpu_load = _CPU_LOAD.read_pct()
+    if cpu_load is not None:
+        merged["cpu_load_pct"] = cpu_load
     return merged
 
 

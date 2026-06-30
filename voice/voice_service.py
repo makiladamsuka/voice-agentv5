@@ -216,6 +216,28 @@ class CampusAgent(Agent, TimeTools, SearchTools):
             )
         return context_str
 
+    @function_tool
+    async def change_eye_color(self, color_name: str, context: RunContext = None) -> str:
+        """Changes the robot's eye color. Valid colors: white, red, green, blue, yellow, cyan, magenta, pistachio, coral."""
+        colors = {
+            "white": (255, 255, 255),
+            "red": (255, 0, 0),
+            "green": (0, 255, 0),
+            "blue": (0, 0, 255),
+            "yellow": (255, 255, 0),
+            "cyan": (0, 255, 255),
+            "magenta": (255, 0, 255),
+            "pistachio": (147, 197, 114),
+            "coral": (255, 127, 80),
+        }
+        color_name = color_name.lower()
+        if color_name in colors:
+            if _bb is not None:
+                _bb.write(eye_color=colors[color_name])
+            return f"Eye color changed to {color_name}."
+        else:
+            return f"Color {color_name} not recognized. Try one of: {', '.join(colors.keys())}."
+
 
 # ── Prewarm & Entrypoint ─────────────────────────────────────────────────────
 

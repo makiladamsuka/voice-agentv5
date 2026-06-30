@@ -22,7 +22,6 @@ APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
 
 SCREEN_WIDTH, SCREEN_HEIGHT = 128, 160
-EYE_COLOR = (255, 255, 255)
 BG_COLOR = (0, 0, 0)
 EYE_SIZE = 120
 FLOOR_Y = SCREEN_HEIGHT - 5
@@ -204,7 +203,7 @@ class BlockyEye:
             lid_y = int(y1 + 13 - lid_src.height)
             eye_img.alpha_composite(lid_src, (lid_x, lid_y))
 
-    def draw(self, bg_image):
+    def draw(self, bg_image, eye_color=(255, 255, 255)):
         from PIL import Image, ImageDraw
         draw_w = max(6, min(int(self.w), SCREEN_WIDTH - 4))
         draw_h = max(6, min(int(self.h), SCREEN_HEIGHT - 4))
@@ -218,7 +217,7 @@ class BlockyEye:
         y0 = cy - draw_h / 2
         x1 = cx + draw_w / 2
         y1 = cy + draw_h / 2
-        eye_draw.ellipse([x0, y0, x1, y1], fill=EYE_COLOR)
+        eye_draw.ellipse([x0, y0, x1, y1], fill=eye_color)
         self.draw_eyelids(eye_img, x0, y0, x1, y1)
 
         paste_x = int(self.current_pos[0] - eye_img_size / 2)
@@ -283,9 +282,11 @@ class EyeRenderer:
                 "voice_session_active",
                 "agent_speaking",
                 "conv_state",
+                "eye_color",
             )
             emotion   = state["emotion"]
             intensity = state["emotion_intensity"]
+            eye_color = state.get("eye_color", (255, 255, 255))
             af        = float(state.get("amplitude_fast", 0.0) or 0.0)
             da        = af - amp_prev_fast
             amp_prev_fast = af
@@ -351,7 +352,7 @@ class EyeRenderer:
                 try:
                     bg_l = Image.new("RGBA", (SCREEN_WIDTH, SCREEN_HEIGHT), (*BG_COLOR, 255))
                     bg_r = Image.new("RGBA", (SCREEN_WIDTH, SCREEN_HEIGHT), (*BG_COLOR, 255))
-                    left_eye.draw(bg_l); right_eye.draw(bg_r)
+                    left_eye.draw(bg_l, eye_color); right_eye.draw(bg_r, eye_color)
                     if disp_l: disp_l.image(bg_l.convert("RGB"))
                     if disp_r: disp_r.image(bg_r.convert("RGB"))
                 except Exception as e:

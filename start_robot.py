@@ -271,6 +271,7 @@ def main():
         debug_head_step_deg=float(debug_viz_cfg.get("head_step_deg", 5.0)),
         debug_live_tune=load_tune_defaults_from_config(cfg),
         debug_tune_seq=0,
+        eye_color=(255, 255, 255),
     )
 
     port_label = port if port else "auto"

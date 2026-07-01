@@ -419,7 +419,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <strong>Browser or terminal:</strong> <code>M</code>/<code>N</code> hold base spin · <code>WASD</code> head ·
     <code>C</code> center · <code>H</code> spin to HOME IMU yaw 0° · <code>Z</code> zero encoder here (no move) ·
     <code>?</code> status · <code>Q</code> quit.
-    Grey cone = startup HOME forward. Black strip = base heading; map rotates with IMU yaw from HOME.
+    Grey cone = startup HOME forward (fixed). Black strip = base heading; robot base rotates with IMU yaw from HOME.
   </p>
 
   <script type="module" src="/static/yaw_robot_viz.mjs"></script>

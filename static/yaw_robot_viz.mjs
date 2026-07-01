@@ -25,7 +25,7 @@ controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI * 0.22;
 controls.minPolarAngle = Math.PI * 0.05;
 
-// World spins under robot (heading-up, IMU-primary)
+// Fixed world reference — HOME markers stay put
 const mapGroup = new THREE.Group();
 scene.add(mapGroup);
 
@@ -73,7 +73,7 @@ function updateLimitArc(maxYawDeg) {
   limitGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.35 })));
 }
 
-// Robot fixed on screen; black strip = base forward (IMU heading)
+// Robot base rotates with IMU heading from HOME; black strip = forward
 const robot = new THREE.Group();
 scene.add(robot);
 
@@ -109,7 +109,8 @@ function updateYawScene(data) {
   const yaw = Number(data.map_yaw_deg ?? data.from_home_imu_deg ?? 0);
   const maxYaw = Number(data.max_yaw_deg ?? 120);
 
-  mapGroup.rotation.y = -deg(yaw) * sign;
+  mapGroup.rotation.y = 0;
+  robot.rotation.y = deg(yaw) * sign;
 
   if (Math.abs(maxYaw - lastMaxYaw) > 0.5) {
     lastMaxYaw = maxYaw;

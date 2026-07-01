@@ -16,7 +16,8 @@ Locks HOME (forward) once at start. Heading follows IMU; when the base is still
   ?         print status
   Q         quit
 
-Viz: http://localhost:8766  — click page, then keyboard (or use terminal)
+Viz: http://localhost:8766  — click page, then keyboard (or use terminal).
+  3D view rotates the robot base; HOME floor markers stay fixed.
 
 Stop start_robot.py / approach.py first — one serial port.
 """

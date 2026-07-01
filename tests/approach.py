@@ -128,6 +128,8 @@ def run_approach(
         snap_max_disagreement_deg=float(
             imu_cfg.get("drift_snap_max_disagreement_deg", 5.0)
         ),
+        pan_stable_deg=float(imu_cfg.get("drift_pan_stable_deg", 0.2)),
+        enc_stable_deg=float(imu_cfg.get("drift_enc_stable_deg", 0.2)),
     )
 
     pan = float(servo_cfg.get("pan_center", 100.0))

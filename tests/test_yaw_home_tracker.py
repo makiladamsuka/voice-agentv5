@@ -94,6 +94,24 @@ def test_head_pan_does_not_block_base_drift_correction():
     assert abs(s.from_home_imu_deg - (-7.0)) < 0.01
 
 
+def test_head_pan_motion_holds_base_on_encoder():
+    t = _locked()
+    t.update(encoder_deg=0.0, encoder_count=0, imu_yaw_deg=0.0, pan_mech_deg=0.0, gyro_dps=0.0, now=0.05)
+    s = t.update(
+        encoder_deg=0.0,
+        encoder_count=0,
+        imu_yaw_deg=25.0,
+        pan_mech_deg=12.0,
+        gyro_dps=4.0,
+        now=0.1,
+    )
+    assert s is not None
+    assert s.head_only_motion
+    assert abs(s.from_home_imu_deg) < 0.01
+    assert abs(s.from_home_enc_deg) < 0.01
+    assert abs(s.disagreement_deg) < 0.01
+
+
 def test_spin_direction_for_imu_homing():
     from lib.base_home_drive import spin_left_toward_zero
 

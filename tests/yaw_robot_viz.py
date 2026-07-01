@@ -17,7 +17,7 @@ Locks HOME (forward) once at start. Heading follows IMU; when the base is still
   Q         quit
 
 Viz: http://localhost:8766  — click page, then keyboard (or use terminal).
-  3D view rotates the robot base; HOME floor markers stay fixed.
+  3D view: grey base (IMU, M/N) + pink head (mech pan from HOME, A/D).
 
 Stop start_robot.py / approach.py first — one serial port.
 """
@@ -232,6 +232,8 @@ def _publish_state(
         spin_label=spin_label,
         from_home_enc_deg=sample.from_home_enc_deg,
         from_home_imu_deg=sample.from_home_imu_deg,
+        imu_total_from_home_deg=sample.imu_total_from_home_deg,
+        pan_from_home_deg=sample.pan_from_home_deg,
         disagreement_deg=sample.disagreement_deg,
         encoder_deg=sample.encoder_deg,
         encoder_count=sample.encoder_count,
@@ -622,6 +624,8 @@ def run(
         still_hold_sec=float(imu_cfg.get("drift_stationary_hold_sec", 0.35)),
         gyro_max_dps=float(imu_cfg.get("drift_gyro_max_dps", 6.0)),
         snap_max_disagreement_deg=float(imu_cfg.get("drift_snap_max_disagreement_deg", 5.0)),
+        pan_stable_deg=float(imu_cfg.get("drift_pan_stable_deg", 0.2)),
+        enc_stable_deg=float(imu_cfg.get("drift_enc_stable_deg", 0.2)),
     )
     enc0, count0, _, cpd0 = _query_enc(link, 0.0)
     tracker.counts_per_degree = max(cpd0, 0.05)
@@ -780,6 +784,8 @@ def run(
             if (
                 sample is not None
                 and sample.stationary
+                and sample.pan_stable
+                and not sample.head_only_motion
                 and active_spin == 0
                 and not base_busy
                 and abs(sample.disagreement_deg) > 0.5

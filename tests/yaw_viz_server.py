@@ -69,6 +69,7 @@ class YawVizState:
         except Exception:
             pass
         self.base_yaw_sign = float(viz_cfg.get("base_yaw_sign", -1.0))
+        self.pan_yaw_sign = float(viz_cfg.get("pan_yaw_sign", -1.0))
         self.max_yaw_deg = float(base_cfg.get("max_yaw_deg", 120.0))
         self.connected = False
         self.port = ""
@@ -80,6 +81,8 @@ class YawVizState:
         self.last_ts = 0.0
         self.from_home_enc_deg = 0.0
         self.from_home_imu_deg = 0.0
+        self.imu_total_from_home_deg = 0.0
+        self.pan_from_home_deg = 0.0
         self.disagreement_deg = 0.0
         self.encoder_deg = 0.0
         self.encoder_count = 0
@@ -111,9 +114,12 @@ class YawVizState:
                 "spin_label": self.spin_label,
                 "last_ts": self.last_ts,
                 "base_yaw_sign": self.base_yaw_sign,
+                "pan_yaw_sign": self.pan_yaw_sign,
                 "max_yaw_deg": self.max_yaw_deg,
                 "from_home_enc_deg": self.from_home_enc_deg,
                 "from_home_imu_deg": self.from_home_imu_deg,
+                "imu_total_from_home_deg": self.imu_total_from_home_deg,
+                "pan_from_home_deg": self.pan_from_home_deg,
                 "disagreement_deg": self.disagreement_deg,
                 "encoder_deg": self.encoder_deg,
                 "encoder_count": self.encoder_count,
@@ -419,7 +425,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <strong>Browser or terminal:</strong> <code>M</code>/<code>N</code> hold base spin · <code>WASD</code> head ·
     <code>C</code> center · <code>H</code> spin to HOME IMU yaw 0° · <code>Z</code> zero encoder here (no move) ·
     <code>?</code> status · <code>Q</code> quit.
-    Grey cone = startup HOME forward (fixed). Black strip = base heading; robot base rotates with IMU yaw from HOME.
+    Grey cone = HOME forward (fixed). Grey base = IMU base yaw (M/N spin); pink head = mechanical pan from HOME (A/D).
   </p>
 
   <script type="module" src="/static/yaw_robot_viz.mjs"></script>

@@ -148,7 +148,13 @@ def update_tracker(
         gyro_dps=gyro,
         base_busy=base_busy,
     )
-    if sample is not None and not base_busy and abs(sample.disagreement_deg) > 0.5:
+    if (
+        sample is not None
+        and not base_busy
+        and sample.pan_stable
+        and not sample.head_only_motion
+        and abs(sample.disagreement_deg) > 0.5
+    ):
         tracker.force_snap_imu_to_encoder(
             encoder_deg=encoder_deg,
             imu_yaw_deg=imu_yaw,

@@ -211,7 +211,7 @@ class _ByeSequenceRunner:
                 return
             print(f"[ByeWaveService] Wave by {side} -- playing '{key}' ({len(frames)} frames)")
             self._running = True
-            self._bb.write(bye_wave_active=True)
+            self._bb.write(bye_wave_active=True, bye_animation_name=key)
             self._thread = threading.Thread(
                 target=self._run_animation, args=(frames,), daemon=True, name="ByeAnimation"
             )
@@ -222,7 +222,17 @@ class _ByeSequenceRunner:
         frame_duration = 0.25  # Time to reach each frame
         poll_interval = 0.02  # 50 Hz update rate
         
-        for f in frames:
+        # Write animation state to Blackboard
+        self._bb.write(
+            bye_animation_playing=True,
+            bye_animation_total_frames=len(frames),
+            bye_animation_current_frame=0
+        )
+        
+        for frame_idx, f in enumerate(frames):
+            # Update current frame index
+            self._bb.write(bye_animation_current_frame=frame_idx + 1)
+            
             target_a0, target_a1, target_a2, target_a3 = f["a0"], f["a1"], f["a2"], f["a3"]
             
             # Apply safety envelope if available
@@ -269,6 +279,12 @@ class _ByeSequenceRunner:
             # Ensure we reach the target
             self._bb.write(arm_a0=target_a0, arm_a1=target_a1, arm_a2=target_a2, arm_a3=target_a3)
         
+        # Clear animation state
+        self._bb.write(
+            bye_animation_playing=False,
+            bye_animation_current_frame=0
+        )
+        
         if self._on_complete is not None:
             self._on_complete()
         self._bb.write(bye_wave_active=False)
@@ -291,7 +307,7 @@ def _draw_gauge(frame, x, y, width, score):
 
 
 def _draw_hud(frame, hand_states, announcement_hand, announcement_end_time,
-              cooldown_until, fps, now):
+              cooldown_until, fps, now, arm_positions=None, animation_state=None):
     fh, fw = frame.shape[:2]
     ov = frame.copy()
     cv2.rectangle(ov, (0, 0), (fw, 26), (15, 15, 20), -1)
@@ -305,6 +321,57 @@ def _draw_hud(frame, hand_states, announcement_hand, announcement_end_time,
     if rem > 0:
         cv2.putText(frame, f"COOLDOWN {rem:.1f}s", (fw // 2 - 42, 42),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.33, (255, 106, 0), 1, cv2.LINE_AA)
+    
+    # Draw arm positions overlay (top right area)
+    if arm_positions is not None:
+        arm_x = fw - 130
+        arm_y = 35
+        arm_w, arm_h = 125, 70
+        ov_arm = frame.copy()
+        cv2.rectangle(ov_arm, (arm_x, arm_y), (arm_x + arm_w, arm_y + arm_h), (20, 20, 30), -1)
+        cv2.rectangle(ov_arm, (arm_x, arm_y), (arm_x + arm_w, arm_y + arm_h), (0, 200, 255), 1)
+        cv2.addWeighted(ov_arm, 0.8, frame, 0.2, 0, frame)
+        
+        cv2.putText(frame, "ARM POSITIONS", (arm_x + 3, arm_y + 12),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.28, (0, 200, 255), 1, cv2.LINE_AA)
+        
+        a0 = arm_positions.get("arm_a0", 0.0)
+        a1 = arm_positions.get("arm_a1", 0.0)
+        a2 = arm_positions.get("arm_a2", 0.0)
+        a3 = arm_positions.get("arm_a3", 0.0)
+        
+        cv2.putText(frame, f"a0:{a0:5.1f}  a1:{a1:5.1f}", (arm_x + 3, arm_y + 28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.26, (200, 200, 200), 1, cv2.LINE_AA)
+        cv2.putText(frame, f"a2:{a2:5.1f}  a3:{a3:5.1f}", (arm_x + 3, arm_y + 43),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.26, (200, 200, 200), 1, cv2.LINE_AA)
+        
+        # Show motor type labels
+        cv2.putText(frame, "vertical(slow)", (arm_x + 3, arm_y + 55),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.22, (150, 150, 150), 1, cv2.LINE_AA)
+        cv2.putText(frame, "horizontal", (arm_x + 3, arm_y + 67),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.22, (150, 150, 150), 1, cv2.LINE_AA)
+    
+    # Draw animation state overlay (center top)
+    if animation_state is not None and animation_state.get("is_playing"):
+        anim_name = animation_state.get("animation", "unknown")
+        frame_idx = animation_state.get("frame", 0)
+        total_frames = animation_state.get("total_frames", 0)
+        
+        msg = f"ANIM: {anim_name} [{frame_idx}/{total_frames}]"
+        ts = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)[0]
+        tx = max(0, (fw - ts[0]) // 2)
+        ty = 50
+        
+        # Background box
+        pad = 5
+        ov_anim = frame.copy()
+        cv2.rectangle(ov_anim, (tx - pad, ty - 15), (tx + ts[0] + pad, ty + 5), (20, 20, 30), -1)
+        cv2.rectangle(ov_anim, (tx - pad, ty - 15), (tx + ts[0] + pad, ty + 5), (255, 200, 0), 1)
+        cv2.addWeighted(ov_anim, 0.85, frame, 0.15, 0, frame)
+        
+        cv2.putText(frame, msg, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.35,
+                    (255, 200, 0), 1, cv2.LINE_AA)
+    
     for side, bx in (("Left", 5), ("Right", fw - 82)):
         state = hand_states[side]
         seen = (now - state["last_seen"]) < 0.4
@@ -464,6 +531,25 @@ class ByeWaveService:
             cooldown_until = self._bb.read("bye_wave_cooldown_until")["bye_wave_cooldown_until"]
             waving_detector.process(detections, now, cooldown_until, frame.shape)
 
+            # Read arm positions and animation state for overlay
+            arm_data = self._bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
+            anim_data = self._bb.read(
+                "bye_animation_playing",
+                "bye_animation_name", 
+                "bye_animation_current_frame",
+                "bye_animation_total_frames"
+            )
+            
+            # Build animation state dict
+            animation_state = None
+            if anim_data.get("bye_animation_playing"):
+                animation_state = {
+                    "is_playing": True,
+                    "animation": anim_data.get("bye_animation_name", "unknown"),
+                    "frame": anim_data.get("bye_animation_current_frame", 0),
+                    "total_frames": anim_data.get("bye_animation_total_frames", 0)
+                }
+
             fps_now = time.time()
             fps = 1.0 / max(fps_now - prev_time, 1e-6)
             prev_time = fps_now
@@ -472,6 +558,8 @@ class ByeWaveService:
                 annotated, waving_detector.hand_states,
                 waving_detector.announcement_hand, waving_detector.announcement_end_time,
                 cooldown_until, fps, now,
+                arm_positions=arm_data,
+                animation_state=animation_state
             )
 
             with _frame_lock:

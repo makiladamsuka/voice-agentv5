@@ -218,6 +218,7 @@ class FaceGreetingArmService:
         
         self.enabled = bool(fg.get("enabled", True))
         self.memory_timeout_sec = float(fg.get("memory_timeout_minutes", 30.0)) * 60.0
+        self.greeting_cooldown_sec = float(fg.get("greeting_cooldown_sec", 30.0))  # Global cooldown
         self.min_face_area_ratio = float(fg.get("min_face_area_ratio", 0.012))
         self.hold_sec = float(fg.get("hold_sec", 0.5))  # Face must be visible this long
         self.embedding_threshold = float(fg.get("embedding_threshold", 0.45))
@@ -236,6 +237,9 @@ class FaceGreetingArmService:
         # Memory of greeted faces
         self.greeted_faces: List[GreetedFace] = []
         
+        # Global last greeting time (for cooldown between any greetings)
+        self._last_greeting_time: Optional[float] = None
+        
         # Current detection state
         self._face_since: Optional[float] = None
         self._current_embedding: Optional[np.ndarray] = None
@@ -243,6 +247,7 @@ class FaceGreetingArmService:
         
         print(f"[FaceGreetingArm] Initialized with {len(self.hi_poses)} hi poses: {self.hi_poses}")
         print(f"[FaceGreetingArm] Memory timeout: {self.memory_timeout_sec / 60:.1f} minutes")
+        print(f"[FaceGreetingArm] Greeting cooldown: {self.greeting_cooldown_sec:.1f} seconds (global)")
         print(f"[FaceGreetingArm] Recognition mode: {'LANDMARKS ONLY (geometric)' if self.use_landmarks_only else 'Full (landmarks + texture + color)'}")
     
     def cleanup_expired_faces(self, current_time: float):
@@ -450,6 +455,23 @@ class FaceGreetingArmService:
                             
                             if embedding is not None:
                                 print(f"[FaceGreetingArm] DEBUG: Embedding computed, checking memory...")
+                                
+                                # Check global cooldown first
+                                if self._last_greeting_time is not None:
+                                    time_since_last_greeting = now - self._last_greeting_time
+                                    if time_since_last_greeting < self.greeting_cooldown_sec:
+                                        cooldown_remaining = self.greeting_cooldown_sec - time_since_last_greeting
+                                        print(f"[FaceGreetingArm] Global cooldown active ({cooldown_remaining:.1f}s remaining)")
+                                        # Still check memory but don't greet
+                                        matching_face = self.find_matching_face(embedding)
+                                        if matching_face is not None:
+                                            matching_face.update(now)  # Update timestamp
+                                        else:
+                                            # New face but cooldown active - add to memory without greeting
+                                            self.add_greeted_face(embedding, now)
+                                            print(f"[FaceGreetingArm] New face detected but cooldown active - added to memory")
+                                        continue
+                                
                                 # Check if this face has been greeted recently
                                 matching_face = self.find_matching_face(embedding)
                                 
@@ -457,12 +479,14 @@ class FaceGreetingArmService:
                                     # New face - greet it!
                                     pose = self.trigger_greeting()
                                     self.add_greeted_face(embedding, now)
+                                    self._last_greeting_time = now
                                     print(f"[FaceGreetingArm] New face detected → {pose}")
                                 
                                 elif matching_face.is_expired(now, self.memory_timeout_sec):
                                     # Known face but forgotten (expired) - greet again!
                                     pose = self.trigger_greeting()
                                     matching_face.update(now)
+                                    self._last_greeting_time = now
                                     print(f"[FaceGreetingArm] Forgotten face returned → {pose}")
                                 
                                 else:

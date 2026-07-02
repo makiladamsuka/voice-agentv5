@@ -328,8 +328,8 @@ face_greeting_arm:
   enabled: true
   memory_timeout_minutes: 30.0   # Remember faces for 30 minutes
   min_face_area_ratio: 0.012     # Minimum face size to trigger greeting
-  hold_sec: 0.5                  # Face must be visible this long before greeting
-  embedding_threshold: 0.35      # Face matching threshold (lower = more strict, uses landmarks + LBP + color)
+  hold_sec: 1.0                  # Face must be visible this long before greeting (increased for stability)
+  embedding_threshold: 0.25      # Face matching threshold (lower = more strict, uses landmarks + LBP + color)
   cleanup_interval_sec: 60.0     # How often to clean up expired faces
 
 eyes:

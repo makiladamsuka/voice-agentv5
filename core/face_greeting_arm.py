@@ -123,7 +123,8 @@ def compute_face_embedding(face_roi: np.ndarray, landmarks: Optional[np.ndarray]
         
         # 3. COLOR HISTOGRAMS (Appearance Features)
         # HSV for robustness to lighting
-        hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
+        # Note: picamera2 outputs RGB, not BGR
+        hsv = cv2.cvtColor(resized, cv2.COLOR_RGB2HSV)
         h_hist = cv2.calcHist([hsv], [0], None, [16], [0, 180])
         s_hist = cv2.calcHist([hsv], [1], None, [16], [0, 256])
         v_hist = cv2.calcHist([hsv], [2], None, [16], [0, 256])

@@ -99,6 +99,15 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 "<div class='info'>Lower = SLOWER swaps. Higher = faster. Default: 1.0x</div>"
                 "</div>"
                 
+                "<div class='control-group'>"
+                "<label>✨ Smoothness (easing strength)</label>"
+                "<div class='slider-container'>"
+                "<input type='range' id='smoothness' min='1.0' max='5.0' step='0.5' value='3.0'>"
+                "<span class='value-display' id='smoothnessValue'>3.0</span>"
+                "</div>"
+                "<div class='info'>Higher = MORE smooth/gradual. Lower = more direct/linear. Default: 3.0 (cubic)</div>"
+                "</div>"
+                
                 "<button onclick='resetDefaults()'>Reset to Defaults</button>"
                 "<button onclick='applyToConfig()'>Save to Config</button>"
                 "<div class='status' id='status'></div>"
@@ -110,8 +119,10 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 "<script>"
                 "const verticalSlider = document.getElementById('verticalSpeed');"
                 "const horizontalSlider = document.getElementById('horizontalSpeed');"
+                "const smoothnessSlider = document.getElementById('smoothness');"
                 "const verticalValue = document.getElementById('verticalValue');"
                 "const horizontalValue = document.getElementById('horizontalValue');"
+                "const smoothnessValue = document.getElementById('smoothnessValue');"
                 "const status = document.getElementById('status');"
                 
                 "verticalSlider.oninput = function(){"
@@ -124,21 +135,27 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 "  updateSpeeds();"
                 "};"
                 
+                "smoothnessSlider.oninput = function(){"
+                "  smoothnessValue.textContent = this.value;"
+                "  updateSpeeds();"
+                "};"
+                
                 "function updateSpeeds(){"
                 "  fetch('/api/set_speeds', {"
                 "    method: 'POST',"
                 "    headers: {'Content-Type': 'application/json'},"
                 "    body: JSON.stringify({"
                 "      vertical_speed: parseFloat(verticalSlider.value),"
-                "      horizontal_speed: parseFloat(horizontalSlider.value)"
+                "      horizontal_speed: parseFloat(horizontalSlider.value),"
+                "      smoothness: parseFloat(smoothnessSlider.value)"
                 "    })"
                 "  }).then(r => r.json()).then(data => {"
                 "    if(data.success){"
-                "      status.textContent = '✓ Speeds updated in real-time';"
+                "      status.textContent = '✓ Settings updated in real-time';"
                 "      status.style.color = '#10b981';"
                 "    }"
                 "  }).catch(() => {"
-                "    status.textContent = '✗ Failed to update speeds';"
+                "    status.textContent = '✗ Failed to update settings';"
                 "    status.style.color = '#ef4444';"
                 "  });"
                 "};"
@@ -146,8 +163,10 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 "function resetDefaults(){"
                 "  verticalSlider.value = 0.8;"
                 "  horizontalSlider.value = 1.0;"
+                "  smoothnessSlider.value = 3.0;"
                 "  verticalValue.textContent = '0.8x';"
                 "  horizontalValue.textContent = '1.0x';"
+                "  smoothnessValue.textContent = '3.0';"
                 "  updateSpeeds();"
                 "};"
                 
@@ -157,7 +176,8 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 "    headers: {'Content-Type': 'application/json'},"
                 "    body: JSON.stringify({"
                 "      vertical_speed: parseFloat(verticalSlider.value),"
-                "      horizontal_speed: parseFloat(horizontalSlider.value)"
+                "      horizontal_speed: parseFloat(horizontalSlider.value),"
+                "      smoothness: parseFloat(smoothnessSlider.value)"
                 "    })"
                 "  }).then(r => r.json()).then(data => {"
                 "    if(data.success){"
@@ -174,8 +194,10 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 "fetch('/api/get_speeds').then(r => r.json()).then(data => {"
                 "  verticalSlider.value = data.vertical_speed;"
                 "  horizontalSlider.value = data.horizontal_speed;"
+                "  smoothnessSlider.value = data.smoothness || 3.0;"
                 "  verticalValue.textContent = data.vertical_speed + 'x';"
                 "  horizontalValue.textContent = data.horizontal_speed + 'x';"
+                "  smoothnessValue.textContent = (data.smoothness || 3.0);"
                 "});"
                 "</script>"
                 "</body></html>"
@@ -219,12 +241,15 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 data = json.loads(body)
                 vertical = float(data.get('vertical_speed', 0.8))
                 horizontal = float(data.get('horizontal_speed', 1.0))
+                smoothness = float(data.get('smoothness', 3.0))
                 # Update the bye_runner speeds via Blackboard
                 self.server.bye_service._vertical_speed = vertical
                 self.server.bye_service._horizontal_speed = horizontal
+                self.server.bye_service._smoothness = smoothness
                 if hasattr(self.server, 'bye_runner'):
                     self.server.bye_runner._vertical_speed = vertical
                     self.server.bye_runner._horizontal_speed = horizontal
+                    self.server.bye_runner._smoothness = smoothness
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -238,12 +263,14 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
             try:
                 vertical = self.server.bye_service._vertical_speed
                 horizontal = self.server.bye_service._horizontal_speed
+                smoothness = self.server.bye_service._smoothness
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({
                     "vertical_speed": vertical,
-                    "horizontal_speed": horizontal
+                    "horizontal_speed": horizontal,
+                    "smoothness": smoothness
                 }).encode())
             except Exception as e:
                 self.send_response(500)
@@ -257,6 +284,7 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 data = json.loads(body)
                 vertical = float(data.get('vertical_speed', 0.8))
                 horizontal = float(data.get('horizontal_speed', 1.0))
+                smoothness = float(data.get('smoothness', 3.0))
                 
                 # Read current config
                 config_path = pathlib.Path(__file__).resolve().parent.parent / "config.yaml"
@@ -282,6 +310,23 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                     config_text,
                     flags=re.DOTALL
                 )
+                
+                # Update smoothness (add if doesn't exist)
+                if 'smoothness:' in config_text:
+                    config_text = re.sub(
+                        r'(talk_gesture:.*?smoothness:\s*)[0-9.]+',
+                        f'\\g<1>{smoothness}',
+                        config_text,
+                        flags=re.DOTALL
+                    )
+                else:
+                    # Add smoothness after horizontal_speed
+                    config_text = re.sub(
+                        r'(talk_gesture:.*?horizontal_speed:\s*[0-9.]+[^\n]*\n)',
+                        f'\\g<1>  smoothness: {smoothness}              # Easing power for smooth motion (1.0=linear, 3.0=cubic, 5.0=quintic)\n',
+                        config_text,
+                        flags=re.DOTALL
+                    )
                 
                 # Write back
                 with open(config_path, 'w') as f:
@@ -386,7 +431,7 @@ class _ByeSequenceRunner:
     Now with dual-speed interpolation for natural movements.
     """
     def __init__(self, bb, presets_path, cooldown_sec=10.0, on_complete=None, envelope=None,
-                 vertical_speed=0.8, horizontal_speed=1.5):
+                 vertical_speed=0.8, horizontal_speed=1.5, smoothness=3.0):
         self._bb = bb
         self._presets_path = presets_path
         self._cooldown_sec = cooldown_sec
@@ -394,6 +439,7 @@ class _ByeSequenceRunner:
         self._envelope = envelope
         self._vertical_speed = vertical_speed  # Speed for a0, a1
         self._horizontal_speed = horizontal_speed  # Speed for a2, a3
+        self._smoothness = smoothness  # Easing power (1.0=linear, 3.0=cubic, 5.0=quintic)
         self._lock = threading.Lock()
         self._thread = None
         self._running = False
@@ -405,17 +451,19 @@ class _ByeSequenceRunner:
     def _ease_in_out(self, t):
         """Smooth ease-in-out function for continuous motion.
         
-        Uses cubic easing for smooth acceleration and deceleration.
+        Uses configurable easing power for adjustable smoothness.
         Input t should be in range [0, 1], output is also [0, 1].
         
         This prevents jerky starts/stops and creates fluid motion.
+        Higher smoothness = more gradual ease, lower = more linear.
         """
+        power = self._smoothness
         if t < 0.5:
             # Ease in (accelerate)
-            return 4 * t * t * t
+            return pow(2, power - 1) * pow(t, power)
         else:
             # Ease out (decelerate)
-            return 1 - pow(-2 * t + 2, 3) / 2
+            return 1 - pow(-2 * t + 2, power) / pow(2, power - 1)
 
     def trigger(self, side):
         with self._lock:
@@ -684,6 +732,7 @@ class ByeWaveService:
         # Read dual-speed settings from talk_gesture config
         self._vertical_speed = float(talk_cfg.get("vertical_speed", 0.8))
         self._horizontal_speed = float(talk_cfg.get("horizontal_speed", 1.5))
+        self._smoothness = float(talk_cfg.get("smoothness", 3.0))
 
         app_dir = pathlib.Path(__file__).resolve().parent.parent
         raw = bw_cfg.get("presets_path", "tests/arm_pose_presets.json")
@@ -731,6 +780,7 @@ class ByeWaveService:
             envelope=self._envelope,
             vertical_speed=self._vertical_speed,
             horizontal_speed=self._horizontal_speed,
+            smoothness=self._smoothness,
         )
         # Attach runner to server for API access
         server.bye_runner = bye_runner

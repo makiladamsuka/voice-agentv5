@@ -254,7 +254,6 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             try:
-                import yaml
                 data = json.loads(body)
                 vertical = float(data.get('vertical_speed', 0.8))
                 horizontal = float(data.get('horizontal_speed', 1.0))
@@ -262,17 +261,31 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 # Read current config
                 config_path = pathlib.Path(__file__).resolve().parent.parent / "config.yaml"
                 with open(config_path, 'r') as f:
-                    config = yaml.safe_load(f)
+                    config_text = f.read()
                 
-                # Update talk_gesture section
-                if 'talk_gesture' not in config:
-                    config['talk_gesture'] = {}
-                config['talk_gesture']['vertical_speed'] = vertical
-                config['talk_gesture']['horizontal_speed'] = horizontal
+                # Use regex to update only the talk_gesture section values
+                # This preserves all comments, formatting, and other sections
+                import re
+                
+                # Update vertical_speed
+                config_text = re.sub(
+                    r'(talk_gesture:.*?vertical_speed:\s*)[0-9.]+',
+                    f'\\g<1>{vertical}',
+                    config_text,
+                    flags=re.DOTALL
+                )
+                
+                # Update horizontal_speed  
+                config_text = re.sub(
+                    r'(talk_gesture:.*?horizontal_speed:\s*)[0-9.]+',
+                    f'\\g<1>{horizontal}',
+                    config_text,
+                    flags=re.DOTALL
+                )
                 
                 # Write back
                 with open(config_path, 'w') as f:
-                    yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
+                    f.write(config_text)
                 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")

@@ -45,17 +45,139 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
             port = self.server.server_address[1]
             html = (
                 "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                "<title>Bye Wave Hand Stream</title>"
-                "<style>body{background:#0f101a;color:#f1f5f9;font-family:sans-serif;"
-                "text-align:center;padding:30px;margin:0}"
-                "h1{color:#ff6a00;font-size:1.8rem}"
-                ".box{display:inline-block;border-radius:12px;overflow:hidden;"
-                "border:2px solid #ff6a00;box-shadow:0 0 25px rgba(255,106,0,.2)}"
-                "img{display:block;max-width:100%;height:auto}</style></head>"
-                "<body><h1>Wave Detector</h1>"
-                "<p style='color:#94a3b8'>No height limit. Hand near face triggers bye animation.</p>"
-                "<div class='box'><img src='/stream'/></div>"
-                f"<p style='color:#555;font-size:.75rem'>http://{host_ip}:{port}/stream</p>"
+                "<title>Bye Wave Debug Stream</title>"
+                "<style>"
+                "body{background:#0f101a;color:#f1f5f9;font-family:sans-serif;"
+                "text-align:center;padding:20px;margin:0}"
+                "h1{color:#ff6a00;font-size:1.8rem;margin-bottom:10px}"
+                ".container{max-width:1200px;margin:0 auto}"
+                ".video-box{display:inline-block;border-radius:12px;overflow:hidden;"
+                "border:2px solid #ff6a00;box-shadow:0 0 25px rgba(255,106,0,.2);margin-bottom:20px}"
+                "img{display:block;max-width:100%;height:auto}"
+                ".controls{background:#1a1d2e;padding:20px;border-radius:12px;"
+                "border:2px solid #2a2f45;margin-top:20px}"
+                ".control-group{margin:15px 0;text-align:left;max-width:600px;margin-left:auto;margin-right:auto}"
+                ".control-group label{display:block;color:#94a3b8;font-size:0.9rem;margin-bottom:5px}"
+                ".slider-container{display:flex;align-items:center;gap:15px}"
+                "input[type=range]{flex:1;height:8px;border-radius:5px;background:#2a2f45;"
+                "outline:none;-webkit-appearance:none}"
+                "input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;"
+                "width:20px;height:20px;border-radius:50%;background:#ff6a00;cursor:pointer}"
+                "input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;"
+                "background:#ff6a00;cursor:pointer;border:none}"
+                ".value-display{min-width:60px;text-align:right;font-weight:bold;color:#ff6a00;"
+                "font-size:1.1rem}"
+                ".info{color:#64748b;font-size:0.85rem;margin-top:5px}"
+                "button{background:#ff6a00;color:white;border:none;padding:10px 20px;"
+                "border-radius:6px;cursor:pointer;font-size:0.9rem;margin:5px}"
+                "button:hover{background:#ff8533}"
+                ".status{color:#10b981;font-size:0.85rem;margin-top:10px}"
+                "</style>"
+                "</head><body>"
+                "<div class='container'>"
+                "<h1>🤖 Bye Wave Debug Stream</h1>"
+                "<p style='color:#94a3b8'>Hand near face triggers bye animation. Adjust speeds in real-time.</p>"
+                "<div class='video-box'><img src='/stream'/></div>"
+                "<div class='controls'>"
+                "<h3 style='color:#ff6a00;margin-top:0'>⚙️ Speed Controls</h3>"
+                
+                "<div class='control-group'>"
+                "<label>🔽 Vertical Speed (a0, a1 - shoulder/elbow up/down)</label>"
+                "<div class='slider-container'>"
+                "<input type='range' id='verticalSpeed' min='0.3' max='1.5' step='0.05' value='0.8'>"
+                "<span class='value-display' id='verticalValue'>0.8x</span>"
+                "</div>"
+                "<div class='info'>Slower = more deliberate movements. Default: 0.8x</div>"
+                "</div>"
+                
+                "<div class='control-group'>"
+                "<label>↔️ Horizontal Speed (a2, a3 - wrist/hand swap)</label>"
+                "<div class='slider-container'>"
+                "<input type='range' id='horizontalSpeed' min='0.3' max='2.0' step='0.05' value='1.0'>"
+                "<span class='value-display' id='horizontalValue'>1.0x</span>"
+                "</div>"
+                "<div class='info'>Faster = quicker waves. Too fast may skip frames. Default: 1.0x</div>"
+                "</div>"
+                
+                "<button onclick='resetDefaults()'>Reset to Defaults</button>"
+                "<button onclick='applyToConfig()'>Save to Config</button>"
+                "<div class='status' id='status'></div>"
+                "</div>"
+                
+                f"<p style='color:#555;font-size:.75rem;margin-top:20px'>Stream: http://{host_ip}:{port}/stream</p>"
+                "</div>"
+                
+                "<script>"
+                "const verticalSlider = document.getElementById('verticalSpeed');"
+                "const horizontalSlider = document.getElementById('horizontalSpeed');"
+                "const verticalValue = document.getElementById('verticalValue');"
+                "const horizontalValue = document.getElementById('horizontalValue');"
+                "const status = document.getElementById('status');"
+                
+                "verticalSlider.oninput = function(){"
+                "  verticalValue.textContent = this.value + 'x';"
+                "  updateSpeeds();"
+                "};"
+                
+                "horizontalSlider.oninput = function(){"
+                "  horizontalValue.textContent = this.value + 'x';"
+                "  updateSpeeds();"
+                "};"
+                
+                "function updateSpeeds(){"
+                "  fetch('/api/set_speeds', {"
+                "    method: 'POST',"
+                "    headers: {'Content-Type': 'application/json'},"
+                "    body: JSON.stringify({"
+                "      vertical_speed: parseFloat(verticalSlider.value),"
+                "      horizontal_speed: parseFloat(horizontalSlider.value)"
+                "    })"
+                "  }).then(r => r.json()).then(data => {"
+                "    if(data.success){"
+                "      status.textContent = '✓ Speeds updated in real-time';"
+                "      status.style.color = '#10b981';"
+                "    }"
+                "  }).catch(() => {"
+                "    status.textContent = '✗ Failed to update speeds';"
+                "    status.style.color = '#ef4444';"
+                "  });"
+                "};"
+                
+                "function resetDefaults(){"
+                "  verticalSlider.value = 0.8;"
+                "  horizontalSlider.value = 1.0;"
+                "  verticalValue.textContent = '0.8x';"
+                "  horizontalValue.textContent = '1.0x';"
+                "  updateSpeeds();"
+                "};"
+                
+                "function applyToConfig(){"
+                "  fetch('/api/save_to_config', {"
+                "    method: 'POST',"
+                "    headers: {'Content-Type': 'application/json'},"
+                "    body: JSON.stringify({"
+                "      vertical_speed: parseFloat(verticalSlider.value),"
+                "      horizontal_speed: parseFloat(horizontalSlider.value)"
+                "    })"
+                "  }).then(r => r.json()).then(data => {"
+                "    if(data.success){"
+                "      status.textContent = '✓ Saved to config.yaml! Restart to persist.';"
+                "      status.style.color = '#10b981';"
+                "    }"
+                "  }).catch(() => {"
+                "    status.textContent = '✗ Failed to save to config';"
+                "    status.style.color = '#ef4444';"
+                "  });"
+                "};"
+                
+                "// Load current speeds on page load"
+                "fetch('/api/get_speeds').then(r => r.json()).then(data => {"
+                "  verticalSlider.value = data.vertical_speed;"
+                "  horizontalSlider.value = data.horizontal_speed;"
+                "  verticalValue.textContent = data.vertical_speed + 'x';"
+                "  horizontalValue.textContent = data.horizontal_speed + 'x';"
+                "});"
+                "</script>"
                 "</body></html>"
             )
             self.wfile.write(html.encode("utf-8"))
@@ -86,6 +208,81 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 return
             except Exception:
                 return
+        else:
+            self.send_error(404)
+    
+    def do_POST(self):
+        if self.path == "/api/set_speeds":
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            try:
+                data = json.loads(body)
+                vertical = float(data.get('vertical_speed', 0.8))
+                horizontal = float(data.get('horizontal_speed', 1.0))
+                # Update the bye_runner speeds via Blackboard
+                self.server.bye_service._vertical_speed = vertical
+                self.server.bye_service._horizontal_speed = horizontal
+                if hasattr(self.server, 'bye_runner'):
+                    self.server.bye_runner._vertical_speed = vertical
+                    self.server.bye_runner._horizontal_speed = horizontal
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True}).encode())
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode())
+        elif self.path == "/api/get_speeds":
+            try:
+                vertical = self.server.bye_service._vertical_speed
+                horizontal = self.server.bye_service._horizontal_speed
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "vertical_speed": vertical,
+                    "horizontal_speed": horizontal
+                }).encode())
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode())
+        elif self.path == "/api/save_to_config":
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            try:
+                import yaml
+                data = json.loads(body)
+                vertical = float(data.get('vertical_speed', 0.8))
+                horizontal = float(data.get('horizontal_speed', 1.0))
+                
+                # Read current config
+                config_path = pathlib.Path(__file__).resolve().parent.parent / "config.yaml"
+                with open(config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+                
+                # Update talk_gesture section
+                if 'talk_gesture' not in config:
+                    config['talk_gesture'] = {}
+                config['talk_gesture']['vertical_speed'] = vertical
+                config['talk_gesture']['horizontal_speed'] = horizontal
+                
+                # Write back
+                with open(config_path, 'w') as f:
+                    yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
+                
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True}).encode())
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode())
         else:
             self.send_error(404)
 
@@ -463,6 +660,9 @@ class ByeWaveService:
         global _latest_frame
 
         server = _ThreadingHTTPServer((self._mjpeg_host, self._mjpeg_port), _MJPEGHandler)
+        # Attach references for API handlers
+        server.bye_service = self
+        
         srv_thread = threading.Thread(
             target=server.serve_forever, daemon=True, name="ByeWaveMJPEG"
         )
@@ -483,6 +683,9 @@ class ByeWaveService:
             vertical_speed=self._vertical_speed,
             horizontal_speed=self._horizontal_speed,
         )
+        # Attach runner to server for API access
+        server.bye_runner = bye_runner
+        
         waving_detector = _HandNearFaceDetector(bb=self._bb, trigger_callback=bye_runner.trigger)
 
         def _on_complete() -> None:

@@ -492,6 +492,14 @@ class ByeWaveService:
 
         bye_runner._on_complete = _on_complete
 
+        # Initialize animation state variables on Blackboard
+        self._bb.write(
+            bye_animation_playing=False,
+            bye_animation_name="",
+            bye_animation_current_frame=0,
+            bye_animation_total_frames=0
+        )
+
         prev_time = time.time()
         fps = 0.0
         last_frame_token = -1

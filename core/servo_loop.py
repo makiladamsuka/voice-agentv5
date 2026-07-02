@@ -1042,6 +1042,11 @@ class ServoLoop:
             prev_ts = now_pc
             now = time.time()
 
+            # Pause servo updates during bye wave animations
+            if self.bb.read("bye_wave_active")["bye_wave_active"]:
+                time.sleep(loop_delay)
+                continue
+
             self._apply_live_tune_if_changed()
 
             dbg = self.bb.read(

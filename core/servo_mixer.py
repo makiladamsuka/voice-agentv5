@@ -24,6 +24,7 @@ from core.blackboard import Blackboard
 from core.tof_stream import TofStreamHandler
 from core.yaw_pose import (
     notify_imu_yaw_reset,
+    publish_tof_viz_pose,
     publish_tracker_pose,
     resnap_tracker_after_spin,
     update_tracker,
@@ -66,6 +67,9 @@ class ServoMixer:
         tof_state=None,
         tof_handler: TofStreamHandler | None = None,
         base_yaw_sign: float = -1.0,
+        pan_yaw_sign: float = -1.0,
+        tilt_sign: float = 1.0,
+        imu_pitch_sign: float = -1.0,
     ) -> None:
         self.bb = bb
         self._link = link
@@ -73,6 +77,9 @@ class ServoMixer:
         self._tof_state = tof_state
         self._tof_handler = tof_handler
         self._base_yaw_sign = float(base_yaw_sign)
+        self._pan_yaw_sign = float(pan_yaw_sign)
+        self._tilt_sign = float(tilt_sign)
+        self._imu_pitch_sign = float(imu_pitch_sign)
         cfg = _load_yaml(config_path)
         s = _cfg(cfg, "servo", default={}) or {}
         b = _cfg(cfg, "base", default={}) or {}
@@ -122,7 +129,8 @@ class ServoMixer:
         self._last_encoder_poll_ts = 0.0
         self._encoder_poll_hz = 2.0
         self._last_debug_cmd_seq = 0
-        self._viz_pose_hz = 40.0
+        dv = _cfg(cfg, "debug_viz", default={}) or {}
+        self._viz_pose_hz = 1000.0 / max(10, int(dv.get("map_poll_ms", 30)))
 
         self.max_yaw_deg = float(b.get("max_yaw_deg", 120.0))
 
@@ -169,12 +177,69 @@ class ServoMixer:
     def _pan_mech(self, pan_cmd: float) -> float:
         return signed_pan_mech_deg(pan_cmd, self._servo_cfg)
 
+    def _publish_viz_pose(
+        self,
+        sample,
+        pan: float,
+        tilt: float,
+        base_busy: bool,
+    ) -> None:
+        imu_state = self.bb.read("imu_available", "imu_pitch_deg")
+        imu_ok = bool(imu_state["imu_available"])
+        imu_pitch = float(imu_state.get("imu_pitch_deg", 0.0) or 0.0)
+        publish_tracker_pose(
+            self.bb,
+            self._tof_state,
+            sample,
+            imu_online=imu_ok,
+            base_yaw_sign=self._base_yaw_sign,
+            max_yaw_deg=self.max_yaw_deg,
+        )
+        publish_tof_viz_pose(
+            self._tof_state,
+            sample,
+            pan=pan,
+            tilt=tilt,
+            imu_pitch_deg=imu_pitch,
+            servo_cfg=self._servo_cfg,
+            imu_online=imu_ok,
+            base_yaw_sign=self._base_yaw_sign,
+            pan_yaw_sign=self._pan_yaw_sign,
+            tilt_sign=self._tilt_sign,
+            imu_pitch_sign=self._imu_pitch_sign,
+            max_yaw_deg=self.max_yaw_deg,
+            home_locked=bool(self._tracker and self._tracker.home_locked),
+            base_busy=base_busy,
+        )
+
+    def _publish_viz_from_cache(self, *, base_busy: bool | None = None) -> None:
+        """Refresh map pose from cached encoder + live BB head/IMU (no serial query)."""
+        if self._tracker is None or not self._tracker.home_locked:
+            return
+        state = self.bb.read("servo_pan", "servo_tilt", "base_motion_busy")
+        pan = self._quantize(state["servo_pan"])
+        tilt = self._quantize(state["servo_tilt"])
+        busy = bool(state["base_motion_busy"]) if base_busy is None else bool(base_busy)
+        sample = update_tracker(
+            self._tracker,
+            self.bb,
+            encoder_deg=self._encoder_deg,
+            encoder_count=self._encoder_count,
+            counts_per_degree=self._counts_per_degree,
+            pan=pan,
+            servo_cfg=self._servo_cfg,
+            base_busy=busy,
+        )
+        if sample is not None:
+            self._publish_viz_pose(sample, pan, tilt, busy)
+
     def _publish_encoder(
         self,
         enc: float,
         pan: float,
         busy: bool,
         *,
+        tilt: float | None = None,
         synced: bool = True,
         encoder_count: int | None = None,
         counts_per_degree: float | None = None,
@@ -201,15 +266,12 @@ class ServoMixer:
                 base_busy=busy,
             )
             if sample is not None:
-                imu_ok = bool(self.bb.read("imu_available")["imu_available"])
-                publish_tracker_pose(
-                    self.bb,
-                    self._tof_state,
-                    sample,
-                    imu_online=imu_ok,
-                    base_yaw_sign=self._base_yaw_sign,
-                    max_yaw_deg=self.max_yaw_deg,
+                head_tilt = (
+                    self._quantize(tilt)
+                    if tilt is not None
+                    else self._quantize(self.bb.read("servo_tilt")["servo_tilt"])
                 )
+                self._publish_viz_pose(sample, pan, head_tilt, busy)
         elif not self.bb.read("imu_available")["imu_available"]:
             writes["base_world_yaw_deg"] = self._world_yaw(enc, pan)
             writes["body_yaw_deg"] = enc
@@ -312,15 +374,8 @@ class ServoMixer:
                     servo_cfg=self._servo_cfg,
                 )
                 if sample is not None:
-                    imu_ok = bool(self.bb.read("imu_available")["imu_available"])
-                    publish_tracker_pose(
-                        self.bb,
-                        self._tof_state,
-                        sample,
-                        imu_online=imu_ok,
-                        base_yaw_sign=self._base_yaw_sign,
-                        max_yaw_deg=self.max_yaw_deg,
-                    )
+                    tilt = self._quantize(self.bb.read("servo_tilt")["servo_tilt"])
+                    self._publish_viz_pose(sample, pan, tilt, base_busy=False)
             self.bb.write(debug_control_cmd="")
             return True
         return False
@@ -370,15 +425,8 @@ class ServoMixer:
                         servo_cfg=self._servo_cfg,
                     )
                     if sample is not None:
-                        imu_ok = bool(self.bb.read("imu_available")["imu_available"])
-                        publish_tracker_pose(
-                            self.bb,
-                            self._tof_state,
-                            sample,
-                            imu_online=imu_ok,
-                            base_yaw_sign=self._base_yaw_sign,
-                            max_yaw_deg=self.max_yaw_deg,
-                        )
+                        tilt = self._quantize(self.bb.read("servo_tilt")["servo_tilt"])
+                        self._publish_viz_pose(sample, pan, tilt, base_busy=False)
                 self.bb.write(imu_drift_reset_request=False)
 
             state = self.bb.read(
@@ -429,18 +477,13 @@ class ServoMixer:
         print("[ServoMixer] Stopped.")
 
     def _viz_pose_loop(self) -> None:
-        """IMU-only pose refresh during base spins (no extra serial queries)."""
+        """High-rate viz refresh — cached encoder, live head/IMU from BB (no serial query)."""
         delay = 1.0 / max(1.0, self._viz_pose_hz)
         while self.bb.read("running")["running"]:
-            if self.bb.read("base_motion_busy")["base_motion_busy"]:
-                pan = self._quantize(self.bb.read("servo_pan")["servo_pan"])
-                self._publish_encoder(
-                    self._encoder_deg,
-                    pan,
-                    True,
-                    encoder_count=self._encoder_count,
-                    counts_per_degree=self._counts_per_degree,
-                )
+            try:
+                self._publish_viz_from_cache()
+            except Exception:
+                pass
             time.sleep(delay)
 
     # ── Proximity event routing ────────────────────────────────────────────
@@ -614,15 +657,8 @@ class ServoMixer:
                         servo_cfg=self._servo_cfg,
                     )
                     if sample is not None:
-                        imu_ok = bool(self.bb.read("imu_available")["imu_available"])
-                        publish_tracker_pose(
-                            self.bb,
-                            self._tof_state,
-                            sample,
-                            imu_online=imu_ok,
-                            base_yaw_sign=self._base_yaw_sign,
-                            max_yaw_deg=self.max_yaw_deg,
-                        )
+                        tilt = self._quantize(self.bb.read("servo_tilt")["servo_tilt"])
+                        self._publish_viz_pose(sample, pan, tilt, base_busy=False)
                 self._publish_encoder(
                     st.degrees,
                     pan,

@@ -20,7 +20,9 @@ from core.debug_dashboard import DebugDashboard
 from core.tof_state import STATE as TOF_STATE
 from core.tof_stream import TofStreamHandler
 from core.yaw_pose import (
+    lock_head_home,
     lock_home_tracker,
+    publish_tof_viz_pose,
     publish_tracker_pose,
     query_enc,
     resnap_tracker_after_spin,
@@ -344,6 +346,9 @@ def main():
     prox_cfg = cfg.get("proximity", {}) or {}
     debug_viz_cfg = cfg.get("debug_viz", {}) or {}
     base_yaw_sign = float(debug_viz_cfg.get("base_yaw_sign", -1.0))
+    pan_yaw_sign = float(debug_viz_cfg.get("pan_yaw_sign", -1.0))
+    tilt_sign = float(debug_viz_cfg.get("tilt_sign", 1.0))
+    imu_pitch_sign = float(debug_viz_cfg.get("imu_pitch_sign", -1.0))
     port = servo_cfg.get("port") or ""
     baud = int(servo_cfg.get("baud", 115200))
 
@@ -430,7 +435,12 @@ def main():
 
     if link is not None and link.connected:
         TOF_STATE.set_connected(link._port_name or port or "serial")
-        TOF_STATE.update_pose(base_yaw_sign=base_yaw_sign)
+        TOF_STATE.update_pose(
+            base_yaw_sign=base_yaw_sign,
+            pan_yaw_sign=pan_yaw_sign,
+            tilt_sign=tilt_sign,
+            imu_pitch_sign=imu_pitch_sign,
+        )
         # Reset IMU yaw integral before locking HOME (matches old fusion resync timing).
         bb.write(base_watchdog_reset=True)
         time.sleep(0.2)
@@ -444,6 +454,10 @@ def main():
         _, _, _, cpd0 = query_enc(link, 0.0)
         tracker.counts_per_degree = max(cpd0, 0.05)
         pan = float(bb.read("servo_pan")["servo_pan"])
+        tilt = float(bb.read("servo_tilt")["servo_tilt"])
+        imu_state = bb.read("imu_available", "imu_pitch_deg")
+        imu_pitch = float(imu_state.get("imu_pitch_deg", 0.0) or 0.0)
+        lock_head_home(imu_pitch, pan, tilt, servo_cfg)
         enc, count, _, cpd = query_enc(link, float(bb.read("base_encoder_deg")["base_encoder_deg"]))
         sample = update_tracker(
             tracker,
@@ -456,14 +470,31 @@ def main():
             base_busy=False,
         )
         if sample is not None:
-            imu_ok = bool(bb.read("imu_available")["imu_available"])
+            imu_ok = bool(imu_state["imu_available"])
+            max_yaw = float(base_cfg.get("max_yaw_deg", 120.0))
             publish_tracker_pose(
                 bb,
                 TOF_STATE,
                 sample,
                 imu_online=imu_ok,
                 base_yaw_sign=base_yaw_sign,
-                max_yaw_deg=float(base_cfg.get("max_yaw_deg", 120.0)),
+                max_yaw_deg=max_yaw,
+            )
+            publish_tof_viz_pose(
+                TOF_STATE,
+                sample,
+                pan=pan,
+                tilt=tilt,
+                imu_pitch_deg=imu_pitch,
+                servo_cfg=servo_cfg,
+                imu_online=imu_ok,
+                base_yaw_sign=base_yaw_sign,
+                pan_yaw_sign=pan_yaw_sign,
+                tilt_sign=tilt_sign,
+                imu_pitch_sign=imu_pitch_sign,
+                max_yaw_deg=max_yaw,
+                home_locked=True,
+                base_busy=False,
             )
         if bb.read("imu_available")["imu_available"]:
             _print_yaw_decomposition(bb)
@@ -511,6 +542,9 @@ def main():
                 tof_state=TOF_STATE,
                 tof_handler=tof_handler,
                 base_yaw_sign=base_yaw_sign,
+                pan_yaw_sign=pan_yaw_sign,
+                tilt_sign=tilt_sign,
+                imu_pitch_sign=imu_pitch_sign,
             ).run,
             daemon=True,
             name="ServoMixer",

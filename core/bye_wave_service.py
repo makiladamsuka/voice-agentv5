@@ -173,13 +173,17 @@ class _ByeSequenceRunner:
     """Plays a random bye animation by writing arm frames to the Blackboard.
     ServoMixer picks up arm_a0..arm_a3 and sends to ESP32 automatically.
     bye_wave_active=True on Blackboard pauses ArmController lean updates.
+    Now with dual-speed interpolation for natural movements.
     """
-    def __init__(self, bb, presets_path, cooldown_sec=10.0, on_complete=None, envelope=None):
+    def __init__(self, bb, presets_path, cooldown_sec=10.0, on_complete=None, envelope=None,
+                 vertical_speed=0.8, horizontal_speed=1.5):
         self._bb = bb
         self._presets_path = presets_path
         self._cooldown_sec = cooldown_sec
         self._on_complete = on_complete
         self._envelope = envelope
+        self._vertical_speed = vertical_speed  # Speed for a0, a1
+        self._horizontal_speed = horizontal_speed  # Speed for a2, a3
         self._lock = threading.Lock()
         self._thread = None
         self._running = False
@@ -214,12 +218,57 @@ class _ByeSequenceRunner:
             self._thread.start()
 
     def _run_animation(self, frames):
+        """Play animation frames with smooth dual-speed interpolation."""
+        frame_duration = 0.25  # Time to reach each frame
+        poll_interval = 0.02  # 50 Hz update rate
+        
         for f in frames:
-            a0, a1, a2, a3 = f["a0"], f["a1"], f["a2"], f["a3"]
+            target_a0, target_a1, target_a2, target_a3 = f["a0"], f["a1"], f["a2"], f["a3"]
+            
+            # Apply safety envelope if available
             if self._envelope is not None:
-                a0, a1, a2, a3 = self._envelope.clamp_arms(a0, a1, a2, a3)
-            self._bb.write(arm_a0=a0, arm_a1=a1, arm_a2=a2, arm_a3=a3)
-            time.sleep(0.25)
+                target_a0, target_a1, target_a2, target_a3 = self._envelope.clamp_arms(
+                    target_a0, target_a1, target_a2, target_a3
+                )
+            
+            # Get current arm positions
+            current = self._bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
+            start_a0 = current["arm_a0"]
+            start_a1 = current["arm_a1"]
+            start_a2 = current["arm_a2"]
+            start_a3 = current["arm_a3"]
+            
+            # Calculate deltas
+            delta_a0 = target_a0 - start_a0
+            delta_a1 = target_a1 - start_a1
+            delta_a2 = target_a2 - start_a2
+            delta_a3 = target_a3 - start_a3
+            
+            # Smooth interpolation with dual speeds
+            start_time = time.time()
+            steps = int(frame_duration / poll_interval)
+            
+            for step in range(steps):
+                elapsed = time.time() - start_time
+                if elapsed >= frame_duration:
+                    break
+                
+                # Different progress for vertical vs horizontal
+                vertical_progress = min(1.0, (elapsed / frame_duration) * self._vertical_speed)
+                horizontal_progress = min(1.0, (elapsed / frame_duration) * self._horizontal_speed)
+                
+                # Interpolate
+                new_a0 = start_a0 + delta_a0 * vertical_progress
+                new_a1 = start_a1 + delta_a1 * vertical_progress
+                new_a2 = start_a2 + delta_a2 * horizontal_progress
+                new_a3 = start_a3 + delta_a3 * horizontal_progress
+                
+                self._bb.write(arm_a0=new_a0, arm_a1=new_a1, arm_a2=new_a2, arm_a3=new_a3)
+                time.sleep(poll_interval)
+            
+            # Ensure we reach the target
+            self._bb.write(arm_a0=target_a0, arm_a1=target_a1, arm_a2=target_a2, arm_a3=target_a3)
+        
         if self._on_complete is not None:
             self._on_complete()
         self._bb.write(bye_wave_active=False)
@@ -310,6 +359,7 @@ class ByeWaveService:
         bw_cfg = config.get("bye_wave", {}) or {}
         arms_cfg = config.get("arms", {}) or {}
         cam_cfg = config.get("camera", {}) or {}
+        talk_cfg = config.get("talk_gesture", {}) or {}
 
         self._cooldown_sec = float(bw_cfg.get("cooldown_sec", 10.0))
         self._max_hands = int(bw_cfg.get("max_hands", 2))
@@ -317,6 +367,10 @@ class ByeWaveService:
         self._mjpeg_port = int(bw_cfg.get("port", 8000))
         # FaceTracker swaps R/B when stream_swap_rb=true; undo that for CV/MediaPipe
         self._swap_rb: bool = bool(cam_cfg.get("stream_swap_rb", True))
+        
+        # Read dual-speed settings from talk_gesture config
+        self._vertical_speed = float(talk_cfg.get("vertical_speed", 0.8))
+        self._horizontal_speed = float(talk_cfg.get("horizontal_speed", 1.5))
 
         app_dir = pathlib.Path(__file__).resolve().parent.parent
         raw = bw_cfg.get("presets_path", "tests/arm_pose_presets.json")
@@ -359,6 +413,8 @@ class ByeWaveService:
             presets_path=self._presets_path,
             cooldown_sec=self._cooldown_sec,
             envelope=self._envelope,
+            vertical_speed=self._vertical_speed,
+            horizontal_speed=self._horizontal_speed,
         )
         waving_detector = _HandNearFaceDetector(bb=self._bb, trigger_callback=bye_runner.trigger)
 

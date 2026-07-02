@@ -49,11 +49,15 @@ def _load_json(path: Path) -> dict:
         return json.load(f)
 
 
-def compute_face_embedding(face_roi: np.ndarray) -> Optional[np.ndarray]:
-    """Compute a simple face embedding using histogram features.
+def compute_face_embedding(face_roi: np.ndarray, landmarks: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+    """Compute face embedding using landmarks + appearance features.
     
-    For production, you'd use dlib, face_recognition, or a deep model.
-    This is a simple alternative using color histograms.
+    Uses:
+    - Face landmarks (eyes, nose, mouth) for geometric features
+    - Local Binary Patterns (LBP) for texture
+    - Color histograms for appearance
+    
+    This combines geometric and appearance features for better recognition.
     """
     if cv2 is None or np is None or face_roi is None or face_roi.size == 0:
         return None
@@ -61,26 +65,83 @@ def compute_face_embedding(face_roi: np.ndarray) -> Optional[np.ndarray]:
     try:
         # Resize to standard size
         resized = cv2.resize(face_roi, (64, 64))
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
         
-        # Convert to HSV for better color features
+        features = []
+        
+        # 1. LANDMARKS (Geometric Features) - if available
+        if landmarks is not None and len(landmarks) >= 10:
+            # YuNet provides 5 landmarks: left_eye, right_eye, nose, left_mouth, right_mouth
+            # Normalize landmark positions relative to face size
+            landmarks_norm = landmarks.reshape(-1, 2).astype(float)
+            
+            # Compute inter-landmark distances (geometric relationships)
+            eye_dist = np.linalg.norm(landmarks_norm[0] - landmarks_norm[1])  # Inter-eye distance
+            nose_to_left_eye = np.linalg.norm(landmarks_norm[2] - landmarks_norm[0])
+            nose_to_right_eye = np.linalg.norm(landmarks_norm[2] - landmarks_norm[1])
+            mouth_width = np.linalg.norm(landmarks_norm[3] - landmarks_norm[4])
+            
+            # Normalize by eye distance (scale invariant)
+            if eye_dist > 0:
+                landmarks_norm = landmarks_norm / eye_dist
+                nose_to_left_eye /= eye_dist
+                nose_to_right_eye /= eye_dist
+                mouth_width /= eye_dist
+            
+            # Flatten normalized landmarks
+            landmark_features = landmarks_norm.flatten()
+            geometric_features = np.array([eye_dist, nose_to_left_eye, nose_to_right_eye, mouth_width])
+            
+            features.append(landmark_features)
+            features.append(geometric_features)
+        
+        # 2. LOCAL BINARY PATTERNS (Texture Features)
+        # LBP is robust to illumination changes
+        try:
+            # Simple LBP implementation
+            lbp_img = np.zeros_like(gray)
+            for i in range(1, gray.shape[0] - 1):
+                for j in range(1, gray.shape[1] - 1):
+                    center = gray[i, j]
+                    code = 0
+                    code |= (gray[i-1, j-1] > center) << 7
+                    code |= (gray[i-1, j] > center) << 6
+                    code |= (gray[i-1, j+1] > center) << 5
+                    code |= (gray[i, j+1] > center) << 4
+                    code |= (gray[i+1, j+1] > center) << 3
+                    code |= (gray[i+1, j] > center) << 2
+                    code |= (gray[i+1, j-1] > center) << 1
+                    code |= (gray[i, j-1] > center) << 0
+                    lbp_img[i, j] = code
+            
+            # LBP histogram (texture descriptor)
+            lbp_hist = cv2.calcHist([lbp_img], [0], None, [32], [0, 256])
+            lbp_hist = cv2.normalize(lbp_hist, lbp_hist).flatten()
+            features.append(lbp_hist)
+        except Exception:
+            pass  # Skip LBP if it fails
+        
+        # 3. COLOR HISTOGRAMS (Appearance Features)
+        # HSV for robustness to lighting
         hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
+        h_hist = cv2.calcHist([hsv], [0], None, [16], [0, 180])
+        s_hist = cv2.calcHist([hsv], [1], None, [16], [0, 256])
+        v_hist = cv2.calcHist([hsv], [2], None, [16], [0, 256])
         
-        # Compute histograms for each channel
-        h_hist = cv2.calcHist([hsv], [0], None, [32], [0, 180])
-        s_hist = cv2.calcHist([hsv], [1], None, [32], [0, 256])
-        v_hist = cv2.calcHist([hsv], [2], None, [32], [0, 256])
-        
-        # Normalize
         h_hist = cv2.normalize(h_hist, h_hist).flatten()
         s_hist = cv2.normalize(s_hist, s_hist).flatten()
         v_hist = cv2.normalize(v_hist, v_hist).flatten()
         
-        # Concatenate into single feature vector
-        embedding = np.concatenate([h_hist, s_hist, v_hist])
+        features.extend([h_hist, s_hist, v_hist])
+        
+        # Concatenate all features
+        embedding = np.concatenate(features)
         
         return embedding
     except Exception as e:
         print(f"[FaceGreetingArm] Error computing embedding: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -195,8 +256,12 @@ class FaceGreetingArmService:
         print(f"[FaceGreetingArm] Triggered greeting: {pose_name}")
         return pose_name
     
-    def extract_face_roi(self, frame: np.ndarray, face_data: dict) -> Optional[np.ndarray]:
-        """Extract face region of interest from frame.
+    def extract_face_roi(self, frame: np.ndarray, face_data: dict) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """Extract face region of interest and landmarks from frame.
+        
+        Returns: (face_roi, landmarks) tuple
+        - face_roi: cropped face image
+        - landmarks: 5 facial landmark points (10 values: x1,y1,x2,y2,...)
         
         NOTE: face_data coordinates are in DETECTION resolution (1280x720),
         but stream_frame is in STREAM resolution (320x180 by default).
@@ -204,7 +269,7 @@ class FaceGreetingArmService:
         """
         if frame is None or face_data is None:
             print("[FaceGreetingArm] DEBUG: frame or face_data is None")
-            return None
+            return None, None
         
         try:
             # Use NORMALIZED coordinates which work across any resolution
@@ -237,7 +302,23 @@ class FaceGreetingArmService:
             if x2 > x1 and y2 > y1:
                 roi = frame[y1:y2, x1:x2]
                 print(f"[FaceGreetingArm] DEBUG: ROI extracted, shape={roi.shape}")
-                return roi
+                
+                # Extract landmarks if available
+                landmarks = face_data.get("landmarks", None)
+                if landmarks is not None and len(landmarks) >= 10:
+                    # Scale landmarks to ROI coordinates
+                    landmarks_arr = np.array(landmarks).reshape(-1, 2)
+                    
+                    # Transform from frame coordinates to ROI coordinates
+                    landmarks_arr[:, 0] = (landmarks_arr[:, 0] - x1) / (x2 - x1) * 64  # Scale to 64x64
+                    landmarks_arr[:, 1] = (landmarks_arr[:, 1] - y1) / (y2 - y1) * 64
+                    
+                    landmarks_scaled = landmarks_arr.flatten()
+                    print(f"[FaceGreetingArm] DEBUG: Landmarks extracted: {len(landmarks_scaled)} values")
+                    return roi, landmarks_scaled
+                else:
+                    print(f"[FaceGreetingArm] DEBUG: No landmarks in face_data")
+                    return roi, None
             else:
                 print(f"[FaceGreetingArm] DEBUG: Invalid ROI bounds")
             
@@ -246,7 +327,7 @@ class FaceGreetingArmService:
             import traceback
             traceback.print_exc()
         
-        return None
+        return None, None
     
     def run(self) -> None:
         """Main loop: watch for faces and trigger greetings."""
@@ -315,12 +396,12 @@ class FaceGreetingArmService:
                         # Use first/largest face
                         face_data = face_candidates[0]
                         print(f"[FaceGreetingArm] DEBUG: Face data: {face_data}")
-                        face_roi = self.extract_face_roi(frame, face_data)
+                        face_roi, landmarks = self.extract_face_roi(frame, face_data)
                         
                         if face_roi is not None:
                             print(f"[FaceGreetingArm] DEBUG: Computing embedding...")
-                            # Compute embedding
-                            embedding = compute_face_embedding(face_roi)
+                            # Compute embedding with landmarks
+                            embedding = compute_face_embedding(face_roi, landmarks)
                             self._current_embedding = embedding
                             
                             if embedding is not None:

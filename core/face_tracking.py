@@ -491,6 +491,16 @@ class FaceTracker:
                     for f in ranked:
                         fx, fy, fw, fh = self._face_box(f)
                         nx, ny = self._face_center_norm(f)
+                        
+                        # Extract landmarks from YuNet detection
+                        # YuNet provides 5 landmarks: [4-5]=left_eye, [6-7]=right_eye, 
+                        # [8-9]=nose_tip, [10-11]=left_mouth, [12-13]=right_mouth
+                        landmarks = []
+                        if len(f) >= 14:
+                            # Extract x,y coordinates for 5 facial landmarks
+                            for i in range(4, 14, 2):
+                                landmarks.extend([float(f[i]), float(f[i+1])])
+                        
                         face_candidates.append(
                             {
                                 "norm_x": nx,
@@ -500,6 +510,7 @@ class FaceTracker:
                                 "y": fy,
                                 "w": fw,
                                 "h": fh,
+                                "landmarks": landmarks if len(landmarks) == 10 else None,
                             }
                         )
 

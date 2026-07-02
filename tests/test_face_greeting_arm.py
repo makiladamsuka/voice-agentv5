@@ -183,7 +183,7 @@ def start_debug_stream(bb: Blackboard, greeting_service: FaceGreetingArmService,
 
 
 class MockArmController:
-    """Mock ArmController that simulates arm movement and sends commands to real motors."""
+    """Mock ArmController that simulates arm movement via blackboard (ServoMixer handles hardware)."""
     
     def __init__(self, bb: Blackboard, presets_path: Path, use_hardware: bool = False):
         self.bb = bb
@@ -198,32 +198,26 @@ class MockArmController:
                 data = json.load(f)
                 self.poses = data.get("poses", {})
         
-        # Initialize ServoMixer if hardware is available
-        self.servo_mixer = None
-        if self.use_hardware:
-            try:
-                self.servo_mixer = ServoMixer(bb, port="")  # Auto-detect port
-                print(f"[MockArmController] ServoMixer initialized - REAL MOTORS ENABLED")
-            except Exception as e:
-                print(f"[MockArmController] Failed to initialize ServoMixer: {e}")
-                self.use_hardware = False
-        
         print(f"[MockArmController] Loaded {len(self.poses)} poses")
         if self.use_hardware:
-            print(f"[MockArmController] 🎯 REAL MOTOR MODE - Arms will move!")
+            print(f"[MockArmController] 🎯 REAL MOTOR MODE - Arms will move via ServoMixer!")
         else:
             print(f"[MockArmController] 📺 SIMULATION MODE - No motors")
     
     def send_arm_command(self, pose: dict):
-        """Send arm position command to ServoMixer."""
-        if self.servo_mixer:
-            # ServoMixer expects 'A' command format: A<a0>,<a1>,<a2>,<a3>
-            cmd = f"A{pose['a0']:.1f},{pose['a1']:.1f},{pose['a2']:.1f},{pose['a3']:.1f}"
-            try:
-                self.servo_mixer._serial.write(cmd.encode() + b'\n')
-                print(f"   📡 Sent to motors: {cmd}")
-            except Exception as e:
-                print(f"   ❌ Motor command failed: {e}")
+        """Send arm position command via blackboard (ServoMixer will pick it up)."""
+        if self.use_hardware:
+            # Write to blackboard - ServoMixer reads from here
+            self.bb.write(
+                arm_a0=pose['a0'],
+                arm_a1=pose['a1'],
+                arm_a2=pose['a2'],
+                arm_a3=pose['a3']
+            )
+            print(f"   📡 Updated blackboard for motors: a0={pose['a0']:.1f}, a1={pose['a1']:.1f}, "
+                  f"a2={pose['a2']:.1f}, a3={pose['a3']:.1f}")
+            # Give ServoMixer time to send the command
+            time.sleep(0.05)
     
     def execute_greeting(self, pose_name: str):
         """Execute a greeting pose."""
@@ -314,6 +308,42 @@ def test_greeting_service():
     # Create blackboard
     bb = Blackboard()
     
+    # Initialize ServoMixer if hardware is available
+    servo_mixer = None
+    servo_mixer_thread = None
+    hardware_enabled = False
+    
+    if HARDWARE_AVAILABLE:
+        try:
+            # Import ArduinoServoLink
+            from hardware.arduino_servo import ArduinoServoLink
+            
+            print("[Test] Connecting to Arduino...")
+            link = ArduinoServoLink.auto_connect()
+            
+            if link and link.connected:
+                print(f"[Test] Arduino connected on {link.port}")
+                
+                # Create ServoMixer
+                servo_mixer = ServoMixer(bb, link)
+                
+                # Start ServoMixer in background thread
+                servo_mixer_thread = threading.Thread(
+                    target=servo_mixer.run,
+                    daemon=True,
+                    name="ServoMixer"
+                )
+                servo_mixer_thread.start()
+                print("[Test] ServoMixer started - REAL MOTORS ENABLED")
+                hardware_enabled = True
+                time.sleep(0.5)  # Give ServoMixer time to initialize
+            else:
+                print("[Test] WARNING: Could not connect to Arduino, motor control disabled")
+        except Exception as e:
+            print(f"[Test] WARNING: Failed to initialize ServoMixer: {e}")
+            import traceback
+            traceback.print_exc()
+    
     # Create face tracker (to populate face_detected, face_candidates, etc.)
     print("[Test] Starting FaceTracker...")
     face_tracker = FaceTracker(bb)
@@ -351,10 +381,10 @@ def test_greeting_service():
     print("[Test] Starting debug stream...")
     debug_server = start_debug_stream(bb, greeting_service, port=9000)
     
-    # Create and start arm controller (with hardware if available)
+    # Create and start arm controller (simulation mode, ServoMixer handles hardware)
     print("[Test] Starting ArmController...")
     presets_path = APP_DIR / "tests" / "arm_pose_presets.json"
-    arm_controller = MockArmController(bb, presets_path, use_hardware=HARDWARE_AVAILABLE)
+    arm_controller = MockArmController(bb, presets_path, use_hardware=hardware_enabled)
     
     arm_thread = threading.Thread(
         target=arm_controller.run,
@@ -368,6 +398,10 @@ def test_greeting_service():
     print("Available hi poses:", greeting_service.hi_poses)
     print(f"Memory timeout: {greeting_service.memory_timeout_sec / 60:.1f} minutes")
     print("Debug stream: http://localhost:9000")
+    if hardware_enabled:
+        print("Motor control: ENABLED (via ServoMixer)")
+    else:
+        print("Motor control: DISABLED (simulation mode)")
     print("=" * 60 + "\n")
     
     last_seq = 0

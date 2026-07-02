@@ -359,6 +359,13 @@ surroundings_emotion:
 voice:
   enabled: true
 
+talk_gesture:
+  enabled: true              # Auto-enabled when voice + arms are both enabled
+  pose_duration: 0.4         # Seconds to transition between poses
+  poll_interval: 0.02        # Seconds between updates (50 Hz)
+  vertical_speed: 0.8        # Speed multiplier for a0, a1 (shoulder/elbow up/down)
+  horizontal_speed: 1.5      # Speed multiplier for a2, a3 (wrist/hand swap side-to-side)
+
 proximity:
   enabled: true
   # Mirror L/R when side ToF sensors are swapped vs mux labels (set false if you

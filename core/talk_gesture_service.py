@@ -40,11 +40,15 @@ class TalkGestureService:
         presets_path: pathlib.Path,
         pose_duration: float = 0.5,
         poll_interval: float = 0.05,
+        vertical_speed: float = 1.0,
+        horizontal_speed: float = 1.5,
     ) -> None:
         self.bb = bb
         self.presets_path = presets_path
         self.pose_duration = pose_duration
         self.poll_interval = poll_interval
+        self.vertical_speed = vertical_speed  # Speed for a0, a1 (up/down)
+        self.horizontal_speed = horizontal_speed  # Speed for a2, a3 (swap)
         self._talk_pose_keys: list[str] = []
         self._poses: dict = {}
         
@@ -83,6 +87,77 @@ class TalkGestureService:
             arm_a2=pose["a2"],
             arm_a3=pose["a3"],
         )
+    
+    def _apply_pose_smooth(self, target_pose: dict, duration: float) -> None:
+        """Smoothly interpolate to target pose with different speeds per motor group.
+        
+        Args:
+            target_pose: Target pose dictionary with a0, a1, a2, a3 keys.
+            duration: Total duration for the movement in seconds.
+        """
+        # Read current arm positions
+        current = self.bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
+        start_a0 = current["arm_a0"]
+        start_a1 = current["arm_a1"]
+        start_a2 = current["arm_a2"]
+        start_a3 = current["arm_a3"]
+        
+        target_a0 = target_pose["a0"]
+        target_a1 = target_pose["a1"]
+        target_a2 = target_pose["a2"]
+        target_a3 = target_pose["a3"]
+        
+        # Calculate deltas
+        delta_a0 = target_a0 - start_a0
+        delta_a1 = target_a1 - start_a1
+        delta_a2 = target_a2 - start_a2
+        delta_a3 = target_a3 - start_a3
+        
+        # Calculate how many steps based on speeds
+        # vertical_speed controls a0, a1 movement rate
+        # horizontal_speed controls a2, a3 movement rate
+        steps = int(duration / self.poll_interval)
+        
+        start_time = time.time()
+        
+        for step in range(steps):
+            elapsed = time.time() - start_time
+            if elapsed >= duration:
+                break
+            
+            # Different progress for vertical vs horizontal
+            # Vertical (a0, a1) uses vertical_speed
+            vertical_progress = min(1.0, (elapsed / duration) * self.vertical_speed)
+            # Horizontal (a2, a3) uses horizontal_speed  
+            horizontal_progress = min(1.0, (elapsed / duration) * self.horizontal_speed)
+            
+            # Interpolate with different speeds
+            new_a0 = start_a0 + delta_a0 * vertical_progress
+            new_a1 = start_a1 + delta_a1 * vertical_progress
+            new_a2 = start_a2 + delta_a2 * horizontal_progress
+            new_a3 = start_a3 + delta_a3 * horizontal_progress
+            
+            # Write interpolated position
+            self.bb.write(
+                arm_a0=new_a0,
+                arm_a1=new_a1,
+                arm_a2=new_a2,
+                arm_a3=new_a3,
+            )
+            
+            # Check if agent stopped speaking
+            if not read_speaking_flag():
+                break
+            
+            time.sleep(self.poll_interval)
+        
+        # Ensure we reach the target
+        self.bb.write(
+            arm_a0=target_a0,
+            arm_a1=target_a1,
+            arm_a2=target_a2,
+            arm_a3=target_a3,
+        )
 
     def run(self) -> None:
         """Main loop: continuously switch between random talk poses while agent speaks."""
@@ -115,19 +190,9 @@ class TalkGestureService:
             pose_key = random.choice(self._talk_pose_keys)
             pose = self._poses[pose_key]
             
-            # Apply the pose
-            self._apply_pose(pose)
+            # Apply the pose with smooth interpolation (different speeds for vertical/horizontal)
+            self._apply_pose_smooth(pose, self.pose_duration)
             
-            # Hold the pose for the specified duration (or until agent stops speaking)
-            start = time.time()
-            while time.time() - start < self.pose_duration:
-                is_speaking = read_speaking_flag()
-                if not is_speaking:
-                    break
-                time.sleep(self.poll_interval)
-                
-                # Also check if robot is shutting down
-                if not self.bb.read("running")["running"]:
-                    break
+            # No additional hold needed - interpolation takes pose_duration
         
         print("[TalkGesture] Service stopped")

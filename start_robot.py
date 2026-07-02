@@ -596,11 +596,16 @@ def main():
             if not presets_path.is_absolute():
                 presets_path = APP_DIR / presets_path
 
+            # Get talk gesture config (with defaults)
+            talk_cfg = cfg.get("talk_gesture", {}) or {}
+
             talk_gesture_svc = TalkGestureService(
                 bb=bb,
                 presets_path=presets_path,
-                pose_duration=0.5,
-                poll_interval=0.05,
+                pose_duration=float(talk_cfg.get("pose_duration", 0.4)),
+                poll_interval=float(talk_cfg.get("poll_interval", 0.02)),
+                vertical_speed=float(talk_cfg.get("vertical_speed", 0.8)),
+                horizontal_speed=float(talk_cfg.get("horizontal_speed", 1.5)),
             )
             threads.append(
                 threading.Thread(
@@ -609,7 +614,12 @@ def main():
                     name="TalkGestureService",
                 )
             )
-            print("[Bootstrap] TalkGestureService enabled — arms animate while agent speaks")
+            v_speed = talk_cfg.get("vertical_speed", 0.8)
+            h_speed = talk_cfg.get("horizontal_speed", 1.5)
+            print(
+                f"[Bootstrap] TalkGestureService enabled — "
+                f"arms animate while speaking (v={v_speed}x, h={h_speed}x)"
+            )
 
     from voice.voice_service import ensure_media_server
 

@@ -218,6 +218,8 @@ class MockArmController:
                   f"a2={pose['a2']:.1f}, a3={pose['a3']:.1f}")
             # Give ServoMixer time to send the command
             time.sleep(0.05)
+        else:
+            print(f"   ⚠️  Motors disabled (use_hardware={self.use_hardware})")
     
     def execute_greeting(self, pose_name: str):
         """Execute a greeting pose."""
@@ -334,7 +336,7 @@ def test_greeting_service():
                     continue
             
             if link and link.connected:
-                print(f"[Test] Arduino connected on {link._port_name}")
+                print(f"[Test] ✅ Arduino connected on {link._port_name}")
                 
                 # Create ServoMixer
                 servo_mixer = ServoMixer(bb, link)
@@ -346,11 +348,12 @@ def test_greeting_service():
                     name="ServoMixer"
                 )
                 servo_mixer_thread.start()
-                print("[Test] ServoMixer started - REAL MOTORS ENABLED")
+                print("[Test] ✅ ServoMixer started - REAL MOTORS ENABLED")
                 hardware_enabled = True
                 time.sleep(0.5)  # Give ServoMixer time to initialize
             else:
-                print("[Test] WARNING: Could not connect to Arduino, motor control disabled")
+                print("[Test] ❌ WARNING: Could not connect to Arduino, motor control disabled")
+                hardware_enabled = False
         except Exception as e:
             print(f"[Test] WARNING: Failed to initialize ServoMixer: {e}")
             import traceback

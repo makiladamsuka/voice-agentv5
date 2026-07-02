@@ -319,10 +319,22 @@ def test_greeting_service():
             from hardware.arduino_servo import ArduinoServoLink
             
             print("[Test] Connecting to Arduino...")
-            link = ArduinoServoLink.auto_connect()
+            # Try common serial ports
+            import glob
+            ports = glob.glob('/dev/ttyUSB*') + glob.glob('/dev/ttyACM*')
+            
+            link = None
+            for port in ports:
+                try:
+                    link = ArduinoServoLink(port=port)
+                    if link.connect():
+                        print(f"[Test] Arduino connected on {port}")
+                        break
+                except Exception:
+                    continue
             
             if link and link.connected:
-                print(f"[Test] Arduino connected on {link.port}")
+                print(f"[Test] Arduino connected on {link._port_name}")
                 
                 # Create ServoMixer
                 servo_mixer = ServoMixer(bb, link)

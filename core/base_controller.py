@@ -110,9 +110,12 @@ class BaseController:
         self.trigger_hold_at_limit_sec = float(b.get("trigger_hold_at_limit_sec", 0.25))
         self.cooldown_sec = float(b.get("cooldown_sec", 2.4))
         self.pan_soft_limit = float(b.get("pan_soft_limit_deg", 18.0))
+        self.pan_soft_limit_scale = float(b.get("pan_soft_limit_scale", 0.60))
         self.head_lead_min = float(b.get("head_lead_min_deg", 8.0))
         self.follow_head_direction = bool(b.get("follow_head_direction", True))
         self.pan_limit_margin = float(b.get("pan_limit_margin", 0.35))
+        self.limit_base_aim_gain = float(b.get("limit_base_aim_to_step_gain", 4.5))
+        self.cooldown_at_limit_sec = float(b.get("cooldown_at_limit_sec", 1.5))
 
         # ── Step sizes ────────────────────────────────────────────────────────
         self.min_step = float(b.get("min_step_deg", 0.8))
@@ -287,10 +290,26 @@ class BaseController:
     def _head_pan_offset(self, pan_cmd: float) -> float:
         return self._pan_mech(pan_cmd)
 
+    def _pan_soft_limit_effective(self) -> float:
+        span = max(abs(self.mech_left), abs(self.mech_right))
+        return min(
+            self.pan_soft_limit,
+            max(self.head_lead_min + 0.5, span * self.pan_soft_limit_scale),
+        )
+
+    def _pan_at_servo_limit(self, pan_cmd: float) -> bool:
+        margin = self.pan_limit_margin
+        return pan_cmd <= self.pan_min + margin or pan_cmd >= self.pan_max - margin
+
+    def _pan_needs_base_help(self, pan_cmd: float, pan_mech: float) -> bool:
+        """Head exhausted at servo stop or past soft mech travel — base should assist."""
+        if self._pan_at_servo_limit(pan_cmd):
+            return True
+        soft = self._pan_soft_limit_effective()
+        return abs(pan_mech) >= soft * (1.0 - self.pan_limit_margin)
+
     def _pan_at_limit(self, pan_cmd: float) -> bool:
-        mech = abs(self._pan_mech(pan_cmd))
-        soft = min(self.pan_soft_limit, abs(self.mech_left), abs(self.mech_right))
-        return mech >= soft * (1.0 - self.pan_limit_margin)
+        return self._pan_needs_base_help(pan_cmd, self._pan_mech(pan_cmd))
 
     def _comp_pan_for_step(self, step: float, pan_cmd: float, gain: float) -> float:
         # step is the hardware command sent to the mixer. 
@@ -435,8 +454,9 @@ class BaseController:
         pan = state["servo_pan"]
         norm_x = state["face_norm_x"]
         pan_mech = self._pan_mech(pan)
+        stuck = self._pan_needs_base_help(pan, pan_mech)
 
-        if not self._pan_at_limit(pan) and abs(norm_x) < self.trigger_norm_x:
+        if not stuck and abs(norm_x) < self.trigger_norm_x:
             self._trigger_since = 0.0
             return None, "", 0.0
 
@@ -445,20 +465,41 @@ class BaseController:
 
         if self._trigger_since <= 0.0:
             self._trigger_since = now
-        hold_req = self.trigger_hold_at_limit_sec if self._pan_at_limit(pan) else self.trigger_hold_sec
+        hold_req = self.trigger_hold_at_limit_sec if stuck else self.trigger_hold_sec
         if (now - self._trigger_since) < hold_req:
             return None, "", 0.0
-        if (now - self._last_nudge_ts) < self.cooldown_sec:
+        cooldown = self.cooldown_at_limit_sec if stuck else self.cooldown_sec
+        if (now - self._last_nudge_ts) < cooldown:
             return None, "", 0.0
 
-        sign = math.copysign(1.0, pan_mech)
-        step = clamp(abs(pan_mech) * self.pan_offset_to_step, self.min_step, self.max_step) * sign * self.base_sign
+        if stuck:
+            raw = plan_aim_base_step(
+                pan_mech,
+                norm_x,
+                min_step_deg=self.min_step,
+                max_step_deg=self.max_step,
+                aim_gain=self.limit_base_aim_gain,
+                pan_offset_to_step_gain=self.pan_offset_to_step,
+            )
+            if raw is None:
+                return None, "", 0.0
+            step = raw * self.base_sign
+            source = "track_limit"
+        else:
+            sign = math.copysign(1.0, pan_mech)
+            step = (
+                clamp(abs(pan_mech) * self.pan_offset_to_step, self.min_step, self.max_step)
+                * sign
+                * self.base_sign
+            )
+            source = "track"
+
         step = self._cap_for_aim(step, norm_x)
         step = self._apply_gate(step, pan, state["base_encoder_deg"], state)
         if step == 0.0:
             return None, "", 0.0
         comp_pan = self._comp_pan_for_step(step, pan, self.track_comp_gain)
-        return step, "track", comp_pan
+        return step, source, comp_pan
 
     def _plan_body_step(self, now: float, state: dict) -> tuple[Optional[float], str, float]:
         """Body-only track: rotate base toward person using frame-center aim error."""

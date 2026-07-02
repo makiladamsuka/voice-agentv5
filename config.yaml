@@ -148,7 +148,8 @@ base:
   pan_limit_margin: 0.35      # servo cmd units — head at hardware stop
   pan_recenter_bias: 0.50
   pan_offset_to_step_gain: 0.10   # base step scales with head pan offset (mech deg)
-  trigger_hold_at_limit_sec: 1.0  # slower base follow when head near pan limit
+  trigger_hold_at_limit_sec: 1.0  # faster base follow when head near pan limit
+  cooldown_at_limit_sec: 1.5      # shorter pause between base nudges when head is stuck
   track_compensation_gain: 0.95   # counter-rotate neck ~1:1 with base during track
   sustained_head_follow_enabled: true   # after ~10s neck offset, base turns and neck locks gaze
   sustained_head_hold_sec: 10.0
@@ -162,7 +163,7 @@ base:
   body_base_max_step_deg: 11.0
   body_base_aim_to_step_gain: 5.5
   body_base_compensation_gain: 0.90
-  limit_base_aim_to_step_gain: 1.5  # face/body when pan is stuck at min/max
+  limit_base_aim_to_step_gain: 3.0  # face/body when pan is stuck at min/max
   fast_face_enabled: false
   fast_face_velocity_norm_sec: 3.5
   fast_face_cooldown_sec: 1.4

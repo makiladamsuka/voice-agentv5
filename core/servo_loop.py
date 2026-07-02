@@ -579,10 +579,12 @@ class ServoLoop:
 
         tracking = state["face_detected"] or state["body_detected"]
         if tracking:
-            center_alpha = 1.0 - math.exp(-2.0 * max(0.001, dt))
+            center_alpha = 1.0 - math.exp(-4.0 * max(0.001, dt))
             if state["imu_available"] and state["imu_horizon_ok"]:
                 target = state["imu_effective_tilt_center"]
-                self._effective_tilt_center_smooth += (target - self._effective_tilt_center_smooth) * center_alpha * 0.35
+                self._effective_tilt_center_smooth += (
+                    (target - self._effective_tilt_center_smooth) * center_alpha
+                )
             return self._effective_tilt_center_smooth
 
         if not state["imu_available"]:
@@ -768,10 +770,11 @@ class ServoLoop:
                         prox_glance_emotion="",
                     )
 
-        # Tilt: face-relative on fixed center (IMU horizon applies in wander/idle only).
+        # Tilt: face-relative on IMU-leveled center (horizon + vertical track).
+        tilt_base = effective_tilt_center
         if abs(self._tilt_track_norm) <= self.tilt_center_norm_y:
             self._tilt_pid.reset()
-            tilt_target = self._tilt
+            tilt_target = tilt_base
         else:
             err_y = _apply_deadzone(self._tilt_track_norm, self.deadzone_y)
             tilt_corr = clamp(self._tilt_pid.tick(err_y, dt), -1.0, 1.0)
@@ -785,7 +788,7 @@ class ServoLoop:
                 self._tilt_track_travel(self._tilt_track_norm),
             )
             tilt_target = clamp(
-                self.tilt_center
+                tilt_base
                 + self.tilt_track_sign * tilt_corr * tilt_range * tilt_gain,
                 self.tilt_min,
                 self.tilt_max,

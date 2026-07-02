@@ -98,11 +98,11 @@ imu:
   horizon_tilt_sign: -1.0   # keep camera horizontal; flip if tilt runs wrong way
   horizon_pitch_bias_deg: 0.0
   horizon_pitch_smooth_hz: 3.5
-  horizon_max_bias_deg: 6.0
+  horizon_max_bias_deg: 10.0
   horizon_max_pitch_deg: 18.0
   horizon_gyro_max_dps: 45.0       # ignore horizon when spinning/moving
-  horizon_max_up_from_center_deg: 2.0
-  horizon_max_down_from_center_deg: 4.0
+  horizon_max_up_from_center_deg: 8.0
+  horizon_max_down_from_center_deg: 12.0
   horizon_relevel_after_sec: 0.0   # unused — IMU horizon applies continuously when idle
   yaw_sign: -1.0             # flip if IMU yaw integral opposes encoder/base
   drift_correction_enabled: true
@@ -273,7 +273,7 @@ servo:
   wander_tilt_smooth_hz: 6 
   wander_track_loss_hold_min_sec: 1.2   # hold last track pose before first wander glance
   wander_track_loss_hold_max_sec: 2.8
-  wander_imu_tilt_blend: 0.18          # light IMU bias; wander owns most tilt motion
+  wander_imu_tilt_blend: 0.55          # IMU horizon bias during wander glances
   motion_emotion_min_sec: 2.6
   attention_hold_min_sec: 3.2
   attention_hold_max_sec: 6.5

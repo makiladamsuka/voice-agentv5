@@ -95,6 +95,28 @@ def test_leaving_track_resets_tilt_smooth_to_imu_not_track_pose():
     assert loop._effective_tilt_center_smooth == 112.0
 
 
+def test_track_tilt_uses_imu_horizon_center():
+    bb = Blackboard()
+    bb.write(
+        running=True,
+        face_detected=True,
+        body_detected=False,
+        face_norm_x=0.0,
+        face_norm_y=0.0,
+        face_count=1,
+        track_kind="face",
+        face_candidates=[],
+    )
+    loop = ServoLoop(bb)
+    loop._mode = "track"
+    loop._tilt = loop.tilt_center
+    loop._pan = loop.pan_center
+    loop._tilt_track_norm = 0.0
+
+    loop._tick_track(now=100.0, dt=0.05, effective_tilt_center=115.0)
+    assert loop._tilt < 115.0
+
+
 def test_face_low_in_frame_targets_tilt_down():
     """norm_y > 0 (face low) should command tilt below center with tilt_sign=-1."""
     bb = Blackboard()

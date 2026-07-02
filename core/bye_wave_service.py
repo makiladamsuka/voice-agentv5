@@ -401,6 +401,21 @@ class _ByeSequenceRunner:
     @property
     def is_running(self):
         return self._running
+    
+    def _ease_in_out(self, t):
+        """Smooth ease-in-out function for continuous motion.
+        
+        Uses cubic easing for smooth acceleration and deceleration.
+        Input t should be in range [0, 1], output is also [0, 1].
+        
+        This prevents jerky starts/stops and creates fluid motion.
+        """
+        if t < 0.5:
+            # Ease in (accelerate)
+            return 4 * t * t * t
+        else:
+            # Ease out (decelerate)
+            return 1 - pow(-2 * t + 2, 3) / 2
 
     def trigger(self, side):
         with self._lock:
@@ -434,9 +449,11 @@ class _ByeSequenceRunner:
         - Higher values (e.g., 2.0) = faster movements
         - Lower values (e.g., 0.5) = slower movements
         - 1.0 = normal speed
+        
+        Uses high-frequency updates (100Hz) for continuous smooth motion.
         """
         base_frame_duration = 0.25  # Base time to reach each frame
-        poll_interval = 0.02  # 50 Hz update rate
+        poll_interval = 0.01  # 100 Hz update rate for smoother motion (was 0.02 = 50Hz)
         
         # Write animation state to Blackboard
         self._bb.write(
@@ -479,20 +496,24 @@ class _ByeSequenceRunner:
             # Use the longer duration as the frame duration to ensure smooth movement
             frame_duration = max(vertical_duration, horizontal_duration)
             
-            # Smooth interpolation with dual speeds
+            # Smooth interpolation with dual speeds and easing
             start_time = time.time()
-            steps = int(frame_duration / poll_interval)
             
-            for step in range(steps):
+            while True:
                 elapsed = time.time() - start_time
                 if elapsed >= frame_duration:
                     break
                 
                 # Calculate progress for each motor group based on their respective durations
-                vertical_progress = min(1.0, elapsed / vertical_duration)
-                horizontal_progress = min(1.0, elapsed / horizontal_duration)
+                vertical_t = min(1.0, elapsed / vertical_duration)
+                horizontal_t = min(1.0, elapsed / horizontal_duration)
                 
-                # Interpolate
+                # Apply ease-in-out for smoother acceleration/deceleration
+                # This prevents jerky starts and stops
+                vertical_progress = self._ease_in_out(vertical_t)
+                horizontal_progress = self._ease_in_out(horizontal_t)
+                
+                # Interpolate with eased progress
                 new_a0 = start_a0 + delta_a0 * vertical_progress
                 new_a1 = start_a1 + delta_a1 * vertical_progress
                 new_a2 = start_a2 + delta_a2 * horizontal_progress

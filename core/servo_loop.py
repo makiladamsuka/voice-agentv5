@@ -410,7 +410,7 @@ class ServoLoop:
     def _tick_forward_return(self, now: float, dt: float, tilt_center: float) -> str:
         """Glide head back to forward-facing pan/tilt center."""
         pan_goal = self.pan_center
-        tilt_goal = self._wander_tilt_ref(tilt_center)
+        tilt_goal = tilt_center
         self._wander.pan_goal = pan_goal
         self._wander.tilt_goal = tilt_goal
         self._wander.moving = True
@@ -448,8 +448,10 @@ class ServoLoop:
         )
 
     def _wander_tilt_ref(self, effective_tilt_center: float) -> float:
-        """Mechanical center + light IMU bias — wander glances stay visible."""
+        """Wander glance center — full IMU horizon when blend is 1.0."""
         blend = max(0.0, min(1.0, self.wander_imu_tilt_blend))
+        if blend >= 0.999:
+            return effective_tilt_center
         return self.tilt_center + (effective_tilt_center - self.tilt_center) * blend
 
     def _apply_debug_head_cmd(self, cmd: str, step: float) -> bool:
@@ -568,7 +570,7 @@ class ServoLoop:
     # ── IMU tilt compensation ──────────────────────────────────────────────────
 
     def _effective_tilt_center(self, dt: float) -> float:
-        """Tilt reference from IMU horizon (when still). Frozen briefly only while tracking face."""
+        """Tilt reference: mechanical center while tracking face/body; IMU horizon in wander."""
         state = self.bb.read(
             "face_detected",
             "body_detected",
@@ -577,15 +579,8 @@ class ServoLoop:
             "imu_effective_tilt_center",
         )
 
-        tracking = state["face_detected"] or state["body_detected"]
-        if tracking:
-            center_alpha = 1.0 - math.exp(-4.0 * max(0.001, dt))
-            if state["imu_available"] and state["imu_horizon_ok"]:
-                target = state["imu_effective_tilt_center"]
-                self._effective_tilt_center_smooth += (
-                    (target - self._effective_tilt_center_smooth) * center_alpha
-                )
-            return self._effective_tilt_center_smooth
+        if state["face_detected"] or state["body_detected"]:
+            return self.tilt_center
 
         if not state["imu_available"]:
             target = self.tilt_center
@@ -770,8 +765,8 @@ class ServoLoop:
                         prox_glance_emotion="",
                     )
 
-        # Tilt: face-relative on IMU-leveled center (horizon + vertical track).
-        tilt_base = effective_tilt_center
+        # Tilt: face-relative on mechanical center (no IMU horizon during track).
+        tilt_base = self.tilt_center
         if abs(self._tilt_track_norm) <= self.tilt_center_norm_y:
             self._tilt_pid.reset()
             tilt_target = tilt_base
@@ -990,12 +985,11 @@ class ServoLoop:
             and not holding_track_pose
             and not self._forward_return_active
         ):
-            horizon_ref = self._wander_tilt_ref(effective_tilt_center)
             self._tilt = smooth_toward(
                 self._tilt,
-                horizon_ref,
+                effective_tilt_center,
                 dt,
-                smooth_hz=self.imu_horizon_smooth * 0.35,
+                smooth_hz=self.imu_horizon_smooth,
                 lo=self.tilt_min,
                 hi=self.tilt_max,
             )

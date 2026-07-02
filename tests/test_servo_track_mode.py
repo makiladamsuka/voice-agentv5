@@ -55,7 +55,7 @@ def test_effective_tilt_follows_imu_when_idle():
     assert releveled > 110.0
 
 
-def test_effective_tilt_drifts_toward_imu_even_while_tracking():
+def test_effective_tilt_frozen_mechanical_while_tracking():
     bb = Blackboard()
     bb.write(
         running=True,
@@ -69,15 +69,15 @@ def test_effective_tilt_drifts_toward_imu_even_while_tracking():
     loop._effective_tilt_center_smooth = 110.0
 
     updated = loop._effective_tilt_center(0.05)
-    assert updated >= 110.0
+    assert updated == loop.tilt_center
 
 
-def test_wander_tilt_ref_blends_imu_horizon():
+def test_wander_tilt_ref_uses_full_horizon_when_blend_one():
     loop = ServoLoop(Blackboard())
     loop.tilt_center = 110.0
-    loop.wander_imu_tilt_blend = 0.18
+    loop.wander_imu_tilt_blend = 1.0
     ref = loop._wander_tilt_ref(112.0)
-    assert abs(ref - 110.36) < 0.01
+    assert ref == 112.0
 
 
 def test_leaving_track_resets_tilt_smooth_to_imu_not_track_pose():
@@ -95,7 +95,7 @@ def test_leaving_track_resets_tilt_smooth_to_imu_not_track_pose():
     assert loop._effective_tilt_center_smooth == 112.0
 
 
-def test_track_tilt_uses_imu_horizon_center():
+def test_track_tilt_uses_mechanical_center_when_face_centered():
     bb = Blackboard()
     bb.write(
         running=True,
@@ -114,7 +114,7 @@ def test_track_tilt_uses_imu_horizon_center():
     loop._tilt_track_norm = 0.0
 
     loop._tick_track(now=100.0, dt=0.05, effective_tilt_center=115.0)
-    assert loop._tilt < 115.0
+    assert abs(loop._tilt - loop.tilt_center) < 0.5
 
 
 def test_face_low_in_frame_targets_tilt_down():

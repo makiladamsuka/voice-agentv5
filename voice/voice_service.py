@@ -482,8 +482,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     async def monitor_face_greetings() -> None:
         """Speak queued hellos when FaceGreetingMonitor sees a new person."""
         last_seq = 0
+        if _bb is not None:
+            state = _bb.read("face_greeting_seq")
+            last_seq = int(state.get("face_greeting_seq", 0) or 0)
         while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
             try:
+                if not _session_live:
+                    await asyncio.sleep(0.25)
+                    continue
                 if _bb is not None:
                     state = _bb.read("face_greeting_seq", "face_greeting_text")
                     seq = int(state.get("face_greeting_seq", 0) or 0)

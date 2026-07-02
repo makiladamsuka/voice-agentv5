@@ -91,6 +91,8 @@ class TalkGestureService:
     def _apply_pose_smooth(self, target_pose: dict, duration: float) -> None:
         """Smoothly interpolate to target pose with different speeds per motor group.
         
+        Uses high-frequency updates (100Hz) and easing for continuous smooth motion.
+        
         Args:
             target_pose: Target pose dictionary with a0, a1, a2, a3 keys.
             duration: Total duration for the movement in seconds.
@@ -113,23 +115,28 @@ class TalkGestureService:
         delta_a2 = target_a2 - start_a2
         delta_a3 = target_a3 - start_a3
         
-        # Calculate how many steps based on speeds
-        # vertical_speed controls a0, a1 movement rate
-        # horizontal_speed controls a2, a3 movement rate
-        steps = int(duration / self.poll_interval)
+        # Calculate durations based on speed (inverse relationship)
+        vertical_duration = duration / max(0.1, self.vertical_speed)
+        horizontal_duration = duration / max(0.1, self.horizontal_speed)
         
+        # Use longer duration for frame timing
+        frame_duration = max(vertical_duration, horizontal_duration)
+        
+        poll_interval = 0.01  # 100 Hz for smooth continuous motion
         start_time = time.time()
         
-        for step in range(steps):
+        while True:
             elapsed = time.time() - start_time
-            if elapsed >= duration:
+            if elapsed >= frame_duration:
                 break
             
-            # Different progress for vertical vs horizontal
-            # Vertical (a0, a1) uses vertical_speed
-            vertical_progress = min(1.0, (elapsed / duration) * self.vertical_speed)
-            # Horizontal (a2, a3) uses horizontal_speed  
-            horizontal_progress = min(1.0, (elapsed / duration) * self.horizontal_speed)
+            # Calculate progress for each motor group
+            vertical_t = min(1.0, elapsed / vertical_duration)
+            horizontal_t = min(1.0, elapsed / horizontal_duration)
+            
+            # Apply easing for smooth motion
+            vertical_progress = self._ease_in_out(vertical_t)
+            horizontal_progress = self._ease_in_out(horizontal_t)
             
             # Interpolate with different speeds
             new_a0 = start_a0 + delta_a0 * vertical_progress
@@ -149,7 +156,7 @@ class TalkGestureService:
             if not read_speaking_flag():
                 break
             
-            time.sleep(self.poll_interval)
+            time.sleep(poll_interval)
         
         # Ensure we reach the target
         self.bb.write(
@@ -158,6 +165,16 @@ class TalkGestureService:
             arm_a2=target_a2,
             arm_a3=target_a3,
         )
+    
+    def _ease_in_out(self, t):
+        """Smooth ease-in-out function for continuous motion.
+        
+        Uses cubic easing for smooth acceleration and deceleration.
+        """
+        if t < 0.5:
+            return 4 * t * t * t
+        else:
+            return 1 - pow(-2 * t + 2, 3) / 2
 
     def run(self) -> None:
         """Main loop: continuously switch between random talk poses while agent speaks."""

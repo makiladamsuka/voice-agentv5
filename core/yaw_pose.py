@@ -3,15 +3,61 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from lib.head_mech import signed_pan_mech_deg
+from lib.head_mech import signed_pan_mech_deg, signed_tilt_mech_deg
 from lib.yaw_home_tracker import YawHomeSample, YawHomeTracker
 
 if TYPE_CHECKING:
     from core.blackboard import Blackboard
     from core.tof_state import TofState
     from hardware.arduino_servo import ArduinoServoLink
+
+
+@dataclass
+class _HeadHomeRef:
+    imu_pitch_deg: float = 0.0
+    tilt_mech_deg: float = 0.0
+    pan_cmd: float = 0.0
+
+
+_HEAD_HOME = _HeadHomeRef()
+_head_home_locked = False
+
+
+def head_home_locked() -> bool:
+    return _head_home_locked
+
+
+def lock_head_home(
+    imu_pitch: float, pan: float, tilt: float, servo_cfg: dict
+) -> None:
+    """Record head pan/tilt/pitch at HOME for viz deltas."""
+    global _head_home_locked
+    _HEAD_HOME.imu_pitch_deg = float(imu_pitch)
+    _HEAD_HOME.tilt_mech_deg = signed_tilt_mech_deg(tilt, servo_cfg)
+    _HEAD_HOME.pan_cmd = float(pan)
+    _head_home_locked = True
+
+
+def pan_cmd_from_home(pan: float) -> float:
+    """Servo pan cmd delta from HOME (1 cmd unit ≈ 1° on this robot)."""
+    if not _head_home_locked:
+        return 0.0
+    return float(pan) - _HEAD_HOME.pan_cmd
+
+
+def pitch_from_home(
+    imu_pitch: float, tilt: float, servo_cfg: dict
+) -> tuple[float, float]:
+    """Viz pitch from servo mech vs HOME; IMU delta for cross-check."""
+    if not _head_home_locked:
+        return 0.0, 0.0
+    tilt_mech = signed_tilt_mech_deg(tilt, servo_cfg)
+    viz_pitch = tilt_mech - _HEAD_HOME.tilt_mech_deg
+    imu_delta = float(imu_pitch) - _HEAD_HOME.imu_pitch_deg
+    return viz_pitch, imu_delta
 
 
 def query_enc(link: ArduinoServoLink, fallback: float) -> tuple[float, int, bool, float]:
@@ -116,6 +162,70 @@ def publish_tracker_pose(
         imu_drift_correction_deg=sample.imu_correction_deg,
         imu_yaw_rel_deg=from_home_imu,
         fusion_stationary=sample.stationary,
+    )
+
+
+def publish_tof_viz_pose(
+    tof_state: TofState | None,
+    sample: YawHomeSample,
+    *,
+    pan: float,
+    tilt: float,
+    imu_pitch_deg: float,
+    servo_cfg: dict,
+    imu_online: bool,
+    base_yaw_sign: float,
+    pan_yaw_sign: float,
+    tilt_sign: float,
+    imu_pitch_sign: float,
+    max_yaw_deg: float,
+    home_locked: bool = True,
+    base_busy: bool | None = None,
+) -> None:
+    """Push full yaw-viz pose fields into TofState (approach / TOF dashboard)."""
+    pitch_viz, imu_pitch_from_home = pitch_from_home(
+        imu_pitch_deg, tilt, servo_cfg
+    )
+    pan_cmd_delta = pan_cmd_from_home(pan)
+    pan_mech = signed_pan_mech_deg(pan, servo_cfg)
+    tilt_mech = signed_tilt_mech_deg(tilt, servo_cfg)
+    from_home_imu = sample.from_home_imu_deg
+    busy = sample.base_busy if base_busy is None else bool(base_busy)
+
+    if tof_state is None:
+        return
+    tof_state.update_pose(
+        base_yaw_sign=base_yaw_sign,
+        pan_yaw_sign=pan_yaw_sign,
+        tilt_sign=tilt_sign,
+        imu_pitch_sign=imu_pitch_sign,
+        body_yaw_deg=from_home_imu,
+        head_yaw_on_body_deg=sample.pan_from_home_deg,
+        encoder_yaw_deg=sample.from_home_enc_deg,
+        front_offset_deg=from_home_imu,
+        from_home_enc_deg=sample.from_home_enc_deg,
+        from_home_imu_deg=from_home_imu,
+        imu_total_from_home_deg=sample.imu_total_from_home_deg,
+        pan_from_home_deg=sample.pan_from_home_deg,
+        pan_cmd_from_home_deg=pan_cmd_delta,
+        pitch_from_home_deg=pitch_viz,
+        imu_pitch_deg=imu_pitch_deg,
+        imu_pitch_from_home_deg=imu_pitch_from_home,
+        pan_mech_deg=pan_mech,
+        tilt_mech_deg=tilt_mech,
+        head_pan=pan,
+        head_tilt=tilt,
+        map_yaw_deg=from_home_imu,
+        disagreement_deg=sample.disagreement_deg,
+        encoder_count_delta=sample.encoder_count_delta,
+        imu_online=imu_online,
+        max_yaw_deg=max_yaw_deg,
+        imu_drift_correction_deg=sample.imu_correction_deg,
+        imu_yaw_rel_deg=from_home_imu,
+        fusion_stationary=sample.stationary,
+        home_locked=home_locked,
+        base_busy=busy,
+        stationary=sample.stationary,
     )
 
 

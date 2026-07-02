@@ -27,8 +27,9 @@ from pathlib import Path
 
 import _bootstrap  # noqa: F401
 
-from approach_controller import ApproachController, lock_home, query_enc, start_imu
+from approach_controller import ApproachController, lock_home, query_enc, read_imu, start_imu
 from base_motor_utils import apply_base_calibration_to_nano
+from core.yaw_pose import lock_head_home
 from hardware.arduino_servo import ArduinoServoLink
 from lib.yaw_home_tracker import YawHomeTracker
 from tof_viz_server import (
@@ -85,6 +86,9 @@ def run_approach(
     prox_cfg = cfg.get("proximity", {}) or {}
     viz_cfg = cfg.get("debug_viz", {}) or {}
     base_yaw_sign = float(viz_cfg.get("base_yaw_sign", -1.0))
+    pan_yaw_sign = float(viz_cfg.get("pan_yaw_sign", -1.0))
+    tilt_sign = float(viz_cfg.get("tilt_sign", 1.0))
+    imu_pitch_sign = float(viz_cfg.get("imu_pitch_sign", -1.0))
     base_cfg.setdefault("home_imu_burst_sec", 0.45)
     base_cfg.setdefault("home_imu_fine_burst_sec", 0.12)
     base_cfg.setdefault("home_imu_close_ratio", 0.88)
@@ -113,7 +117,12 @@ def run_approach(
 
     apply_base_calibration_to_nano(link)
     STATE.set_connected(link._port_name or serial_port or "serial")
-    STATE.update_pose(base_yaw_sign=base_yaw_sign)
+    STATE.update_pose(
+        base_yaw_sign=base_yaw_sign,
+        pan_yaw_sign=pan_yaw_sign,
+        tilt_sign=tilt_sign,
+        imu_pitch_sign=imu_pitch_sign,
+    )
 
     reader = None
     yaw_sign = float(imu_cfg.get("yaw_sign", -1.0))
@@ -133,6 +142,7 @@ def run_approach(
     )
 
     pan = float(servo_cfg.get("pan_center", 100.0))
+    tilt = float(servo_cfg.get("tilt_center", 110.0))
     lock_home(
         tracker,
         link,
@@ -142,6 +152,8 @@ def run_approach(
         pan,
         zero_encoder=bool(base_cfg.get("zero_on_start", False)),
     )
+    _, imu_pitch, _, _ = read_imu(reader, yaw_sign, imu_pitch_sign)
+    lock_head_home(imu_pitch, pan, tilt, servo_cfg)
     _, _, _, cpd0 = query_enc(link, 0.0)
     tracker.counts_per_degree = max(cpd0, 0.05)
 
@@ -154,6 +166,9 @@ def run_approach(
         servo_cfg=servo_cfg,
         prox_cfg=prox_cfg,
         base_yaw_sign=base_yaw_sign,
+        pan_yaw_sign=pan_yaw_sign,
+        tilt_sign=tilt_sign,
+        imu_pitch_sign=imu_pitch_sign,
         running=running.is_set,
     )
     link._prox_callback = controller.handle_prox_line

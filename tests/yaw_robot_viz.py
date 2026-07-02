@@ -29,13 +29,13 @@ import signal
 import sys
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import _bootstrap  # noqa: F401
 
 from arduino_servo import ArduinoServoLink
 from base_motor_utils import apply_base_calibration_to_nano
+from core.yaw_pose import lock_head_home, pan_cmd_from_home, pitch_from_home
 from lib.base_home_drive import (
     drive_base_to_encoder_zero,
     drive_base_to_imu_angle,
@@ -65,42 +65,6 @@ try:
     import yaml
 except ImportError:
     yaml = None
-
-
-@dataclass
-class _HeadHomeRef:
-    imu_pitch_deg: float = 0.0
-    tilt_mech_deg: float = 0.0
-    pan_cmd: float = 0.0
-
-
-_HEAD_HOME = _HeadHomeRef()
-_head_home_locked = False
-
-
-def _lock_head_home(imu_pitch: float, pan: float, tilt: float, servo_cfg: dict) -> None:
-    global _head_home_locked
-    _HEAD_HOME.imu_pitch_deg = float(imu_pitch)
-    _HEAD_HOME.tilt_mech_deg = signed_tilt_mech_deg(tilt, servo_cfg)
-    _HEAD_HOME.pan_cmd = float(pan)
-    _head_home_locked = True
-
-
-def _pan_cmd_from_home(pan: float) -> float:
-    """Servo pan cmd delta from HOME (1 cmd unit ≈ 1° on this robot)."""
-    if not _head_home_locked:
-        return 0.0
-    return float(pan) - _HEAD_HOME.pan_cmd
-
-
-def _pitch_from_home(imu_pitch: float, tilt: float, servo_cfg: dict) -> tuple[float, float]:
-    """Viz pitch from servo mech vs HOME; IMU delta for cross-check."""
-    if not _head_home_locked:
-        return 0.0, 0.0
-    tilt_mech = signed_tilt_mech_deg(tilt, servo_cfg)
-    viz_pitch = tilt_mech - _HEAD_HOME.tilt_mech_deg
-    imu_delta = float(imu_pitch) - _HEAD_HOME.imu_pitch_deg
-    return viz_pitch, imu_delta
 
 
 def _load_yaml(path: Path) -> dict:
@@ -240,7 +204,7 @@ def _lock_home(
         imu_yaw_deg=imu_yaw,
         pan_mech_deg=pan_mech,
     )
-    _lock_head_home(imu_pitch, pan, tilt, servo_cfg)
+    lock_head_home(imu_pitch, pan, tilt, servo_cfg)
     tilt_mech = signed_tilt_mech_deg(tilt, servo_cfg)
     print(
         f"[YawViz] {label} locked  enc={enc:+.1f}°  counts={count}  "
@@ -261,8 +225,8 @@ def _publish_state(
     port: str,
     servo_cfg: dict,
 ) -> None:
-    pitch_viz, imu_pitch_from_home = _pitch_from_home(imu_pitch_deg, tilt, servo_cfg)
-    pan_cmd_from_home = _pan_cmd_from_home(pan)
+    pitch_viz, imu_pitch_from_home = pitch_from_home(imu_pitch_deg, tilt, servo_cfg)
+    pan_cmd_from_home = pan_cmd_from_home(pan)
     tilt_mech = signed_tilt_mech_deg(tilt, servo_cfg)
     if sample is None:
         STATE.update(

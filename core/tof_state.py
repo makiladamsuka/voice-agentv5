@@ -156,12 +156,30 @@ class TofState:
         self.fusion_stationary = False
         self.from_home_enc_deg = 0.0
         self.from_home_imu_deg = 0.0
+        self.imu_total_from_home_deg = 0.0
+        self.pan_from_home_deg = 0.0
+        self.pan_cmd_from_home_deg = 0.0
+        self.pitch_from_home_deg = 0.0
+        self.imu_pitch_deg = 0.0
+        self.imu_pitch_from_home_deg = 0.0
+        self.pan_mech_deg = 0.0
+        self.tilt_mech_deg = 0.0
+        self.head_pan = 0.0
+        self.head_tilt = 0.0
+        self.pan_yaw_sign = -1.0
+        self.tilt_sign = 1.0
+        self.imu_pitch_sign = -1.0
+        self.home_locked = False
+        self.base_busy = False
+        self.stationary = False
         self.map_yaw_deg = 0.0
         self.disagreement_deg = 0.0
         self.encoder_count_delta = 0
         self.imu_online = False
         self.max_yaw_deg = 120.0
         self.base_rotating = False
+        self.approach_phase = "idle"
+        self.clear_wait_remaining_sec = 0.0
         try:
             import yaml
 
@@ -239,6 +257,24 @@ class TofState:
         encoder_count_delta: int | None = None,
         imu_online: bool | None = None,
         max_yaw_deg: float | None = None,
+        imu_total_from_home_deg: float | None = None,
+        pan_from_home_deg: float | None = None,
+        pan_cmd_from_home_deg: float | None = None,
+        pitch_from_home_deg: float | None = None,
+        imu_pitch_deg: float | None = None,
+        imu_pitch_from_home_deg: float | None = None,
+        pan_mech_deg: float | None = None,
+        tilt_mech_deg: float | None = None,
+        head_pan: float | None = None,
+        head_tilt: float | None = None,
+        pan_yaw_sign: float | None = None,
+        tilt_sign: float | None = None,
+        imu_pitch_sign: float | None = None,
+        home_locked: bool | None = None,
+        base_busy: bool | None = None,
+        stationary: bool | None = None,
+        approach_phase: str | None = None,
+        clear_wait_remaining_sec: float | None = None,
     ) -> None:
         with self._lock:
             if body_yaw_deg is not None:
@@ -271,6 +307,42 @@ class TofState:
                 self.imu_online = bool(imu_online)
             if max_yaw_deg is not None:
                 self.max_yaw_deg = float(max_yaw_deg)
+            if imu_total_from_home_deg is not None:
+                self.imu_total_from_home_deg = float(imu_total_from_home_deg)
+            if pan_from_home_deg is not None:
+                self.pan_from_home_deg = float(pan_from_home_deg)
+            if pan_cmd_from_home_deg is not None:
+                self.pan_cmd_from_home_deg = float(pan_cmd_from_home_deg)
+            if pitch_from_home_deg is not None:
+                self.pitch_from_home_deg = float(pitch_from_home_deg)
+            if imu_pitch_deg is not None:
+                self.imu_pitch_deg = float(imu_pitch_deg)
+            if imu_pitch_from_home_deg is not None:
+                self.imu_pitch_from_home_deg = float(imu_pitch_from_home_deg)
+            if pan_mech_deg is not None:
+                self.pan_mech_deg = float(pan_mech_deg)
+            if tilt_mech_deg is not None:
+                self.tilt_mech_deg = float(tilt_mech_deg)
+            if head_pan is not None:
+                self.head_pan = float(head_pan)
+            if head_tilt is not None:
+                self.head_tilt = float(head_tilt)
+            if pan_yaw_sign is not None:
+                self.pan_yaw_sign = float(pan_yaw_sign)
+            if tilt_sign is not None:
+                self.tilt_sign = float(tilt_sign)
+            if imu_pitch_sign is not None:
+                self.imu_pitch_sign = float(imu_pitch_sign)
+            if home_locked is not None:
+                self.home_locked = bool(home_locked)
+            if base_busy is not None:
+                self.base_busy = bool(base_busy)
+            if stationary is not None:
+                self.stationary = bool(stationary)
+            if approach_phase is not None:
+                self.approach_phase = str(approach_phase)
+            if clear_wait_remaining_sec is not None:
+                self.clear_wait_remaining_sec = float(clear_wait_remaining_sec)
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -322,11 +394,29 @@ class TofState:
                 "front_offset_deg": self.front_offset_deg,
                 "from_home_enc_deg": self.from_home_enc_deg,
                 "from_home_imu_deg": self.from_home_imu_deg,
-                "map_yaw_deg": self.from_home_enc_deg,
+                "imu_total_from_home_deg": self.imu_total_from_home_deg,
+                "pan_from_home_deg": self.pan_from_home_deg,
+                "pan_cmd_from_home_deg": self.pan_cmd_from_home_deg,
+                "pitch_from_home_deg": self.pitch_from_home_deg,
+                "imu_pitch_deg": self.imu_pitch_deg,
+                "imu_pitch_from_home_deg": self.imu_pitch_from_home_deg,
+                "pan_mech_deg": self.pan_mech_deg,
+                "tilt_mech_deg": self.tilt_mech_deg,
+                "head_pan": self.head_pan,
+                "head_tilt": self.head_tilt,
+                "pan_yaw_sign": self.pan_yaw_sign,
+                "tilt_sign": self.tilt_sign,
+                "imu_pitch_sign": self.imu_pitch_sign,
+                "home_locked": self.home_locked,
+                "base_busy": self.base_busy,
+                "stationary": self.stationary,
+                "map_yaw_deg": self.from_home_imu_deg,
                 "disagreement_deg": self.disagreement_deg,
                 "encoder_count_delta": self.encoder_count_delta,
                 "imu_online": self.imu_online,
                 "base_rotating": self.base_rotating,
+                "approach_phase": self.approach_phase,
+                "clear_wait_remaining_sec": self.clear_wait_remaining_sec,
                 "max_yaw_deg": self.max_yaw_deg,
                 "imu_drift_correction_deg": self.imu_drift_correction_deg,
                 "imu_yaw_rel_deg": self.imu_yaw_rel_deg,

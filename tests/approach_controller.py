@@ -16,6 +16,7 @@ except ImportError:
 from lib.base_home_drive import drive_base_to_imu_zero
 from lib.head_mech import signed_pan_mech_deg
 from lib.yaw_home_tracker import YawHomeTracker
+from core.yaw_pose import publish_tof_viz_pose
 from base_spin_motion import expected_encoder_delta, write_base_step_spin
 
 try:
@@ -82,15 +83,18 @@ def start_imu(imu_cfg: dict):
     return reader
 
 
-def read_imu(reader, yaw_sign: float) -> tuple[float, float, bool]:
+def read_imu(
+    reader, yaw_sign: float, pitch_sign: float = 1.0
+) -> tuple[float, float, float, bool]:
     if reader is None:
-        return 0.0, 0.0, False
+        return 0.0, 0.0, 0.0, False
     sample = reader.latest()
     if sample is None:
-        return 0.0, 0.0, False
+        return 0.0, 0.0, 0.0, False
     imu_yaw = reader.filter.yaw_integral_deg() * yaw_sign
+    imu_pitch = float(sample.pitch_deg) * pitch_sign
     gyro = max(abs(sample.gyro_x_dps), abs(sample.gyro_y_dps), abs(sample.gyro_z_dps))
-    return imu_yaw, gyro, True
+    return imu_yaw, imu_pitch, gyro, True
 
 
 def query_enc(link: ArduinoServoLink, fallback: float) -> tuple[float, int, bool, float]:
@@ -120,7 +124,7 @@ def lock_home(
         time.sleep(0.2)
     enc, count, _, cpd = query_enc(link, 0.0)
     tracker.counts_per_degree = cpd
-    imu_yaw, _, imu_ok = read_imu(reader, yaw_sign)
+    imu_yaw, _, _, imu_ok = read_imu(reader, yaw_sign)
     pan_mech = signed_pan_mech_deg(pan, servo_cfg)
     tracker.lock_home(
         encoder_deg=enc,
@@ -149,6 +153,9 @@ class ApproachController:
         servo_cfg: dict,
         prox_cfg: dict,
         base_yaw_sign: float = -1.0,
+        pan_yaw_sign: float = -1.0,
+        tilt_sign: float = 1.0,
+        imu_pitch_sign: float = -1.0,
         running: Callable[[], bool] | None = None,
     ) -> None:
         self._link = link
@@ -158,6 +165,9 @@ class ApproachController:
         self._base_cfg = base_cfg
         self._servo_cfg = servo_cfg
         self._base_yaw_sign = float(base_yaw_sign)
+        self._pan_yaw_sign = float(pan_yaw_sign)
+        self._tilt_sign = float(tilt_sign)
+        self._imu_pitch_sign = float(imu_pitch_sign)
         self._running = running or (lambda: True)
 
         self.pan_center = float(servo_cfg.get("pan_center", 100.0))
@@ -224,6 +234,7 @@ class ApproachController:
         self._last_target_bearing = 0.0
         self._last_committed_bearing: float | None = None
         self._clear_since: float | None = None
+        self._approach_phase = "idle"
         self._maneuvering = False
         self._tof_ignore_until = 0.0
         self._last_base_busy = False
@@ -249,7 +260,9 @@ class ApproachController:
         return enc, count, busy, self._cached_cpd
 
     def _publish_viz_from_cache(self) -> None:
-        imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
+        imu_yaw, imu_pitch, gyro, imu_ok = read_imu(
+            self._reader, self._yaw_sign, self._imu_pitch_sign
+        )
         pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
         with self._tracker_lock:
             self._tracker.counts_per_degree = self._cached_cpd
@@ -262,7 +275,11 @@ class ApproachController:
                 base_busy=self._maneuvering or self._cached_busy,
             )
         if sample is not None:
-            self._publish_pose(sample, imu_online=imu_ok and self._reader is not None)
+            self._publish_pose(
+                sample,
+                imu_pitch_deg=imu_pitch,
+                imu_online=imu_ok and self._reader is not None,
+            )
 
     def publish_viz_pose(self) -> None:
         """IMU-only viz refresh — never queries serial (avoids fighting base commands)."""
@@ -295,7 +312,9 @@ class ApproachController:
             return False
 
         if self._reader is not None:
-            _, gyro, ok = read_imu(self._reader, self._yaw_sign)
+            _, _, gyro, ok = read_imu(
+                self._reader, self._yaw_sign, self._imu_pitch_sign
+            )
             if ok and gyro > self.tof_gyro_settle_dps:
                 return False
 
@@ -312,6 +331,38 @@ class ApproachController:
         raw = [int(m.group(i)) for i in range(1, 4)]
         mm, vel, open_flags = FILTER_BANK.update_all(raw)
         STATE.update_sample(mm, vel, open_flags=open_flags)
+
+    def _set_approach_phase(
+        self, phase: str, *, clear_remaining: float | None = None
+    ) -> None:
+        self._approach_phase = phase
+        if TOF_STATE is None:
+            return
+        TOF_STATE.update_pose(
+            approach_phase=phase,
+            clear_wait_remaining_sec=(
+                float(clear_remaining) if clear_remaining is not None else 0.0
+            ),
+        )
+
+    def _sync_approach_dashboard(self, now: float, enc_from_home: float) -> None:
+        if self._maneuvering:
+            return
+        if not self.clear_return_enabled:
+            self._set_approach_phase("idle")
+            return
+        if abs(enc_from_home) < self.clear_return_tolerance_deg:
+            self._set_approach_phase("idle")
+            return
+        snap = self._live_tof_snapshot()
+        if self._person_in_scene(snap):
+            self._set_approach_phase("tracking")
+            return
+        if self._clear_since is not None:
+            remaining = max(0.0, self.clear_return_sec - (now - self._clear_since))
+            self._set_approach_phase("clear_wait", clear_remaining=remaining)
+            return
+        self._set_approach_phase("idle")
 
     def _reset_tof_after_motion(self) -> None:
         """Drop stale hits/tracks so post-spin bearings are not body-fixed ghosts."""
@@ -398,7 +449,9 @@ class ApproachController:
 
     def _query_imu_home(self) -> tuple[float, float, bool, float]:
         enc, count, busy, _cpd = self._fetch_enc()
-        imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
+        imu_yaw, imu_pitch, gyro, imu_ok = read_imu(
+            self._reader, self._yaw_sign, self._imu_pitch_sign
+        )
         pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
         with self._tracker_lock:
             self._tracker.counts_per_degree = self._cached_cpd
@@ -412,12 +465,18 @@ class ApproachController:
             )
         imu_home = sample.from_home_imu_deg if sample is not None else 0.0
         if sample is not None:
-            self._publish_pose(sample, imu_online=imu_ok and self._reader is not None)
+            self._publish_pose(
+                sample,
+                imu_pitch_deg=imu_pitch,
+                imu_online=imu_ok and self._reader is not None,
+            )
         return imu_home, enc, busy, gyro
 
     def _refresh_tracker(self) -> tuple[float, float]:
         enc, count, busy, cpd = self._fetch_enc()
-        imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
+        imu_yaw, imu_pitch, gyro, imu_ok = read_imu(
+            self._reader, self._yaw_sign, self._imu_pitch_sign
+        )
         pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
         with self._tracker_lock:
             self._tracker.counts_per_degree = cpd
@@ -451,12 +510,18 @@ class ApproachController:
         self._last_base_busy = bool(busy)
         if sample is None:
             return 0.0, 0.0
-        self._publish_pose(sample, imu_online=imu_ok and self._reader is not None)
+        self._publish_pose(
+            sample,
+            imu_pitch_deg=imu_pitch,
+            imu_online=imu_ok and self._reader is not None,
+        )
         return sample.from_home_imu_deg, sample.from_home_enc_deg
 
     def _resync_after_maneuver(self):
         enc, count, busy, cpd = self._fetch_enc()
-        imu_yaw, gyro, imu_ok = read_imu(self._reader, self._yaw_sign)
+        imu_yaw, imu_pitch, gyro, imu_ok = read_imu(
+            self._reader, self._yaw_sign, self._imu_pitch_sign
+        )
         pan_mech = signed_pan_mech_deg(self.pan_center, self._servo_cfg)
         with self._tracker_lock:
             self._tracker.counts_per_degree = cpd
@@ -474,28 +539,30 @@ class ApproachController:
                 base_busy=busy,
             )
         if sample is not None:
-            self._publish_pose(sample, imu_online=imu_ok and self._reader is not None)
+            self._publish_pose(
+                sample,
+                imu_pitch_deg=imu_pitch,
+                imu_online=imu_ok and self._reader is not None,
+            )
         return sample
 
-    def _publish_pose(self, sample, *, imu_online: bool) -> None:
-        if TOF_STATE is None:
-            return
-        TOF_STATE.update_pose(
-            base_yaw_sign=self._base_yaw_sign,
-            body_yaw_deg=sample.from_home_imu_deg,
-            head_yaw_on_body_deg=sample.pan_mech_deg,
-            encoder_yaw_deg=sample.from_home_enc_deg,
-            front_offset_deg=sample.from_home_enc_deg,
-            from_home_enc_deg=sample.from_home_enc_deg,
-            from_home_imu_deg=sample.from_home_imu_deg,
-            map_yaw_deg=sample.from_home_imu_deg,
-            disagreement_deg=sample.disagreement_deg,
-            encoder_count_delta=sample.encoder_count_delta,
+    def _publish_pose(
+        self, sample, *, imu_pitch_deg: float, imu_online: bool
+    ) -> None:
+        publish_tof_viz_pose(
+            TOF_STATE,
+            sample,
+            pan=self.pan_center,
+            tilt=self.tilt_center,
+            imu_pitch_deg=imu_pitch_deg,
+            servo_cfg=self._servo_cfg,
             imu_online=imu_online,
+            base_yaw_sign=self._base_yaw_sign,
+            pan_yaw_sign=self._pan_yaw_sign,
+            tilt_sign=self._tilt_sign,
+            imu_pitch_sign=self._imu_pitch_sign,
             max_yaw_deg=self.max_yaw_deg,
-            imu_drift_correction_deg=sample.imu_correction_deg,
-            imu_yaw_rel_deg=sample.from_home_imu_deg,
-            fusion_stationary=sample.stationary,
+            home_locked=self._tracker.home_locked,
         )
 
     def _drain_serial_events(self) -> None:
@@ -636,8 +703,13 @@ class ApproachController:
         return False
 
     def _clip_bearing_step(self, bearing_deg: float, enc_from_home: float) -> float:
-        """Body-frame bearing → plate command (honors base.sign like BaseController)."""
-        plate_deg = bearing_deg * self.base_sign
+        """Body-frame bearing → plate command for ToF aim (+ = target to robot right).
+
+        Do not apply base.sign here — that flip is for wander/head-offset spins in
+        BaseController, not body-frame ToF bearings. Viz and atan2(x,z) already use
+        the same +right convention.
+        """
+        plate_deg = float(bearing_deg)
         if abs(plate_deg) < 0.05:
             return 0.0
         enc_delta = expected_encoder_delta(plate_deg, self.encoder_sign)
@@ -806,7 +878,9 @@ class ApproachController:
         if self._link is None or not self._link.connected:
             return
         self._last_committed_bearing = self._last_target_bearing
+        self._set_approach_phase("aiming")
         self._begin_base_motion()
+        enc_after = self._cached_enc_deg
         try:
             self._hold_head_home()
             ok, moved, reason = write_base_step_spin(
@@ -823,11 +897,11 @@ class ApproachController:
             time.sleep(0.05)
             self._hold_head_home()
             sample = self._resync_after_maneuver()
-            enc_home = sample.from_home_enc_deg if sample else 0.0
+            enc_after = sample.from_home_enc_deg if sample else enc_after
             tag = "OK" if ok else "FAIL"
             print(
                 f"[Approach] SPIN {bearing_deg:+.1f}° {tag} "
-                f"moved={moved:+.1f}° enc={enc_home:+.1f}° ({reason})"
+                f"moved={moved:+.1f}° enc={enc_after:+.1f}° ({reason})"
             )
             self._record_turn(now, aligning=True)
         except Exception as exc:
@@ -836,11 +910,14 @@ class ApproachController:
         finally:
             self._end_base_motion()
             self._last_base_motion_done_ts = time.time()
+            self._sync_approach_dashboard(time.time(), enc_after)
 
     def _execute_imu_home(self, now: float) -> None:
         if self._link is None or not self._link.connected:
             return
+        self._set_approach_phase("homing")
         self._begin_base_motion()
+        enc_after = self._cached_enc_deg
         try:
             self._hold_head_home()
             ok, final_imu = drive_base_to_imu_zero(
@@ -852,11 +929,11 @@ class ApproachController:
             time.sleep(0.12)
             self._hold_head_home()
             sample = self._resync_after_maneuver()
-            enc_home = sample.from_home_enc_deg if sample else 0.0
+            enc_after = sample.from_home_enc_deg if sample else enc_after
             tag = "OK" if ok else "FAIL"
             print(
                 f"[Approach] HOME return {tag} "
-                f"enc={enc_home:+.1f}° imu={final_imu:+.1f}° from HOME"
+                f"enc={enc_after:+.1f}° imu={final_imu:+.1f}° from HOME"
             )
             self._record_turn(now, aligning=True)
             self._clear_since = None
@@ -866,6 +943,7 @@ class ApproachController:
         finally:
             self._end_base_motion()
             self._last_base_motion_done_ts = time.time()
+            self._sync_approach_dashboard(time.time(), enc_after)
 
     def tick(self, now: float | None = None) -> None:
         if now is None:
@@ -906,6 +984,9 @@ class ApproachController:
             if log:
                 print(f"[Approach] {log[0]} → spin {bearing:+.1f}° ({log})")
             self._execute_bearing_spin(bearing, now)
+            return
+
+        self._sync_approach_dashboard(now, enc_from_home)
 
     def run(self) -> None:
         print("[Approach] Controller running (bearing spin + HOME return).")

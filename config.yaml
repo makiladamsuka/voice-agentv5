@@ -400,7 +400,7 @@ proximity:
   tof_align_blanking_sec: 0.5
   tof_target_lock_sec: 2.5
   clear_return_enabled: true
-  clear_return_sec: 2.5
+  clear_return_sec: 5.0          # wait this long after scene clear before HOME return
   clear_return_tolerance_deg: 6.0
   # Min time between proximity turns
   cooldown_sec: 5.0

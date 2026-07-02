@@ -216,8 +216,9 @@ HTML_PAGE = """<!DOCTYPE html>
       <span><i style="color:#38bdf8;background:#38bdf8"></i>person (moving)</span>
       <span><i style="color:#f97316;background:#f97316"></i>obstacle (static)</span>
       <span><i style="color:#6b7280;background:#6b7280"></i>uncertain</span>
-      <span><i style="color:#111111;background:#111111"></i>black line = base heading (IMU)</span>
-      <span><i style="color:#94a3b8;background:#94a3b8"></i>grey cone = HOME forward</span>
+      <span><i style="color:#c8d6e5;background:#c8d6e5"></i>grey base = IMU base yaw from HOME</span>
+      <span><i style="color:#f472b6;background:#f472b6"></i>pink head = pan/pitch from HOME</span>
+      <span><i style="color:#94a3b8;background:#94a3b8"></i>grey cone = fixed HOME forward</span>
       <span style="opacity:0.5">⌖ drag · scroll to zoom</span>
     </div>
     <div class="object-readout" id="object-readout">Scanning…</div>
@@ -313,6 +314,14 @@ HTML_PAGE = """<!DOCTYPE html>
         st.textContent = "serial error";
         st.className = "badge err";
         port.textContent = data.error;
+      } else if (data.approach_phase === "homing") {
+        st.textContent = "HOMING";
+        st.className = "badge warn";
+        port.textContent = data.port;
+      } else if (data.approach_phase === "clear_wait" && Number(data.clear_wait_remaining_sec) > 0) {
+        st.textContent = `CLEAR ${Number(data.clear_wait_remaining_sec).toFixed(1)}s`;
+        st.className = "badge warn";
+        port.textContent = data.port;
       } else if (data.connected) {
         st.textContent = `${data.ok_count}/3 OK`;
         st.className = data.ok_count >= 2 ? "badge ok" : "badge warn";
@@ -356,6 +365,7 @@ HTML_PAGE = """<!DOCTYPE html>
       document.getElementById("summary").innerHTML = `
         <div><dt>Sensors OK</dt><dd>${data.ok_count} / 3</dd></div>
         <div><dt>Dropouts L / C / R</dt><dd>${data.dropouts.join(" / ")}</dd></div>
+        <div><dt>Approach</dt><dd>${data.approach_phase || "idle"}${data.approach_phase === "clear_wait" && data.clear_wait_remaining_sec > 0 ? ` (${Number(data.clear_wait_remaining_sec).toFixed(1)}s)` : ""}</dd></div>
         <div><dt>Max scale</dt><dd>${data.max_mm} mm</dd></div>
       `;
       document.getElementById("boot").textContent = data.boot.join("\\n");

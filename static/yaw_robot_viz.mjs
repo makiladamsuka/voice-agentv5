@@ -213,7 +213,7 @@ function updateYawScene(data) {
   const maxYaw = Number(data.max_yaw_deg ?? 120);
 
   mapGroup.rotation.y = 0;
-  robot.rotation.y = deg(baseYaw) * baseSign;
+  robot.rotation.y = -deg(baseYaw) * baseSign;
   panNode.rotation.y = deg(headPan) * panSign;
   tiltNode.rotation.x = deg(headPitch) * tiltSign;
 

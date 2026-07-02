@@ -35,6 +35,19 @@ try:
 except ImportError:
     json = None
 
+# Try to import ServoMixer for real motor control
+try:
+    from core.servo_mixer import ServoMixer
+    HARDWARE_AVAILABLE = True
+except ImportError:
+    HARDWARE_AVAILABLE = False
+    print("[Test] WARNING: ServoMixer not available, motor control disabled")
+
+# For HTTP debug stream
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from threading import Thread
+import numpy as np
+
 
 def print_greeting_state(bb: Blackboard):
     """Print current greeting state."""
@@ -53,11 +66,128 @@ def print_greeting_state(bb: Blackboard):
         print(f"   Face detected (area ratio: {state['face_area_ratio']:.4f})")
 
 
-class MockArmController:
-    """Mock ArmController that simulates arm movement without hardware."""
+class DebugStreamHandler(BaseHTTPRequestHandler):
+    """HTTP handler for debug video stream with face memory overlay."""
     
-    def __init__(self, bb: Blackboard, presets_path: Path):
+    blackboard = None
+    greeting_service = None
+    
+    def log_message(self, format, *args):
+        """Suppress HTTP logs."""
+        pass
+    
+    def do_GET(self):
+        """Handle GET requests."""
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            html = b"""
+            <html>
+            <head><title>Face Greeting Debug Stream</title></head>
+            <body style="background: #000; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh;">
+                <div style="text-align: center;">
+                    <h1 style="color: #fff;">Face Greeting Debug Stream</h1>
+                    <img src="/stream.mjpg" style="max-width: 90%; border: 2px solid #0f0;" />
+                </div>
+            </body>
+            </html>
+            """
+            self.wfile.write(html)
+        
+        elif self.path == '/stream.mjpg':
+            self.send_response(200)
+            self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
+            self.end_headers()
+            
+            try:
+                while True:
+                    frame = self.get_annotated_frame()
+                    if frame is not None:
+                        _, jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                        self.wfile.write(b'--frame\r\n')
+                        self.wfile.write(b'Content-Type: image/jpeg\r\n\r\n')
+                        self.wfile.write(jpg.tobytes())
+                        self.wfile.write(b'\r\n')
+                    time.sleep(0.1)
+            except:
+                pass
+    
+    def get_annotated_frame(self):
+        """Get frame with face memory status overlay."""
+        if self.blackboard is None or self.greeting_service is None:
+            return None
+        
+        state = self.blackboard.read("stream_frame", "face_detected", "face_area_ratio")
+        frame = state["stream_frame"]
+        
+        if frame is None:
+            return None
+        
+        # Make a copy to annotate
+        annotated = frame.copy()
+        h, w = annotated.shape[:2]
+        
+        # Draw memory status
+        memory_count = len(self.greeting_service.greeted_faces)
+        status_text = f"Memory: {memory_count} faces"
+        cv2.putText(annotated, status_text, (10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        # Draw face status
+        if state["face_detected"]:
+            face_text = "Face: DETECTED"
+            color = (0, 255, 255)  # Yellow
+            
+            # Check if this face is in memory
+            if memory_count > 0 and self.greeting_service._current_embedding is not None:
+                matching_face = self.greeting_service.find_matching_face(
+                    self.greeting_service._current_embedding
+                )
+                if matching_face is not None:
+                    age_min = (time.time() - matching_face.timestamp) / 60.0
+                    face_text = f"Face: MEMORIZED ({age_min:.1f}m ago)"
+                    color = (255, 0, 255)  # Magenta
+                else:
+                    face_text = "Face: NEW!"
+                    color = (0, 255, 0)  # Green
+            
+            cv2.putText(annotated, face_text, (10, 60), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        else:
+            cv2.putText(annotated, "Face: NONE", (10, 60), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        
+        # Draw greeting status
+        greeting_state = self.blackboard.read("arm_greeting_active", "arm_greeting_pose")
+        if greeting_state["arm_greeting_active"]:
+            pose = greeting_state["arm_greeting_pose"]
+            cv2.putText(annotated, f"GREETING: {pose}", (10, h - 20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
+        
+        return annotated
+
+
+def start_debug_stream(bb: Blackboard, greeting_service: FaceGreetingArmService, port: int = 9000):
+    """Start HTTP debug stream server."""
+    DebugStreamHandler.blackboard = bb
+    DebugStreamHandler.greeting_service = greeting_service
+    
+    server = HTTPServer(('0.0.0.0', port), DebugStreamHandler)
+    print(f"[DebugStream] Started at http://localhost:{port}")
+    print(f"[DebugStream] Shows: Face status + Memory info + Greeting status")
+    
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
+
+
+class MockArmController:
+    """Mock ArmController that simulates arm movement and sends commands to real motors."""
+    
+    def __init__(self, bb: Blackboard, presets_path: Path, use_hardware: bool = False):
         self.bb = bb
+        self.use_hardware = use_hardware and HARDWARE_AVAILABLE
         self._last_greeting_seq = 0
         self._current_pose = {"a0": 47.0, "a1": 65.0, "a2": 54.0, "a3": 76.0}  # home
         
@@ -68,10 +198,35 @@ class MockArmController:
                 data = json.load(f)
                 self.poses = data.get("poses", {})
         
+        # Initialize ServoMixer if hardware is available
+        self.servo_mixer = None
+        if self.use_hardware:
+            try:
+                self.servo_mixer = ServoMixer(bb, port="")  # Auto-detect port
+                print(f"[MockArmController] ServoMixer initialized - REAL MOTORS ENABLED")
+            except Exception as e:
+                print(f"[MockArmController] Failed to initialize ServoMixer: {e}")
+                self.use_hardware = False
+        
         print(f"[MockArmController] Loaded {len(self.poses)} poses")
+        if self.use_hardware:
+            print(f"[MockArmController] 🎯 REAL MOTOR MODE - Arms will move!")
+        else:
+            print(f"[MockArmController] 📺 SIMULATION MODE - No motors")
+    
+    def send_arm_command(self, pose: dict):
+        """Send arm position command to ServoMixer."""
+        if self.servo_mixer:
+            # ServoMixer expects 'A' command format: A<a0>,<a1>,<a2>,<a3>
+            cmd = f"A{pose['a0']:.1f},{pose['a1']:.1f},{pose['a2']:.1f},{pose['a3']:.1f}"
+            try:
+                self.servo_mixer._serial.write(cmd.encode() + b'\n')
+                print(f"   📡 Sent to motors: {cmd}")
+            except Exception as e:
+                print(f"   ❌ Motor command failed: {e}")
     
     def execute_greeting(self, pose_name: str):
-        """Simulate executing a greeting pose."""
+        """Execute a greeting pose."""
         if pose_name in self.poses:
             target_pose = self.poses[pose_name]
             print(f"\n{'=' * 60}")
@@ -93,6 +248,10 @@ class MockArmController:
                 arm_greeting_active=True
             )
             
+            # Send to real motors if available
+            if self.use_hardware:
+                self.send_arm_command(target_pose)
+            
             print(f"   ✅ Pose reached!")
             
             # Hold pose for 2 seconds
@@ -110,6 +269,11 @@ class MockArmController:
                 arm_a3=home["a3"],
                 arm_greeting_active=False
             )
+            
+            # Send to real motors if available
+            if self.use_hardware:
+                self.send_arm_command(home)
+            
             print(f"   ✅ Returned to home\n")
         else:
             print(f"[MockArmController] WARNING: Pose '{pose_name}' not found")
@@ -143,7 +307,8 @@ def test_greeting_service():
     print("  2. Play random hi pose for NEW faces")
     print("  3. Remember each face for 30 minutes")
     print("  4. Skip greeting for known faces")
-    print("  5. Simulate arm movement (no hardware needed)")
+    print("  5. Move real arm motors (if hardware available)")
+    print("  6. Show debug stream at http://localhost:9000")
     print("\nPress Ctrl+C to stop\n")
     
     # Create blackboard
@@ -182,15 +347,19 @@ def test_greeting_service():
     )
     greeting_thread.start()
     
-    # Create and start mock arm controller
-    print("[Test] Starting MockArmController...")
+    # Start debug stream
+    print("[Test] Starting debug stream...")
+    debug_server = start_debug_stream(bb, greeting_service, port=9000)
+    
+    # Create and start arm controller (with hardware if available)
+    print("[Test] Starting ArmController...")
     presets_path = APP_DIR / "tests" / "arm_pose_presets.json"
-    arm_controller = MockArmController(bb, presets_path)
+    arm_controller = MockArmController(bb, presets_path, use_hardware=HARDWARE_AVAILABLE)
     
     arm_thread = threading.Thread(
         target=arm_controller.run,
         daemon=True,
-        name="MockArmController"
+        name="ArmController"
     )
     arm_thread.start()
     
@@ -198,6 +367,7 @@ def test_greeting_service():
     print("Monitoring face greetings...")
     print("Available hi poses:", greeting_service.hi_poses)
     print(f"Memory timeout: {greeting_service.memory_timeout_sec / 60:.1f} minutes")
+    print("Debug stream: http://localhost:9000")
     print("=" * 60 + "\n")
     
     last_seq = 0

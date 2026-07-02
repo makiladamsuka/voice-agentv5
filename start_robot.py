@@ -563,6 +563,21 @@ def main():
                 name="FaceGreeting",
             )
         )
+    
+    # Face greeting arm gestures (separate from voice greetings)
+    face_greeting_arm_cfg = cfg.get("face_greeting_arm", {}) or {}
+    if face_greeting_arm_cfg.get("enabled", True) and arm_controller is not None and arm_controller.enabled:
+        from core.face_greeting_arm import FaceGreetingArmService
+
+        threads.append(
+            threading.Thread(
+                target=FaceGreetingArmService(bb, config_path=DEFAULT_CONFIG_PATH).run,
+                daemon=True,
+                name="FaceGreetingArm",
+            )
+        )
+        print("[Bootstrap] FaceGreetingArmService enabled — arm gestures for new faces")
+    
     if arm_controller is not None and arm_controller.enabled:
         threads.append(
             threading.Thread(target=arm_controller.run, daemon=True, name="ArmController")

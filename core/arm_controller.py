@@ -17,6 +17,10 @@ from core.blackboard import Blackboard
 from lib.arm_base_lean import lean_delta_per_spin
 from lib.elastic_head_motion import smooth_toward
 
+# Greeting pose parameters
+GREETING_DURATION_SEC = 2.0  # How long to hold greeting pose
+GREETING_SMOOTH_HZ = 8.0     # Faster transition to greeting pose
+
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
 
@@ -89,6 +93,13 @@ class ArmController:
         self._was_busy = False
         self._pending_step_deg = 0.0
 
+        # Greeting state
+        self._presets = presets
+        self._last_greeting_seq = 0
+        self._greeting_start_time: float | None = None
+        self._greeting_pose: tuple[float, float, float, float] | None = None
+        self._pre_greeting_target = list(self._home)
+
         self._publish_pose(self._home)
 
     def _publish_pose(self, pose: tuple[float, float, float, float]) -> None:
@@ -118,6 +129,44 @@ class ArmController:
         clamped = self._clamp_accum(*pose)
         self._target[:] = list(clamped)
 
+    def _start_greeting(self, pose_name: str) -> None:
+        """Start a greeting pose sequence."""
+        pose = self._presets.get(pose_name)
+        if pose is None:
+            print(f"[ArmController] Warning: greeting pose '{pose_name}' not found, using home")
+            pose = self._home
+        
+        # Save current target to return to after greeting
+        self._pre_greeting_target = list(self._target)
+        
+        # Set greeting pose as target
+        self._greeting_pose = pose
+        self._greeting_start_time = time.time()
+        
+        print(f"[ArmController] Starting greeting: {pose_name} → {pose}")
+        self.bb.write(arm_greeting_active=True)
+
+    def _update_greeting(self, now: float) -> bool:
+        """Update greeting state. Returns True if greeting is active."""
+        if self._greeting_start_time is None:
+            return False
+        
+        elapsed = now - self._greeting_start_time
+        
+        if elapsed < GREETING_DURATION_SEC:
+            # Still greeting - set target to greeting pose
+            if self._greeting_pose is not None:
+                self._target[:] = list(self._greeting_pose)
+            return True
+        else:
+            # Greeting complete - return to pre-greeting pose
+            self._target[:] = list(self._pre_greeting_target)
+            self._greeting_start_time = None
+            self._greeting_pose = None
+            print("[ArmController] Greeting complete, returning to previous pose")
+            self.bb.write(arm_greeting_active=False)
+            return False
+
     def run(self) -> None:
         if not self.enabled:
             print("[ArmController] Disabled in config.")
@@ -125,15 +174,43 @@ class ArmController:
 
         loop_delay = 1.0 / max(1.0, self.loop_hz)
         print(
-            f"[ArmController] Cumulative lean "
+            f"[ArmController] Cumulative lean + greeting gestures "
             f"(+{self.step_delta_deg:.1f}°/spin, mid A0≤{self._raise_mid[0]:.0f} "
             f"A1≥{self._raise_mid[1]:.0f}, home={self._home})"
         )
 
         while self.bb.read("running")["running"]:
             t0 = time.time()
+            now = time.time()
 
-            if self.bb.read("bye_wave_active")["bye_wave_active"]:
+            # Check for new greeting request
+            greeting_state = self.bb.read("arm_greeting_seq", "arm_greeting_pose")
+            greeting_seq = greeting_state["arm_greeting_seq"]
+            if greeting_seq != self._last_greeting_seq:
+                self._last_greeting_seq = greeting_seq
+                pose_name = greeting_state["arm_greeting_pose"]
+                if pose_name:
+                    self._start_greeting(pose_name)
+
+            # Update greeting if active
+            greeting_active = self._update_greeting(now)
+
+            # Skip base lean accumulation during bye wave or greeting
+            if self.bb.read("bye_wave_active")["bye_wave_active"] or greeting_active:
+                # During greeting, use faster smoothing
+                smooth_hz = GREETING_SMOOTH_HZ if greeting_active else self.blend_hz
+                for i in range(4):
+                    self._current[i] = smooth_toward(
+                        self._current[i],
+                        self._target[i],
+                        loop_delay,
+                        smooth_hz=smooth_hz,
+                        lo=-360.0,
+                        hi=360.0,
+                    )
+                pose = self._clamp_accum(*self._current)
+                self._current[:] = list(pose)
+                self._publish_pose(pose)
                 time.sleep(loop_delay)
                 continue
 

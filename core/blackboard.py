@@ -154,6 +154,11 @@ class Blackboard:
     face_greeting_seq: int = 0
     face_greeting_text: str = ""
 
+    # ── Arm greeting (written by FaceGreetingArmService, consumed by ArmController) ─
+    arm_greeting_seq: int = 0
+    arm_greeting_pose: str = ""
+    arm_greeting_active: bool = False  # True while greeting pose is executing
+
     # ── Debug manual control (written by viz POST /api/control) ───────────────
     manual_control_enabled: bool = False
     debug_control_cmd: str = ""

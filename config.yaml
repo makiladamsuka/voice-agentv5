@@ -309,6 +309,20 @@ arms:
   turn_sign: 1.0
   loop_hz: 50.0
 
+bye_wave:
+  enabled: true
+  port: 8000
+  host: "0.0.0.0"
+  cooldown_sec: 10.0
+  max_hands: 2
+  presets_path: "tests/arm_pose_presets.json"
+
+face_greeting:
+  enabled: true
+  cooldown_sec: 60.0
+  hold_sec: 0.45
+  min_face_area_ratio: 0.008
+
 eyes:
   render_fps: 40          # ST7735 eye update rate (independent of camera stream)
   blink_speed_min: 3.2

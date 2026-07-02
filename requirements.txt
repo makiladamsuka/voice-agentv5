@@ -36,6 +36,9 @@ vaderSentiment
 smbus2
 pyserial
 
+# Hand gesture detection (bye-wave via MediaPipe)
+mediapipe
+
 # Utilities
 python-dotenv==1.2.1
 duckduckgo-search

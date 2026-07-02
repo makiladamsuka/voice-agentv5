@@ -48,6 +48,10 @@ class Blackboard:
     arm_a2: float = 64.0
     arm_a3: float = 87.0
 
+    # ── Bye wave gesture (written by ByeWaveService) ──────────────────────────
+    bye_wave_active: bool = False          # True while a bye animation is executing
+    bye_wave_cooldown_until: float = 0.0   # epoch time when cooldown expires
+
     # ── Base rotation (written by BaseController / ServoMixer) ────────────────
     base_step_deg: float = 0.0
     base_step_source: str = ""
@@ -141,6 +145,10 @@ class Blackboard:
     amplitude_slow: float = 0.0              # TTS RMS slow signal (emotional momentum)
     user_speaking: bool = False              # True when user VAD triggers
     agent_speaking: bool = False             # True when agent TTS is playing
+
+    # ── Face greeting (written by FaceGreetingMonitor, consumed by VoiceService) ─
+    face_greeting_seq: int = 0
+    face_greeting_text: str = ""
 
     # ── Debug manual control (written by viz POST /api/control) ───────────────
     manual_control_enabled: bool = False

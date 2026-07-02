@@ -132,6 +132,11 @@ class ArmController:
 
         while self.bb.read("running")["running"]:
             t0 = time.time()
+
+            if self.bb.read("bye_wave_active")["bye_wave_active"]:
+                time.sleep(loop_delay)
+                continue
+
             state = self.bb.read(
                 "base_motion_busy",
                 "base_step_deg",

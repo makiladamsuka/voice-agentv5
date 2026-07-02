@@ -518,9 +518,37 @@ def main():
         threading.Thread(target=EmotionEngine(bb).run, daemon=True, name="EmotionEngine"),
         threading.Thread(target=EyeRenderer(bb).run, daemon=True, name="EyeRenderer"),
     ]
+    face_greeting_cfg = cfg.get("face_greeting", {}) or {}
+    if face_greeting_cfg.get("enabled", True):
+        from core.face_greeting import FaceGreetingMonitor
+
+        threads.append(
+            threading.Thread(
+                target=FaceGreetingMonitor(bb, config_path=DEFAULT_CONFIG_PATH).run,
+                daemon=True,
+                name="FaceGreeting",
+            )
+        )
     if arm_controller is not None and arm_controller.enabled:
         threads.append(
             threading.Thread(target=arm_controller.run, daemon=True, name="ArmController")
+        )
+
+    bye_wave_cfg = cfg.get("bye_wave", {}) or {}
+    if bye_wave_cfg.get("enabled", False):
+        from core.bye_wave_service import ByeWaveService
+
+        bye_wave_svc = ByeWaveService(bb, cfg)
+        threads.append(
+            threading.Thread(
+                target=bye_wave_svc.run,
+                daemon=True,
+                name="ByeWaveService",
+            )
+        )
+        print(
+            f"[Bootstrap] ByeWaveService enabled — "
+            f"hand stream port {bye_wave_cfg.get('port', 8000)}."
         )
 
     if debug_viz_cfg.get("enabled", True):
@@ -560,6 +588,28 @@ def main():
             name="VoiceService",
         )
         threads.append(voice_thread)
+
+        if arms_cfg.get("enabled", False):
+            from core.talk_gesture_service import TalkGestureService
+
+            presets_path = Path(arms_cfg.get("presets_path", "tests/arm_pose_presets.json"))
+            if not presets_path.is_absolute():
+                presets_path = APP_DIR / presets_path
+
+            talk_gesture_svc = TalkGestureService(
+                bb=bb,
+                presets_path=presets_path,
+                pose_duration=0.5,
+                poll_interval=0.05,
+            )
+            threads.append(
+                threading.Thread(
+                    target=talk_gesture_svc.run,
+                    daemon=True,
+                    name="TalkGestureService",
+                )
+            )
+            print("[Bootstrap] TalkGestureService enabled — arms animate while agent speaks")
 
     from voice.voice_service import ensure_media_server
 

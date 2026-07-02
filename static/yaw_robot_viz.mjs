@@ -166,12 +166,12 @@ const headBody = new THREE.Mesh(
 headBody.position.y = HEAD_H / 2;
 tiltNode.add(headBody);
 
-// Front heading strip on head (+Z)
+// Black heading strip on top of head (+Z = forward)
 const headStrip = new THREE.Mesh(
-  new THREE.BoxGeometry(0.045, 0.018, 0.14),
+  new THREE.BoxGeometry(0.045, 0.012, 0.14),
   new THREE.MeshBasicMaterial({ color: HEADING_COL })
 );
-headStrip.position.set(0, HEAD_H * 0.52, HEAD_D * 0.44);
+headStrip.position.set(0, HEAD_H + 0.009, HEAD_D * 0.14);
 tiltNode.add(headStrip);
 
 // Front nose cone — points forward

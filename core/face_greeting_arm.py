@@ -49,13 +49,18 @@ def _load_json(path: Path) -> dict:
         return json.load(f)
 
 
-def compute_face_embedding(face_roi: np.ndarray, landmarks: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+def compute_face_embedding(face_roi: np.ndarray, landmarks: Optional[np.ndarray] = None, use_landmarks_only: bool = False) -> Optional[np.ndarray]:
     """Compute face embedding using landmarks + appearance features.
     
+    Args:
+        face_roi: Face image
+        landmarks: 5 facial landmark points (10 values)
+        use_landmarks_only: If True, only use geometric features (MORE STABLE!)
+    
     Uses:
-    - Face landmarks (eyes, nose, mouth) for geometric features
-    - Local Binary Patterns (LBP) for texture
-    - Color histograms for appearance
+    - Face landmarks (eyes, nose, mouth) for geometric features [STABLE]
+    - Local Binary Patterns (LBP) for texture [OPTIONAL]
+    - Color histograms for appearance [OPTIONAL]
     
     This combines geometric and appearance features for better recognition.
     """
@@ -81,19 +86,44 @@ def compute_face_embedding(face_roi: np.ndarray, landmarks: Optional[np.ndarray]
             nose_to_right_eye = np.linalg.norm(landmarks_norm[2] - landmarks_norm[1])
             mouth_width = np.linalg.norm(landmarks_norm[3] - landmarks_norm[4])
             
+            # Additional geometric features for better accuracy
+            nose_to_mouth_left = np.linalg.norm(landmarks_norm[2] - landmarks_norm[3])
+            nose_to_mouth_right = np.linalg.norm(landmarks_norm[2] - landmarks_norm[4])
+            eye_left_to_mouth_left = np.linalg.norm(landmarks_norm[0] - landmarks_norm[3])
+            eye_right_to_mouth_right = np.linalg.norm(landmarks_norm[1] - landmarks_norm[4])
+            
             # Normalize by eye distance (scale invariant)
             if eye_dist > 0:
                 landmarks_norm = landmarks_norm / eye_dist
                 nose_to_left_eye /= eye_dist
                 nose_to_right_eye /= eye_dist
                 mouth_width /= eye_dist
+                nose_to_mouth_left /= eye_dist
+                nose_to_mouth_right /= eye_dist
+                eye_left_to_mouth_left /= eye_dist
+                eye_right_to_mouth_right /= eye_dist
             
             # Flatten normalized landmarks
             landmark_features = landmarks_norm.flatten()
-            geometric_features = np.array([eye_dist, nose_to_left_eye, nose_to_right_eye, mouth_width])
+            geometric_features = np.array([
+                eye_dist, 
+                nose_to_left_eye, 
+                nose_to_right_eye, 
+                mouth_width,
+                nose_to_mouth_left,
+                nose_to_mouth_right,
+                eye_left_to_mouth_left,
+                eye_right_to_mouth_right,
+            ])
             
             features.append(landmark_features)
             features.append(geometric_features)
+            
+            # LANDMARKS-ONLY MODE: Return early (skip texture/color)
+            if use_landmarks_only:
+                embedding = np.concatenate(features)
+                print(f"[FaceGreetingArm] DEBUG: Landmarks-only embedding computed (size={len(embedding)})")
+                return embedding
         
         # 2. LOCAL BINARY PATTERNS (Texture Features)
         # LBP is robust to illumination changes
@@ -192,6 +222,7 @@ class FaceGreetingArmService:
         self.hold_sec = float(fg.get("hold_sec", 0.5))  # Face must be visible this long
         self.embedding_threshold = float(fg.get("embedding_threshold", 0.45))
         self.cleanup_interval_sec = float(fg.get("cleanup_interval_sec", 60.0))
+        self.use_landmarks_only = bool(fg.get("use_landmarks_only", False))  # NEW: landmarks-only mode
         
         # Load hi poses
         presets = _load_json(presets_path)
@@ -212,6 +243,7 @@ class FaceGreetingArmService:
         
         print(f"[FaceGreetingArm] Initialized with {len(self.hi_poses)} hi poses: {self.hi_poses}")
         print(f"[FaceGreetingArm] Memory timeout: {self.memory_timeout_sec / 60:.1f} minutes")
+        print(f"[FaceGreetingArm] Recognition mode: {'LANDMARKS ONLY (geometric)' if self.use_landmarks_only else 'Full (landmarks + texture + color)'}")
     
     def cleanup_expired_faces(self, current_time: float):
         """Remove faces that have been forgotten (timeout expired)."""
@@ -229,12 +261,23 @@ class FaceGreetingArmService:
         if embedding is None:
             return None
         
-        for greeted_face in self.greeted_faces:
-            distance = embedding_distance(embedding, greeted_face.embedding)
-            if distance < self.embedding_threshold:
-                return greeted_face
+        best_match = None
+        best_distance = float('inf')
         
-        return None
+        for i, greeted_face in enumerate(self.greeted_faces):
+            distance = embedding_distance(embedding, greeted_face.embedding)
+            print(f"[FaceGreetingArm] DEBUG: Distance to face #{i+1}: {distance:.4f} (threshold: {self.embedding_threshold:.4f})")
+            
+            if distance < self.embedding_threshold and distance < best_distance:
+                best_match = greeted_face
+                best_distance = distance
+        
+        if best_match:
+            print(f"[FaceGreetingArm] DEBUG: MATCH FOUND with distance {best_distance:.4f}")
+        else:
+            print(f"[FaceGreetingArm] DEBUG: NO MATCH - all distances above threshold")
+        
+        return best_match
     
     def add_greeted_face(self, embedding: np.ndarray, current_time: float):
         """Add a new face to memory."""
@@ -401,8 +444,8 @@ class FaceGreetingArmService:
                         
                         if face_roi is not None:
                             print(f"[FaceGreetingArm] DEBUG: Computing embedding...")
-                            # Compute embedding with landmarks
-                            embedding = compute_face_embedding(face_roi, landmarks)
+                            # Compute embedding with landmarks (and optionally texture/color)
+                            embedding = compute_face_embedding(face_roi, landmarks, use_landmarks_only=self.use_landmarks_only)
                             self._current_embedding = embedding
                             
                             if embedding is not None:

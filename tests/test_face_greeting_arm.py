@@ -46,6 +46,7 @@ except ImportError:
 # For HTTP debug stream
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Thread
+import threading
 import numpy as np
 
 
@@ -364,7 +365,6 @@ def test_greeting_service():
     face_tracker = FaceTracker(bb)
     
     # Start face tracker in background thread
-    import threading
     tracker_thread = threading.Thread(
         target=face_tracker.run,
         daemon=True,

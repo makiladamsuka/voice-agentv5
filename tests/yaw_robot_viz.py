@@ -11,7 +11,7 @@ Locks HOME (forward) once at start. Heading follows IMU; when the base is still
   M / N     hold = spin base left / right  (same as robottest.py)
   W A S D   head tilt / pan
   C         center head
-  H         spin base to HOME IMU yaw 0° + re-lock HOME
+  H         spin base to HOME IMU yaw 0° + center head + re-lock HOME
   Z         zero encoder here (no move) + re-lock HOME
   ?         print status
   Q         quit
@@ -68,29 +68,38 @@ except ImportError:
 
 
 @dataclass
-class _PitchHomeRef:
+class _HeadHomeRef:
     imu_pitch_deg: float = 0.0
     tilt_mech_deg: float = 0.0
+    pan_cmd: float = 0.0
 
 
-_PITCH_HOME = _PitchHomeRef()
-_pitch_home_locked = False
+_HEAD_HOME = _HeadHomeRef()
+_head_home_locked = False
 
 
-def _lock_pitch_home(imu_pitch: float, tilt: float, servo_cfg: dict) -> None:
-    global _pitch_home_locked
-    _PITCH_HOME.imu_pitch_deg = float(imu_pitch)
-    _PITCH_HOME.tilt_mech_deg = signed_tilt_mech_deg(tilt, servo_cfg)
-    _pitch_home_locked = True
+def _lock_head_home(imu_pitch: float, pan: float, tilt: float, servo_cfg: dict) -> None:
+    global _head_home_locked
+    _HEAD_HOME.imu_pitch_deg = float(imu_pitch)
+    _HEAD_HOME.tilt_mech_deg = signed_tilt_mech_deg(tilt, servo_cfg)
+    _HEAD_HOME.pan_cmd = float(pan)
+    _head_home_locked = True
+
+
+def _pan_cmd_from_home(pan: float) -> float:
+    """Servo pan cmd delta from HOME (1 cmd unit ≈ 1° on this robot)."""
+    if not _head_home_locked:
+        return 0.0
+    return float(pan) - _HEAD_HOME.pan_cmd
 
 
 def _pitch_from_home(imu_pitch: float, tilt: float, servo_cfg: dict) -> tuple[float, float]:
     """Viz pitch from servo mech vs HOME; IMU delta for cross-check."""
-    if not _pitch_home_locked:
+    if not _head_home_locked:
         return 0.0, 0.0
     tilt_mech = signed_tilt_mech_deg(tilt, servo_cfg)
-    viz_pitch = tilt_mech - _PITCH_HOME.tilt_mech_deg
-    imu_delta = float(imu_pitch) - _PITCH_HOME.imu_pitch_deg
+    viz_pitch = tilt_mech - _HEAD_HOME.tilt_mech_deg
+    imu_delta = float(imu_pitch) - _HEAD_HOME.imu_pitch_deg
     return viz_pitch, imu_delta
 
 
@@ -231,11 +240,11 @@ def _lock_home(
         imu_yaw_deg=imu_yaw,
         pan_mech_deg=pan_mech,
     )
-    _lock_pitch_home(imu_pitch, tilt, servo_cfg)
+    _lock_head_home(imu_pitch, pan, tilt, servo_cfg)
     tilt_mech = signed_tilt_mech_deg(tilt, servo_cfg)
     print(
         f"[YawViz] {label} locked  enc={enc:+.1f}°  counts={count}  "
-        f"imu={imu_yaw:+.1f}°  pan_mech={pan_mech:+.1f}°  "
+        f"imu={imu_yaw:+.1f}°  pan_cmd={pan:.0f}  pan_mech={pan_mech:+.1f}°  "
         f"pitch imu={imu_pitch:+.1f}° mech={tilt_mech:+.1f}° (viz pitch → 0°)"
         + ("" if imu_ok else "  (IMU off)")
     )
@@ -253,6 +262,7 @@ def _publish_state(
     servo_cfg: dict,
 ) -> None:
     pitch_viz, imu_pitch_from_home = _pitch_from_home(imu_pitch_deg, tilt, servo_cfg)
+    pan_cmd_from_home = _pan_cmd_from_home(pan)
     tilt_mech = signed_tilt_mech_deg(tilt, servo_cfg)
     if sample is None:
         STATE.update(
@@ -264,6 +274,7 @@ def _publish_state(
             head_tilt=tilt,
             pan_mech_deg=signed_pan_mech_deg(pan, servo_cfg),
             tilt_mech_deg=tilt_mech,
+            pan_cmd_from_home_deg=pan_cmd_from_home,
             imu_pitch_deg=imu_pitch_deg,
             pitch_from_home_deg=pitch_viz,
             imu_pitch_from_home_deg=imu_pitch_from_home,
@@ -282,6 +293,7 @@ def _publish_state(
         from_home_imu_deg=sample.from_home_imu_deg,
         imu_total_from_home_deg=sample.imu_total_from_home_deg,
         pan_from_home_deg=sample.pan_from_home_deg,
+        pan_cmd_from_home_deg=pan_cmd_from_home,
         disagreement_deg=sample.disagreement_deg,
         encoder_deg=sample.encoder_deg,
         encoder_count=sample.encoder_count,
@@ -344,7 +356,10 @@ def _apply_browser_cmd(
 
     if cmd == "home_lock":
         link.write_base_stop()
-        time.sleep(0.15)
+        pan = pan_center
+        tilt = tilt_center
+        link.write_angles(pan, tilt, force=True)
+        time.sleep(0.3)
         ensure_base_idle(link)
         if imu_reader is not None and tracker.home_locked:
             ok, final_imu = drive_base_to_imu_zero(
@@ -715,7 +730,7 @@ def run(
 
     print(
         "\n[yaw_robot_viz] Controls: browser (click page + keys) or terminal\n"
-        f"  M/N hold spin   WASD head   C center   H → HOME IMU 0°   Z zero here   ? status   Q quit\n"
+        f"  M/N hold spin   WASD head   C center   H → HOME (base+head)   Z zero here   ? status   Q quit\n"
     )
 
     running = True

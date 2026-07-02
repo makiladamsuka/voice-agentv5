@@ -201,7 +201,7 @@ function updateYawScene(data) {
   const panSign = Number(data.pan_yaw_sign ?? data.base_yaw_sign ?? -1);
   const tiltSign = Number(data.tilt_sign ?? 1);
   const baseYaw = Number(data.from_home_imu_deg ?? data.map_yaw_deg ?? 0);
-  const headPan = Number(data.pan_from_home_deg ?? 0);
+  const headPan = Number(data.pan_cmd_from_home_deg ?? data.pan_from_home_deg ?? 0);
   const headPitch = Number(data.pitch_from_home_deg ?? 0);
   const maxYaw = Number(data.max_yaw_deg ?? 120);
 

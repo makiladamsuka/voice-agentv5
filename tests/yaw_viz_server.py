@@ -85,6 +85,7 @@ class YawVizState:
         self.from_home_imu_deg = 0.0
         self.imu_total_from_home_deg = 0.0
         self.pan_from_home_deg = 0.0
+        self.pan_cmd_from_home_deg = 0.0
         self.disagreement_deg = 0.0
         self.encoder_deg = 0.0
         self.encoder_count = 0
@@ -128,6 +129,7 @@ class YawVizState:
                 "from_home_imu_deg": self.from_home_imu_deg,
                 "imu_total_from_home_deg": self.imu_total_from_home_deg,
                 "pan_from_home_deg": self.pan_from_home_deg,
+                "pan_cmd_from_home_deg": self.pan_cmd_from_home_deg,
                 "disagreement_deg": self.disagreement_deg,
                 "encoder_deg": self.encoder_deg,
                 "encoder_count": self.encoder_count,
@@ -408,7 +410,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <button type="button" data-cmd="pan_right">D →</button>
     <span class="sep"></span>
     <button type="button" data-cmd="center">C center</button>
-    <button type="button" data-cmd="home_lock">H → HOME IMU</button>
+    <button type="button" data-cmd="home_lock">H → HOME</button>
     <button type="button" data-cmd="zero_home">Z zero here</button>
   </div>
 
@@ -426,6 +428,8 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="stat"><div class="k">Mech pan / tilt</div><div class="v" id="v-mech">—</div></div>
     <div class="stat imu"><div class="k">3D base yaw</div><div class="v" id="v-viz-base">—</div></div>
     <div class="stat enc"><div class="k">3D head yaw on base</div><div class="v" id="v-viz-head-yaw">—</div></div>
+    <div class="stat"><div class="k">Head pan servo Δ</div><div class="v" id="v-pan-cmd-delta">—</div></div>
+    <div class="stat"><div class="k">Head pan mech Δ</div><div class="v" id="v-pan-mech-delta">—</div></div>
     <div class="stat"><div class="k">3D head pitch</div><div class="v" id="v-viz-head-pitch">—</div></div>
   </div>
 
@@ -444,7 +448,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <p class="help">
     <strong>Browser or terminal:</strong> <code>M</code>/<code>N</code> hold base spin · <code>WASD</code> head ·
-    <code>C</code> center · <code>H</code> spin to HOME IMU yaw 0° · <code>Z</code> zero encoder here (no move) ·
+    <code>C</code> center · <code>H</code> HOME base IMU 0° + center head · <code>Z</code> zero encoder here (no move) ·
     <code>?</code> status · <code>Q</code> quit.
     Grey cone = HOME forward (fixed). Grey base = IMU base yaw (M/N); pink head = pan (A/D) + pitch from HOME (W/S, zero at startup).
   </p>
@@ -491,14 +495,18 @@ HTML_PAGE = """<!DOCTYPE html>
         document.getElementById('v-mech').textContent =
           fmtDeg(data.pan_mech_deg) + ' · ' + fmtDeg(data.tilt_mech_deg);
         const vizBase = vizApplied(data, 'from_home_imu_deg', 'base_yaw_sign', 'base_yaw_sign');
-        const vizHeadYaw = vizApplied(data, 'pan_from_home_deg', 'pan_yaw_sign', 'base_yaw_sign');
+        const vizHeadYaw = vizApplied(data, 'pan_cmd_from_home_deg', 'pan_yaw_sign', 'base_yaw_sign');
         const vizHeadPitch = vizApplied(data, 'pitch_from_home_deg', 'tilt_sign', 'tilt_sign');
         document.getElementById('v-viz-base').textContent = fmtDeg(vizBase);
         document.getElementById('v-viz-head-yaw').textContent = fmtDeg(vizHeadYaw);
+        document.getElementById('v-pan-cmd-delta').textContent = fmtDeg(data.pan_cmd_from_home_deg);
+        document.getElementById('v-pan-mech-delta').textContent = fmtDeg(data.pan_from_home_deg);
         document.getElementById('v-viz-head-pitch').textContent = fmtDeg(vizHeadPitch);
         document.getElementById('hud-bottom').innerHTML =
           '<strong>SERVO</strong> P ' + fmtServo(data.head_pan) + ' T ' + fmtServo(data.head_tilt) +
-          ' · mech pan ' + fmtDeg(data.pan_mech_deg) + ' tilt ' + fmtDeg(data.tilt_mech_deg) +
+          ' · pan Δcmd ' + fmtDeg(data.pan_cmd_from_home_deg) +
+          ' · pan Δmech ' + fmtDeg(data.pan_from_home_deg) +
+          ' · tilt mech ' + fmtDeg(data.tilt_mech_deg) +
           '<br><strong>3D VIZ</strong> base ' + fmtDeg(vizBase) +
           ' · head yaw on base ' + fmtDeg(vizHeadYaw) +
           ' · head pitch ' + fmtDeg(vizHeadPitch) +

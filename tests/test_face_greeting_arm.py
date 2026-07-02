@@ -30,6 +30,11 @@ except ImportError:
     print("ERROR: OpenCV not installed. Run: pip install opencv-python")
     sys.exit(1)
 
+try:
+    import json
+except ImportError:
+    json = None
+
 
 def print_greeting_state(bb: Blackboard):
     """Print current greeting state."""
@@ -48,6 +53,86 @@ def print_greeting_state(bb: Blackboard):
         print(f"   Face detected (area ratio: {state['face_area_ratio']:.4f})")
 
 
+class MockArmController:
+    """Mock ArmController that simulates arm movement without hardware."""
+    
+    def __init__(self, bb: Blackboard, presets_path: Path):
+        self.bb = bb
+        self._last_greeting_seq = 0
+        self._current_pose = {"a0": 47.0, "a1": 65.0, "a2": 54.0, "a3": 76.0}  # home
+        
+        # Load poses
+        self.poses = {}
+        if presets_path.exists():
+            with open(presets_path, 'r') as f:
+                data = json.load(f)
+                self.poses = data.get("poses", {})
+        
+        print(f"[MockArmController] Loaded {len(self.poses)} poses")
+    
+    def execute_greeting(self, pose_name: str):
+        """Simulate executing a greeting pose."""
+        if pose_name in self.poses:
+            target_pose = self.poses[pose_name]
+            print(f"\n{'=' * 60}")
+            print(f"🎯 EXECUTING GREETING: {pose_name}")
+            print(f"   Moving from: {self._current_pose}")
+            print(f"   Moving to:   {target_pose}")
+            print(f"{'=' * 60}")
+            
+            # Simulate movement
+            time.sleep(0.5)
+            
+            # Update position
+            self._current_pose = dict(target_pose)
+            self.bb.write(
+                arm_a0=target_pose["a0"],
+                arm_a1=target_pose["a1"],
+                arm_a2=target_pose["a2"],
+                arm_a3=target_pose["a3"],
+                arm_greeting_active=True
+            )
+            
+            print(f"   ✅ Pose reached!")
+            
+            # Hold pose for 2 seconds
+            time.sleep(2.0)
+            
+            # Return to home
+            home = {"a0": 47.0, "a1": 65.0, "a2": 54.0, "a3": 76.0}
+            print(f"   Returning to home: {home}")
+            time.sleep(0.5)
+            self._current_pose = home
+            self.bb.write(
+                arm_a0=home["a0"],
+                arm_a1=home["a1"],
+                arm_a2=home["a2"],
+                arm_a3=home["a3"],
+                arm_greeting_active=False
+            )
+            print(f"   ✅ Returned to home\n")
+        else:
+            print(f"[MockArmController] WARNING: Pose '{pose_name}' not found")
+    
+    def run(self):
+        """Monitor for greeting requests and execute them."""
+        print("[MockArmController] Monitoring for greeting requests...")
+        
+        while self.bb.read("running")["running"]:
+            state = self.bb.read("arm_greeting_seq", "arm_greeting_pose")
+            current_seq = state["arm_greeting_seq"]
+            
+            if current_seq != self._last_greeting_seq:
+                self._last_greeting_seq = current_seq
+                pose_name = state["arm_greeting_pose"]
+                if pose_name:
+                    self.execute_greeting(pose_name)
+            
+            time.sleep(0.1)
+        
+        print("[MockArmController] Stopped.")
+
+
 def test_greeting_service():
     """Test the face greeting arm service with live camera."""
     print("=" * 60)
@@ -58,6 +143,7 @@ def test_greeting_service():
     print("  2. Play random hi pose for NEW faces")
     print("  3. Remember each face for 30 minutes")
     print("  4. Skip greeting for known faces")
+    print("  5. Simulate arm movement (no hardware needed)")
     print("\nPress Ctrl+C to stop\n")
     
     # Create blackboard
@@ -95,6 +181,18 @@ def test_greeting_service():
         name="FaceGreetingArm"
     )
     greeting_thread.start()
+    
+    # Create and start mock arm controller
+    print("[Test] Starting MockArmController...")
+    presets_path = APP_DIR / "tests" / "arm_pose_presets.json"
+    arm_controller = MockArmController(bb, presets_path)
+    
+    arm_thread = threading.Thread(
+        target=arm_controller.run,
+        daemon=True,
+        name="MockArmController"
+    )
+    arm_thread.start()
     
     print("\n" + "=" * 60)
     print("Monitoring face greetings...")
@@ -144,6 +242,13 @@ def test_greeting_service():
         print(f"\nFinal stats:")
         print(f"  Total greetings: {last_seq}")
         print(f"  Faces in memory: {len(greeting_service.greeted_faces)}")
+        
+        # Show memory details
+        if greeting_service.greeted_faces:
+            print(f"\n  Remembered faces:")
+            for i, face in enumerate(greeting_service.greeted_faces, 1):
+                age_sec = time.time() - face.timestamp
+                print(f"    {i}. Greeted {face.greet_count}x, {age_sec / 60:.1f} min ago")
 
 
 def test_greeting_memory():

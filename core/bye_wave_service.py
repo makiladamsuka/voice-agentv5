@@ -87,7 +87,7 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 "<input type='range' id='verticalSpeed' min='0.3' max='1.5' step='0.05' value='0.8'>"
                 "<span class='value-display' id='verticalValue'>0.8x</span>"
                 "</div>"
-                "<div class='info'>Slower = more deliberate movements. Default: 0.8x</div>"
+                "<div class='info'>Lower = SLOWER movements. Higher = faster. Default: 0.8x</div>"
                 "</div>"
                 
                 "<div class='control-group'>"
@@ -96,7 +96,7 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 "<input type='range' id='horizontalSpeed' min='0.3' max='2.0' step='0.05' value='1.0'>"
                 "<span class='value-display' id='horizontalValue'>1.0x</span>"
                 "</div>"
-                "<div class='info'>Faster = quicker waves. Too fast may skip frames. Default: 1.0x</div>"
+                "<div class='info'>Lower = SLOWER swaps. Higher = faster. Default: 1.0x</div>"
                 "</div>"
                 
                 "<button onclick='resetDefaults()'>Reset to Defaults</button>"
@@ -415,8 +415,14 @@ class _ByeSequenceRunner:
             self._thread.start()
 
     def _run_animation(self, frames):
-        """Play animation frames with smooth dual-speed interpolation."""
-        frame_duration = 0.25  # Time to reach each frame
+        """Play animation frames with smooth dual-speed interpolation.
+        
+        Speed values work intuitively:
+        - Higher values (e.g., 2.0) = faster movements
+        - Lower values (e.g., 0.5) = slower movements
+        - 1.0 = normal speed
+        """
+        base_frame_duration = 0.25  # Base time to reach each frame
         poll_interval = 0.02  # 50 Hz update rate
         
         # Write animation state to Blackboard
@@ -451,6 +457,15 @@ class _ByeSequenceRunner:
             delta_a2 = target_a2 - start_a2
             delta_a3 = target_a3 - start_a3
             
+            # Calculate durations based on speed (INVERSE relationship for intuitive control)
+            # Lower speed = longer duration = slower movement
+            # Higher speed = shorter duration = faster movement
+            vertical_duration = base_frame_duration / max(0.1, self._vertical_speed)
+            horizontal_duration = base_frame_duration / max(0.1, self._horizontal_speed)
+            
+            # Use the longer duration as the frame duration to ensure smooth movement
+            frame_duration = max(vertical_duration, horizontal_duration)
+            
             # Smooth interpolation with dual speeds
             start_time = time.time()
             steps = int(frame_duration / poll_interval)
@@ -460,9 +475,9 @@ class _ByeSequenceRunner:
                 if elapsed >= frame_duration:
                     break
                 
-                # Different progress for vertical vs horizontal
-                vertical_progress = min(1.0, (elapsed / frame_duration) * self._vertical_speed)
-                horizontal_progress = min(1.0, (elapsed / frame_duration) * self._horizontal_speed)
+                # Calculate progress for each motor group based on their respective durations
+                vertical_progress = min(1.0, elapsed / vertical_duration)
+                horizontal_progress = min(1.0, elapsed / horizontal_duration)
                 
                 # Interpolate
                 new_a0 = start_a0 + delta_a0 * vertical_progress

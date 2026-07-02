@@ -51,6 +51,10 @@ class Blackboard:
     # ── Bye wave gesture (written by ByeWaveService) ──────────────────────────
     bye_wave_active: bool = False          # True while a bye animation is executing
     bye_wave_cooldown_until: float = 0.0   # epoch time when cooldown expires
+    bye_animation_playing: bool = False    # True while animation frames are executing
+    bye_animation_name: str = ""           # Current animation name (bye1/bye2/bye3)
+    bye_animation_current_frame: int = 0   # Current frame index in animation
+    bye_animation_total_frames: int = 0    # Total frames in current animation
 
     # ── Base rotation (written by BaseController / ServoMixer) ────────────────
     base_step_deg: float = 0.0

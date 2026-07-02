@@ -196,25 +196,43 @@ class FaceGreetingArmService:
         return pose_name
     
     def extract_face_roi(self, frame: np.ndarray, face_data: dict) -> Optional[np.ndarray]:
-        """Extract face region of interest from frame."""
+        """Extract face region of interest from frame.
+        
+        NOTE: face_data coordinates are in DETECTION resolution (1280x720),
+        but stream_frame is in STREAM resolution (320x180 by default).
+        We need to use normalized coordinates instead!
+        """
         if frame is None or face_data is None:
             print("[FaceGreetingArm] DEBUG: frame or face_data is None")
             return None
         
         try:
-            # Get face bounding box (pixel coordinates from FaceTracker)
-            x = face_data.get("x", 0)
-            y = face_data.get("y", 0)
-            w = face_data.get("w", 0)
-            h = face_data.get("h", 0)
+            # Use NORMALIZED coordinates which work across any resolution
+            norm_x = face_data.get("norm_x", 0)
+            norm_y = face_data.get("norm_y", 0)
+            area_ratio = face_data.get("area_ratio", 0)
             
-            print(f"[FaceGreetingArm] DEBUG: Face bbox: x={x}, y={y}, w={w}, h={h}, frame shape={frame.shape}")
+            # Estimate face box size from area ratio
+            # area_ratio = (w * h) / (frame_w * frame_h)
+            # Assume square-ish face: w ≈ h ≈ sqrt(area_ratio * frame_w * frame_h)
+            frame_h, frame_w = frame.shape[:2]
+            face_size = int((area_ratio * frame_w * frame_h) ** 0.5)
             
-            # FaceTracker provides pixel coordinates already
-            x1, y1 = max(0, int(x)), max(0, int(y))
-            x2, y2 = min(frame.shape[1], int(x + w)), min(frame.shape[0], int(y + h))
+            # Convert normalized center to pixel coordinates
+            center_x = int((norm_x * 0.5 + 0.5) * frame_w)  # norm_x: -1 to +1, convert to 0 to 1
+            center_y = int((norm_y * 0.5 + 0.5) * frame_h)  # norm_y: -1 to +1, convert to 0 to 1
             
-            print(f"[FaceGreetingArm] DEBUG: ROI coords: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+            # Calculate bounding box
+            half_size = face_size // 2
+            x1 = max(0, center_x - half_size)
+            y1 = max(0, center_y - half_size)
+            x2 = min(frame_w, center_x + half_size)
+            y2 = min(frame_h, center_y + half_size)
+            
+            print(f"[FaceGreetingArm] DEBUG: norm_x={norm_x:.3f}, norm_y={norm_y:.3f}, "
+                  f"area={area_ratio:.4f}, frame={frame.shape}")
+            print(f"[FaceGreetingArm] DEBUG: center=({center_x},{center_y}), "
+                  f"size={face_size}, roi=[{x1}:{x2}, {y1}:{y2}]")
             
             if x2 > x1 and y2 > y1:
                 roi = frame[y1:y2, x1:x2]

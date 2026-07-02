@@ -198,33 +198,35 @@ class FaceGreetingArmService:
     def extract_face_roi(self, frame: np.ndarray, face_data: dict) -> Optional[np.ndarray]:
         """Extract face region of interest from frame."""
         if frame is None or face_data is None:
+            print("[FaceGreetingArm] DEBUG: frame or face_data is None")
             return None
         
         try:
-            # Get face bounding box (normalized coordinates assumed)
-            # Adjust based on actual face_candidates format
+            # Get face bounding box (pixel coordinates from FaceTracker)
             x = face_data.get("x", 0)
             y = face_data.get("y", 0)
             w = face_data.get("w", 0)
             h = face_data.get("h", 0)
             
-            # Convert to pixel coordinates if normalized
-            if 0 <= x <= 1:
-                h_frame, w_frame = frame.shape[:2]
-                x = int(x * w_frame)
-                y = int(y * h_frame)
-                w = int(w * w_frame)
-                h = int(h * h_frame)
+            print(f"[FaceGreetingArm] DEBUG: Face bbox: x={x}, y={y}, w={w}, h={h}, frame shape={frame.shape}")
             
-            # Extract ROI
-            x1, y1 = max(0, x), max(0, y)
-            x2, y2 = min(frame.shape[1], x + w), min(frame.shape[0], y + h)
+            # FaceTracker provides pixel coordinates already
+            x1, y1 = max(0, int(x)), max(0, int(y))
+            x2, y2 = min(frame.shape[1], int(x + w)), min(frame.shape[0], int(y + h))
+            
+            print(f"[FaceGreetingArm] DEBUG: ROI coords: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
             
             if x2 > x1 and y2 > y1:
-                return frame[y1:y2, x1:x2]
+                roi = frame[y1:y2, x1:x2]
+                print(f"[FaceGreetingArm] DEBUG: ROI extracted, shape={roi.shape}")
+                return roi
+            else:
+                print(f"[FaceGreetingArm] DEBUG: Invalid ROI bounds")
             
         except Exception as e:
             print(f"[FaceGreetingArm] Error extracting face ROI: {e}")
+            import traceback
+            traceback.print_exc()
         
         return None
     
@@ -278,24 +280,33 @@ class FaceGreetingArmService:
                 if self._face_since is None:
                     self._face_since = now
                     self._current_embedding = None
+                    print(f"[FaceGreetingArm] DEBUG: Face appeared, starting hold timer")
                 
                 # Face held long enough - compute embedding and check if we should greet
                 elif (now - self._face_since) >= self.hold_sec and self._current_embedding is None:
+                    print(f"[FaceGreetingArm] DEBUG: Hold time passed, extracting face ROI...")
+                    
                     # Get face ROI from stream_frame
                     frame = state["stream_frame"]
                     face_candidates = state["face_candidates"]
                     
+                    print(f"[FaceGreetingArm] DEBUG: frame is None: {frame is None}, "
+                          f"face_candidates length: {len(face_candidates) if face_candidates else 0}")
+                    
                     if frame is not None and face_candidates and len(face_candidates) > 0:
                         # Use first/largest face
                         face_data = face_candidates[0]
+                        print(f"[FaceGreetingArm] DEBUG: Face data: {face_data}")
                         face_roi = self.extract_face_roi(frame, face_data)
                         
                         if face_roi is not None:
+                            print(f"[FaceGreetingArm] DEBUG: Computing embedding...")
                             # Compute embedding
                             embedding = compute_face_embedding(face_roi)
                             self._current_embedding = embedding
                             
                             if embedding is not None:
+                                print(f"[FaceGreetingArm] DEBUG: Embedding computed, checking memory...")
                                 # Check if this face has been greeted recently
                                 matching_face = self.find_matching_face(embedding)
                                 
@@ -316,8 +327,16 @@ class FaceGreetingArmService:
                                     time_remaining = self.memory_timeout_sec - (now - matching_face.timestamp)
                                     print(f"[FaceGreetingArm] Known face (greeted {matching_face.greet_count}x, "
                                           f"{time_remaining / 60:.1f} min until forgotten)")
+                            else:
+                                print(f"[FaceGreetingArm] DEBUG: Embedding computation failed")
+                        else:
+                            print(f"[FaceGreetingArm] DEBUG: Face ROI extraction failed")
+                    else:
+                        print(f"[FaceGreetingArm] DEBUG: No frame or face_candidates available")
             else:
                 # No face or busy - reset detection state
+                if self._face_since is not None:
+                    print(f"[FaceGreetingArm] DEBUG: Face lost or busy, resetting")
                 self._face_since = None
                 self._current_embedding = None
             

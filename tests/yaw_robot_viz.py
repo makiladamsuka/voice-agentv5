@@ -17,7 +17,7 @@ Locks HOME (forward) once at start. Heading follows IMU; when the base is still
   Q         quit
 
 Viz: http://localhost:8766  — click page, then keyboard (or use terminal).
-  3D view: grey base (IMU, M/N) + pink head (mech pan from HOME, A/D).
+  3D view: grey base (IMU, M/N) + pink head (pan A/D, pitch from HOME at startup W/S).
 
 Stop start_robot.py / approach.py first — one serial port.
 """
@@ -29,6 +29,7 @@ import signal
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import _bootstrap  # noqa: F401
@@ -41,7 +42,7 @@ from lib.base_home_drive import (
     drive_base_to_imu_zero,
     ensure_base_idle,
 )
-from lib.head_mech import signed_pan_mech_deg
+from lib.head_mech import signed_pan_mech_deg, signed_tilt_mech_deg
 from lib.yaw_home_tracker import YawHomeTracker
 from robottest import (
     RawKeyReader,
@@ -64,6 +65,33 @@ try:
     import yaml
 except ImportError:
     yaml = None
+
+
+@dataclass
+class _PitchHomeRef:
+    imu_pitch_deg: float = 0.0
+    tilt_mech_deg: float = 0.0
+
+
+_PITCH_HOME = _PitchHomeRef()
+_pitch_home_locked = False
+
+
+def _lock_pitch_home(imu_pitch: float, tilt: float, servo_cfg: dict) -> None:
+    global _pitch_home_locked
+    _PITCH_HOME.imu_pitch_deg = float(imu_pitch)
+    _PITCH_HOME.tilt_mech_deg = signed_tilt_mech_deg(tilt, servo_cfg)
+    _pitch_home_locked = True
+
+
+def _pitch_from_home(imu_pitch: float, tilt: float, servo_cfg: dict) -> tuple[float, float]:
+    """Viz pitch from servo mech vs HOME; IMU delta for cross-check."""
+    if not _pitch_home_locked:
+        return 0.0, 0.0
+    tilt_mech = signed_tilt_mech_deg(tilt, servo_cfg)
+    viz_pitch = tilt_mech - _PITCH_HOME.tilt_mech_deg
+    imu_delta = float(imu_pitch) - _PITCH_HOME.imu_pitch_deg
+    return viz_pitch, imu_delta
 
 
 def _load_yaml(path: Path) -> dict:
@@ -109,15 +137,18 @@ def _start_imu(imu_cfg: dict):
     return reader
 
 
-def _read_imu(reader, yaw_sign: float) -> tuple[float, float, bool]:
+def _read_imu(
+    reader, yaw_sign: float, pitch_sign: float = 1.0
+) -> tuple[float, float, float, bool]:
     if reader is None:
-        return 0.0, 0.0, False
+        return 0.0, 0.0, 0.0, False
     sample = reader.latest()
     if sample is None:
-        return 0.0, 0.0, False
+        return 0.0, 0.0, 0.0, False
     imu_yaw = reader.filter.yaw_integral_deg() * yaw_sign
+    imu_pitch = float(sample.pitch_deg) * pitch_sign
     gyro = max(abs(sample.gyro_x_dps), abs(sample.gyro_y_dps), abs(sample.gyro_z_dps))
-    return imu_yaw, gyro, True
+    return imu_yaw, imu_pitch, gyro, True
 
 
 def _query_enc(
@@ -138,6 +169,7 @@ def _query_imu_home_pose(
     link: ArduinoServoLink,
     reader,
     yaw_sign: float,
+    pitch_sign: float,
     pan: float,
     servo_cfg: dict,
     *,
@@ -148,7 +180,7 @@ def _query_imu_home_pose(
 ) -> tuple[float, float, bool, float]:
     """IMU base yaw from HOME (no drift snap while homing), enc deg, busy, gyro."""
     enc, count, busy, _cpd = _query_enc(link, 0.0)
-    imu_yaw, gyro, imu_ok = _read_imu(reader, yaw_sign)
+    imu_yaw, imu_pitch, gyro, imu_ok = _read_imu(reader, yaw_sign, pitch_sign)
     pan_mech = signed_pan_mech_deg(pan, servo_cfg)
     sample = tracker.update(
         encoder_deg=enc,
@@ -164,9 +196,11 @@ def _query_imu_home_pose(
             sample,
             pan=pan,
             tilt=tilt,
+            imu_pitch_deg=imu_pitch,
             spin_label=spin_label,
             imu_online=imu_ok,
             port=port,
+            servo_cfg=servo_cfg,
         )
     return imu_home, enc, busy, gyro
 
@@ -176,8 +210,10 @@ def _lock_home(
     link: ArduinoServoLink,
     reader,
     yaw_sign: float,
+    pitch_sign: float,
     servo_cfg: dict,
     pan: float,
+    tilt: float,
     *,
     zero_encoder: bool = False,
     label: str = "HOME",
@@ -187,7 +223,7 @@ def _lock_home(
         link.zero_base()
         time.sleep(0.2)
     enc, count, _, _ = _query_enc(link, 0.0)
-    imu_yaw, _, imu_ok = _read_imu(reader, yaw_sign)
+    imu_yaw, imu_pitch, _, imu_ok = _read_imu(reader, yaw_sign, pitch_sign)
     pan_mech = signed_pan_mech_deg(pan, servo_cfg)
     tracker.lock_home(
         encoder_deg=enc,
@@ -195,9 +231,12 @@ def _lock_home(
         imu_yaw_deg=imu_yaw,
         pan_mech_deg=pan_mech,
     )
+    _lock_pitch_home(imu_pitch, tilt, servo_cfg)
+    tilt_mech = signed_tilt_mech_deg(tilt, servo_cfg)
     print(
         f"[YawViz] {label} locked  enc={enc:+.1f}°  counts={count}  "
-        f"imu={imu_yaw:+.1f}°  pan_mech={pan_mech:+.1f}°"
+        f"imu={imu_yaw:+.1f}°  pan_mech={pan_mech:+.1f}°  "
+        f"pitch imu={imu_pitch:+.1f}° mech={tilt_mech:+.1f}° (viz pitch → 0°)"
         + ("" if imu_ok else "  (IMU off)")
     )
 
@@ -207,10 +246,14 @@ def _publish_state(
     *,
     pan: float,
     tilt: float,
+    imu_pitch_deg: float,
     spin_label: str,
     imu_online: bool,
     port: str,
+    servo_cfg: dict,
 ) -> None:
+    pitch_viz, imu_pitch_from_home = _pitch_from_home(imu_pitch_deg, tilt, servo_cfg)
+    tilt_mech = signed_tilt_mech_deg(tilt, servo_cfg)
     if sample is None:
         STATE.update(
             connected=True,
@@ -219,6 +262,11 @@ def _publish_state(
             home_locked=False,
             head_pan=pan,
             head_tilt=tilt,
+            pan_mech_deg=signed_pan_mech_deg(pan, servo_cfg),
+            tilt_mech_deg=tilt_mech,
+            imu_pitch_deg=imu_pitch_deg,
+            pitch_from_home_deg=pitch_viz,
+            imu_pitch_from_home_deg=imu_pitch_from_home,
             spin_label=spin_label,
         )
         return
@@ -241,10 +289,14 @@ def _publish_state(
         encoder_count_raw_delta=sample.encoder_count_raw_delta,
         imu_yaw_deg=sample.imu_yaw_deg,
         pan_mech_deg=sample.pan_mech_deg,
+        tilt_mech_deg=tilt_mech,
         gyro_dps=sample.gyro_dps,
         imu_correction_deg=sample.imu_correction_deg,
         head_pan=pan,
         head_tilt=tilt,
+        imu_pitch_deg=imu_pitch_deg,
+        pitch_from_home_deg=pitch_viz,
+        imu_pitch_from_home_deg=imu_pitch_from_home,
     )
 
 
@@ -264,6 +316,7 @@ def _apply_browser_cmd(
     tracker: YawHomeTracker,
     imu_reader,
     yaw_sign: float,
+    pitch_sign: float,
     servo_cfg: dict,
     base_cfg: dict,
     active_spin: int,
@@ -302,6 +355,7 @@ def _apply_browser_cmd(
                     link,
                     imu_reader,
                     yaw_sign,
+                    pitch_sign,
                     pan,
                     servo_cfg,
                     tilt=tilt,
@@ -328,8 +382,10 @@ def _apply_browser_cmd(
                 link,
                 imu_reader,
                 yaw_sign,
+                pitch_sign,
                 servo_cfg,
                 pan,
+                tilt,
                 zero_encoder=False,
                 label="HOME",
             )
@@ -362,6 +418,7 @@ def _apply_browser_cmd(
                 link,
                 imu_reader,
                 yaw_sign,
+                pitch_sign,
                 pan,
                 servo_cfg,
                 tilt=tilt,
@@ -389,8 +446,10 @@ def _apply_browser_cmd(
             link,
             imu_reader,
             yaw_sign,
+            pitch_sign,
             servo_cfg,
             pan,
+            tilt,
             zero_encoder=False,
             label="ZERO+HOME",
         )
@@ -428,6 +487,7 @@ def _apply_terminal_key(
     tracker: YawHomeTracker,
     imu_reader,
     yaw_sign: float,
+    pitch_sign: float,
     servo_cfg: dict,
     base_cfg: dict,
     active_spin: int,
@@ -465,6 +525,7 @@ def _apply_terminal_key(
             tracker=tracker,
             imu_reader=imu_reader,
             yaw_sign=yaw_sign,
+            pitch_sign=pitch_sign,
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
@@ -486,6 +547,7 @@ def _apply_terminal_key(
             tracker=tracker,
             imu_reader=imu_reader,
             yaw_sign=yaw_sign,
+            pitch_sign=pitch_sign,
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
@@ -507,6 +569,7 @@ def _apply_terminal_key(
             tracker=tracker,
             imu_reader=imu_reader,
             yaw_sign=yaw_sign,
+            pitch_sign=pitch_sign,
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
@@ -528,6 +591,7 @@ def _apply_terminal_key(
             tracker=tracker,
             imu_reader=imu_reader,
             yaw_sign=yaw_sign,
+            pitch_sign=pitch_sign,
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
@@ -549,6 +613,7 @@ def _apply_terminal_key(
             tracker=tracker,
             imu_reader=imu_reader,
             yaw_sign=yaw_sign,
+            pitch_sign=pitch_sign,
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
@@ -570,6 +635,7 @@ def _apply_terminal_key(
             tracker=tracker,
             imu_reader=imu_reader,
             yaw_sign=yaw_sign,
+            pitch_sign=pitch_sign,
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
@@ -591,6 +657,7 @@ def _apply_terminal_key(
             tracker=tracker,
             imu_reader=imu_reader,
             yaw_sign=yaw_sign,
+            pitch_sign=pitch_sign,
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             active_spin=active_spin,
@@ -607,6 +674,7 @@ def run(
     imu_reader,
     imu_cfg: dict,
     yaw_sign: float,
+    pitch_sign: float,
     servo_cfg: dict,
     base_cfg: dict,
     zero_on_start: bool,
@@ -629,13 +697,18 @@ def run(
     )
     enc0, count0, _, cpd0 = _query_enc(link, 0.0)
     tracker.counts_per_degree = max(cpd0, 0.05)
+    settle = float(imu_cfg.get("auto_level_settle_sec", 0.8))
+    if settle > 0:
+        time.sleep(min(settle, 1.5))
     _lock_home(
         tracker,
         link,
         imu_reader,
         yaw_sign,
+        pitch_sign,
         servo_cfg,
         pan,
+        tilt,
         zero_encoder=zero_on_start,
         label="STARTUP HOME",
     )
@@ -696,6 +769,7 @@ def run(
                             tracker=tracker,
                             imu_reader=imu_reader,
                             yaw_sign=yaw_sign,
+                            pitch_sign=pitch_sign,
                             servo_cfg=servo_cfg,
                             base_cfg=base_cfg,
                             active_spin=active_spin,
@@ -741,6 +815,7 @@ def run(
                     tracker=tracker,
                     imu_reader=imu_reader,
                     yaw_sign=yaw_sign,
+                    pitch_sign=pitch_sign,
                     servo_cfg=servo_cfg,
                     base_cfg=base_cfg,
                     active_spin=active_spin,
@@ -770,7 +845,7 @@ def run(
                     tracker.counts_per_degree = cpd_live
                 last_enc_poll = now
 
-            imu_yaw, gyro, imu_ok = _read_imu(imu_reader, yaw_sign)
+            imu_yaw, imu_pitch, gyro, imu_ok = _read_imu(imu_reader, yaw_sign, pitch_sign)
             pan_mech = signed_pan_mech_deg(pan, servo_cfg)
             sample = tracker.update(
                 encoder_deg=enc_deg,
@@ -808,9 +883,11 @@ def run(
                 sample,
                 pan=pan,
                 tilt=tilt,
+                imu_pitch_deg=imu_pitch,
                 spin_label=spin_label,
                 imu_online=imu_ok,
                 port=port,
+                servo_cfg=servo_cfg,
             )
 
             if active_spin != 0 and now - status_every > 0.5 and sample is not None:
@@ -863,7 +940,9 @@ def main() -> int:
     base_cfg.setdefault("home_imu_burst_sec", 0.45)
     base_cfg.setdefault("home_imu_fine_burst_sec", 0.12)
     servo_cfg = cfg.get("servo", {}) or {}
+    viz_cfg = cfg.get("debug_viz", {}) or {}
     yaw_sign = float(imu_cfg.get("yaw_sign", -1.0))
+    pitch_sign = float(viz_cfg.get("imu_pitch_sign", -1.0))
     zero_on_start = bool(base_cfg.get("zero_on_start", True)) and not args.no_zero_on_start
 
     link = ArduinoServoLink(port=args.port or None)
@@ -897,6 +976,7 @@ def main() -> int:
             imu_reader=imu_reader,
             imu_cfg=imu_cfg,
             yaw_sign=yaw_sign,
+            pitch_sign=pitch_sign,
             servo_cfg=servo_cfg,
             base_cfg=base_cfg,
             zero_on_start=zero_on_start,

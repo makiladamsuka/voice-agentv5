@@ -70,6 +70,8 @@ class YawVizState:
             pass
         self.base_yaw_sign = float(viz_cfg.get("base_yaw_sign", -1.0))
         self.pan_yaw_sign = float(viz_cfg.get("pan_yaw_sign", -1.0))
+        self.imu_pitch_sign = float(viz_cfg.get("imu_pitch_sign", -1.0))
+        self.tilt_sign = float(viz_cfg.get("tilt_sign", 1.0))
         self.max_yaw_deg = float(base_cfg.get("max_yaw_deg", 120.0))
         self.connected = False
         self.port = ""
@@ -89,7 +91,11 @@ class YawVizState:
         self.encoder_count_delta = 0
         self.encoder_count_raw_delta = 0
         self.imu_yaw_deg = 0.0
+        self.imu_pitch_deg = 0.0
+        self.pitch_from_home_deg = 0.0
+        self.imu_pitch_from_home_deg = 0.0
         self.pan_mech_deg = 0.0
+        self.tilt_mech_deg = 0.0
         self.gyro_dps = 0.0
         self.imu_correction_deg = 0.0
         self.head_pan = 0.0
@@ -115,6 +121,8 @@ class YawVizState:
                 "last_ts": self.last_ts,
                 "base_yaw_sign": self.base_yaw_sign,
                 "pan_yaw_sign": self.pan_yaw_sign,
+                "imu_pitch_sign": self.imu_pitch_sign,
+                "tilt_sign": self.tilt_sign,
                 "max_yaw_deg": self.max_yaw_deg,
                 "from_home_enc_deg": self.from_home_enc_deg,
                 "from_home_imu_deg": self.from_home_imu_deg,
@@ -126,7 +134,11 @@ class YawVizState:
                 "encoder_count_delta": self.encoder_count_delta,
                 "encoder_count_raw_delta": self.encoder_count_raw_delta,
                 "imu_yaw_deg": self.imu_yaw_deg,
+                "imu_pitch_deg": self.imu_pitch_deg,
+                "pitch_from_home_deg": self.pitch_from_home_deg,
+                "imu_pitch_from_home_deg": self.imu_pitch_from_home_deg,
                 "pan_mech_deg": self.pan_mech_deg,
+                "tilt_mech_deg": self.tilt_mech_deg,
                 "gyro_dps": self.gyro_dps,
                 "imu_correction_deg": self.imu_correction_deg,
                 "head_pan": self.head_pan,
@@ -408,6 +420,15 @@ HTML_PAGE = """<!DOCTYPE html>
     <span class="meta" style="font-size:0.72rem">+ clockwise · IMU closed-loop</span>
   </div>
 
+  <p class="stats-label">Servos &amp; 3D viz</p>
+  <div class="stats">
+    <div class="stat"><div class="k">Servo cmd P / T</div><div class="v" id="v-servo-cmd">—</div></div>
+    <div class="stat"><div class="k">Mech pan / tilt</div><div class="v" id="v-mech">—</div></div>
+    <div class="stat imu"><div class="k">3D base yaw</div><div class="v" id="v-viz-base">—</div></div>
+    <div class="stat enc"><div class="k">3D head yaw on base</div><div class="v" id="v-viz-head-yaw">—</div></div>
+    <div class="stat"><div class="k">3D head pitch</div><div class="v" id="v-viz-head-pitch">—</div></div>
+  </div>
+
   <p class="stats-label">From HOME</p>
   <div class="stats">
     <div class="stat enc"><div class="k">Encoder from HOME</div><div class="v" id="v-enc">—</div></div>
@@ -425,7 +446,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <strong>Browser or terminal:</strong> <code>M</code>/<code>N</code> hold base spin · <code>WASD</code> head ·
     <code>C</code> center · <code>H</code> spin to HOME IMU yaw 0° · <code>Z</code> zero encoder here (no move) ·
     <code>?</code> status · <code>Q</code> quit.
-    Grey cone = HOME forward (fixed). Grey base = IMU base yaw (M/N spin); pink head = mechanical pan from HOME (A/D).
+    Grey cone = HOME forward (fixed). Grey base = IMU base yaw (M/N); pink head = pan (A/D) + pitch from HOME (W/S, zero at startup).
   </p>
 
   <script type="module" src="/static/yaw_robot_viz.mjs"></script>
@@ -437,6 +458,14 @@ HTML_PAGE = """<!DOCTYPE html>
     function fmtTicks(v) {
       const n = Math.round(Number(v) || 0);
       return (n >= 0 ? '+' : '') + n;
+    }
+    function fmtServo(v) {
+      const n = Math.round(Number(v) || 0);
+      return String(n);
+    }
+    function vizApplied(data, degKey, signKey, fallbackSignKey) {
+      const sign = Number(data[signKey] ?? data[fallbackSignKey] ?? 1);
+      return Math.round(Number(data[degKey] ?? 0) * sign);
     }
     async function poll() {
       try {
@@ -457,8 +486,23 @@ HTML_PAGE = """<!DOCTYPE html>
         document.getElementById('v-delta').textContent = fmtDeg(data.disagreement_deg);
         document.getElementById('delta-card').className = 'stat delta' + (d < 3 ? ' ok' : '');
         document.getElementById('v-ticks').textContent = fmtTicks(data.encoder_count_delta);
+        document.getElementById('v-servo-cmd').textContent =
+          'P ' + fmtServo(data.head_pan) + ' · T ' + fmtServo(data.head_tilt);
+        document.getElementById('v-mech').textContent =
+          fmtDeg(data.pan_mech_deg) + ' · ' + fmtDeg(data.tilt_mech_deg);
+        const vizBase = vizApplied(data, 'from_home_imu_deg', 'base_yaw_sign', 'base_yaw_sign');
+        const vizHeadYaw = vizApplied(data, 'pan_from_home_deg', 'pan_yaw_sign', 'base_yaw_sign');
+        const vizHeadPitch = vizApplied(data, 'pitch_from_home_deg', 'tilt_sign', 'tilt_sign');
+        document.getElementById('v-viz-base').textContent = fmtDeg(vizBase);
+        document.getElementById('v-viz-head-yaw').textContent = fmtDeg(vizHeadYaw);
+        document.getElementById('v-viz-head-pitch').textContent = fmtDeg(vizHeadPitch);
         document.getElementById('hud-bottom').innerHTML =
-          '<strong>FROM HOME</strong> imu ' + fmtDeg(data.from_home_imu_deg) +
+          '<strong>SERVO</strong> P ' + fmtServo(data.head_pan) + ' T ' + fmtServo(data.head_tilt) +
+          ' · mech pan ' + fmtDeg(data.pan_mech_deg) + ' tilt ' + fmtDeg(data.tilt_mech_deg) +
+          '<br><strong>3D VIZ</strong> base ' + fmtDeg(vizBase) +
+          ' · head yaw on base ' + fmtDeg(vizHeadYaw) +
+          ' · head pitch ' + fmtDeg(vizHeadPitch) +
+          '<br><strong>FROM HOME</strong> imu ' + fmtDeg(data.from_home_imu_deg) +
           ' · enc ' + fmtDeg(data.from_home_enc_deg) +
           ' · Δ ' + fmtDeg(data.disagreement_deg) +
           ' · ticksΔ ' + fmtTicks(data.encoder_count_delta) +

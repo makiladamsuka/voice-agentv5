@@ -3,28 +3,63 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const view = document.getElementById('view3d');
 const ROBOT_COL = 0xc8d6e5;
+const BODY_COL = 0x64748b;
 const HEAD_COL = 0xf472b6;
 const HEADING_COL = 0x111111;
+const FRONT_MARK_COL = 0xffffff;
 const HOME_COL = 0x94a3b8;
 const ROBOT_RADIUS = 0.275;
 const BASE_THICKNESS = 0.07;
-const HEAD_RADIUS = 0.15;
-const HEAD_THICKNESS = 0.045;
+const TORSO_W = 0.14;
+const TORSO_D = 0.12;
+const TORSO_H = 0.17;
+const TORSO_CORNER = 0.022;
+const HEAD_W = 0.40;
+const HEAD_H = 0.15;
+const HEAD_D = 0.30;
+const HEAD_CORNER = 0.034;
 const deg = (d) => (d * Math.PI) / 180;
+
+function roundedBoxGeometry(width, depth, height, radius) {
+  const hw = width / 2;
+  const hd = depth / 2;
+  const r = Math.min(radius, hw * 0.45, hd * 0.45);
+  const shape = new THREE.Shape();
+  shape.moveTo(-hw + r, -hd);
+  shape.lineTo(hw - r, -hd);
+  shape.quadraticCurveTo(hw, -hd, hw, -hd + r);
+  shape.lineTo(hw, hd - r);
+  shape.quadraticCurveTo(hw, hd, hw - r, hd);
+  shape.lineTo(-hw + r, hd);
+  shape.quadraticCurveTo(-hw, hd, -hw, hd - r);
+  shape.lineTo(-hw, -hd + r);
+  shape.quadraticCurveTo(-hw, -hd, -hw + r, -hd);
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: height,
+    bevelEnabled: true,
+    bevelThickness: Math.min(r, height * 0.38),
+    bevelSize: r * 0.88,
+    bevelSegments: 3,
+    curveSegments: 6,
+  });
+  geo.rotateX(-Math.PI / 2);
+  geo.translate(0, height / 2, 0);
+  return geo;
+}
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0c10);
 
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 30);
-camera.position.set(0, 3.6, 0.62);
-camera.lookAt(0, 0.05, 0.55);
+camera.position.set(0, 3.9, 0.78);
+camera.lookAt(0, 0.14, 0.55);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 view.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0.05, 0.55);
+controls.target.set(0, 0.14, 0.55);
 controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI * 0.22;
 controls.minPolarAngle = Math.PI * 0.05;
@@ -77,57 +112,85 @@ function updateLimitArc(maxYawDeg) {
   limitGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.35 })));
 }
 
-// Grey base = pan-compensated IMU base yaw; pink head = mechanical pan from HOME
+// Base disc (unchanged) → torso body → head (pan + IMU pitch)
 const robot = new THREE.Group();
 scene.add(robot);
 
-const body = new THREE.Mesh(
+const baseDisc = new THREE.Mesh(
   new THREE.CylinderGeometry(ROBOT_RADIUS, ROBOT_RADIUS, BASE_THICKNESS, 64),
   new THREE.MeshBasicMaterial({ color: ROBOT_COL })
 );
-body.position.y = BASE_THICKNESS / 2;
-robot.add(body);
+baseDisc.position.y = BASE_THICKNESS / 2;
+robot.add(baseDisc);
 
-const headingStrip = new THREE.Mesh(
+const baseStrip = new THREE.Mesh(
   new THREE.BoxGeometry(0.05, 0.02, 0.24),
   new THREE.MeshBasicMaterial({ color: HEADING_COL })
 );
-headingStrip.position.set(0, BASE_THICKNESS + 0.01, ROBOT_RADIUS * 0.42);
-robot.add(headingStrip);
+baseStrip.position.set(0, BASE_THICKNESS + 0.01, ROBOT_RADIUS * 0.42);
+robot.add(baseStrip);
 
-const outline = new THREE.Mesh(
+const baseOutline = new THREE.Mesh(
   new THREE.RingGeometry(ROBOT_RADIUS - 0.01, ROBOT_RADIUS + 0.01, 64),
   new THREE.MeshBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
 );
-outline.rotation.x = -Math.PI / 2;
-outline.position.y = BASE_THICKNESS + 0.006;
-robot.add(outline);
+baseOutline.rotation.x = -Math.PI / 2;
+baseOutline.position.y = BASE_THICKNESS + 0.006;
+robot.add(baseOutline);
 
-const head = new THREE.Group();
-head.position.y = BASE_THICKNESS;
-robot.add(head);
+const torsoMount = new THREE.Group();
+torsoMount.position.y = BASE_THICKNESS;
+robot.add(torsoMount);
+
+const torso = new THREE.Mesh(
+  roundedBoxGeometry(TORSO_W, TORSO_D, TORSO_H, TORSO_CORNER),
+  new THREE.MeshBasicMaterial({ color: BODY_COL })
+);
+torso.position.y = TORSO_H / 2;
+torsoMount.add(torso);
+
+const headMount = new THREE.Group();
+headMount.position.y = TORSO_H;
+torsoMount.add(headMount);
+
+const panNode = new THREE.Group();
+headMount.add(panNode);
+
+const tiltNode = new THREE.Group();
+panNode.add(tiltNode);
 
 const headBody = new THREE.Mesh(
-  new THREE.CylinderGeometry(HEAD_RADIUS, HEAD_RADIUS, HEAD_THICKNESS, 48),
+  roundedBoxGeometry(HEAD_W, HEAD_D, HEAD_H, HEAD_CORNER),
   new THREE.MeshBasicMaterial({ color: HEAD_COL })
 );
-headBody.position.y = HEAD_THICKNESS / 2;
-head.add(headBody);
+headBody.position.y = HEAD_H / 2;
+tiltNode.add(headBody);
 
+// Front heading strip on head (+Z)
 const headStrip = new THREE.Mesh(
-  new THREE.BoxGeometry(0.035, 0.016, 0.12),
+  new THREE.BoxGeometry(0.045, 0.018, 0.14),
   new THREE.MeshBasicMaterial({ color: HEADING_COL })
 );
-headStrip.position.set(0, HEAD_THICKNESS + 0.008, HEAD_RADIUS * 0.42);
-head.add(headStrip);
+headStrip.position.set(0, HEAD_H * 0.52, HEAD_D * 0.44);
+tiltNode.add(headStrip);
 
-const headOutline = new THREE.Mesh(
-  new THREE.RingGeometry(HEAD_RADIUS - 0.008, HEAD_RADIUS + 0.008, 48),
-  new THREE.MeshBasicMaterial({ color: 0xbe185d, transparent: true, opacity: 0.45, side: THREE.DoubleSide })
+// Front nose cone — points forward
+const frontNose = new THREE.Mesh(
+  new THREE.ConeGeometry(0.028, 0.055, 3),
+  new THREE.MeshBasicMaterial({ color: HEADING_COL })
 );
-headOutline.rotation.x = -Math.PI / 2;
-headOutline.position.y = HEAD_THICKNESS + 0.004;
-head.add(headOutline);
+frontNose.rotation.x = -Math.PI / 2;
+frontNose.position.set(0, HEAD_H * 0.52, HEAD_D * 0.52);
+tiltNode.add(frontNose);
+
+// White dot at front center
+const frontDot = new THREE.Mesh(
+  new THREE.CircleGeometry(0.018, 16),
+  new THREE.MeshBasicMaterial({ color: FRONT_MARK_COL })
+);
+frontDot.position.set(0, HEAD_H * 0.52, HEAD_D * 0.48 + 0.004);
+frontDot.rotation.y = 0;
+tiltNode.add(frontDot);
 
 let lastMaxYaw = 0;
 let latest = null;
@@ -136,13 +199,16 @@ function updateYawScene(data) {
   latest = data;
   const baseSign = Number(data.base_yaw_sign ?? -1);
   const panSign = Number(data.pan_yaw_sign ?? data.base_yaw_sign ?? -1);
+  const tiltSign = Number(data.tilt_sign ?? 1);
   const baseYaw = Number(data.from_home_imu_deg ?? data.map_yaw_deg ?? 0);
   const headPan = Number(data.pan_from_home_deg ?? 0);
+  const headPitch = Number(data.pitch_from_home_deg ?? 0);
   const maxYaw = Number(data.max_yaw_deg ?? 120);
 
   mapGroup.rotation.y = 0;
   robot.rotation.y = deg(baseYaw) * baseSign;
-  head.rotation.y = deg(headPan) * panSign;
+  panNode.rotation.y = deg(headPan) * panSign;
+  tiltNode.rotation.x = deg(headPitch) * tiltSign;
 
   if (Math.abs(maxYaw - lastMaxYaw) > 0.5) {
     lastMaxYaw = maxYaw;

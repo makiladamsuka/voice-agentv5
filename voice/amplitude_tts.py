@@ -44,7 +44,7 @@ _audio_buffer = bytearray()
 _pacer_task: asyncio.Task | None = None
 _SAMPLE_RATE = 24000
 _BYTES_PER_SAMPLE = 2
-_CHUNK_MS = 40
+_CHUNK_MS = 50
 _CHUNK_BYTES = int((_SAMPLE_RATE * _BYTES_PER_SAMPLE) * (_CHUNK_MS / 1000))
 
 # Module-level blackboard reference (set by AmplitudeTTS.__init__)

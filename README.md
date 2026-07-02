@@ -1,40 +1,67 @@
-# Voice Agent V5 Face Tracking Head
+# Voice Agent V5
 
-Isolated Raspberry Pi + ESP32 face tracking build.
+Raspberry Pi robot stack: face tracking, servos, TFT eyes, LiveKit voice agent, and kiosk UI.
 
-- Raspberry Pi runs `face_tracking_head.py`.
-- Picamera2 and YuNet detect the largest face using the same camera setup as `tftdisplay/trackingeyes2.py`.
-- Dual ST7735 TFT eyes use the same SPI pins as `trackingeyes2.py`.
-- ESP32 receives `P<pan> T<tilt>` over USB serial and drives two PCA9685 servos.
+## Quick start (Pi)
 
-## Pi dependencies
+### 1. Python backend (robot + voice + kiosk APIs on :8080)
 
 ```bash
-sudo apt install python3-picamera2 python3-opencv
-python -m pip install pillow adafruit-circuitpython-rgb-display pyserial PyYAML
+cd /home/nema/Documents/voice-agentv5
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+# Copy .env with LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
+python start_robot.py
 ```
 
-## Run
+### 2. Frontend (native Next.js kiosk on :3000 — no Docker)
 
-From this directory:
+Requires **Node.js 20+** and `pnpm` (or npm).
 
 ```bash
-python face_tracking_head.py --port /dev/ttyUSB0
+./scripts/run-frontend-dev.sh    # hot reload while editing UI
+# or
+./scripts/run-frontend-prod.sh   # production build for stable demo
 ```
 
-IMU / BMI160 experiments live on the `feature/imu` branch (`face_tracking_head_imu.py`).
+On first run, `run-frontend-dev.sh` seeds `frontend/.env.local` from the repo `.env`.
 
-Useful smoke tests:
+Kiosk API routes (`/api/map`, `/api/upload-status`, etc.) are proxied to the Python MediaServer on **:8080** via `next.config.ts` rewrites. LiveKit token minting stays in Next.js (`/api/connection-details`).
+
+### 3. Fullscreen touchscreen kiosk
 
 ```bash
-python face_tracking_head.py --no-servo
-python face_tracking_head.py --no-stream --port /dev/ttyUSB0
+./scripts/kiosk.sh
 ```
 
-MJPEG preview defaults to:
+Opens Chromium fullscreen at `http://localhost:3000` (cursor hidden, speaker volume maxed).
 
-```text
-http://<pi-ip>:8081/stream
+## Ports
+
+| Port | Service |
+|------|---------|
+| 3000 | Next.js kiosk UI |
+| 8080 | MediaServer (posters, maps, upload APIs) |
+| 8081 | MJPEG camera stream |
+| 8082 | Robot debug dashboard |
+
+## Project layout
+
+```
+voice-agentv5/
+├── start_robot.py       # Main entry
+├── config.yaml
+├── core/                # Face tracking, servos, eyes, blackboard
+├── voice/               # LiveKit agent + MediaServer
+├── frontend/            # Next.js kiosk (copied from voice-agentv2)
+├── assets/              # Poster images (events, competitions, posts)
+├── data/                # Campus map graphs
+└── scripts/
+    ├── run-frontend-dev.sh
+    ├── run-frontend-prod.sh
+    ├── kiosk.sh
+    └── refresh-kiosk.sh
 ```
 
 ## ESP32 firmware
@@ -46,26 +73,18 @@ Wiring defaults:
 - PCA9685 address `0x40`
 - PCA9685 channel 4 -> pan servo
 - PCA9685 channel 5 -> tilt servo
-- External 5 V servo power, common ground with ESP32 and Pi
-
-Install Arduino toolchain once:
-
-```bash
-arduino-cli core update-index
-arduino-cli core install esp32:esp32@2.0.17
-arduino-cli lib install "Adafruit PWM Servo Driver Library" "Adafruit BusIO"
-```
-
-Compile and upload from the v5 root:
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32 firmware/head_servo
 arduino-cli upload -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32 firmware/head_servo
 ```
 
-Serial protocol:
+Serial protocol: `H` -> `READY`, `P85.0 T105.0` -> set pan/tilt, `?` -> `POS P<pan> T<tilt>`
 
-- `H` -> `READY`
-- `P85.0 T105.0` -> set pan/tilt degrees
-- `S` -> bench sweep
-- `?` -> `POS P<pan> T<tilt>`
+## Legacy face-tracking head (standalone)
+
+```bash
+python face_tracking_head.py --port /dev/ttyUSB0
+```
+
+MJPEG preview: `http://<pi-ip>:8081/stream`

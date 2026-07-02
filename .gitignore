@@ -7,3 +7,10 @@ voice/event_db/
 .env
 .DS_Store
 *.log
+
+# Frontend (native Next.js kiosk)
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/.facebook-cache.json
+frontend/tsconfig.tsbuildinfo

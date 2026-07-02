@@ -16,11 +16,13 @@ class ContentTools:
         image_server,
         room_provider: Callable[[], Optional[rtc.Room]],
         map_navigator=None,
+        wayfinder=None,
     ):
         self.image_manager = image_manager
         self.image_server = image_server
         self._room_provider = room_provider
         self.map_navigator = map_navigator
+        self.wayfinder = wayfinder
 
     @property
     def room(self) -> Optional[rtc.Room]:
@@ -137,6 +139,47 @@ class ContentTools:
     async def get_campus_directions(
         self, start_location: str, destination: str, context: RunContext
     ) -> str:
+        if self.wayfinder and self.wayfinder.floors:
+            self.wayfinder.reload()
+            start = (start_location or "").strip() or None
+            result = self.wayfinder.find_path(destination, start=start)
+            if not result:
+                return "I'm sorry, I couldn't find directions to that location."
+            if "error" in result:
+                return result["error"]
+
+            if self.room:
+                try:
+                    nav_data = {
+                        "type": "navigation",
+                        "destination": result["destination"],
+                        "floor": result.get("floor", "floor_1"),
+                        "path": result["path_coords"],
+                        "nodes": [
+                            {
+                                "id": n["id"],
+                                "label": n["label"],
+                                "type": n.get("type", "room"),
+                                "world": n["world"],
+                                "building": n.get("building"),
+                                "size": n.get("size", [1, 1, 1]),
+                            }
+                            for n in result["nodes"]
+                        ],
+                        "buildings": result["buildings"],
+                    }
+                    await self.room.local_participant.publish_data(
+                        json.dumps(nav_data).encode()
+                    )
+                    print("[ContentTools] Published navigation data to kiosk")
+                except Exception as exc:
+                    print(f"[ContentTools] Failed to publish navigation data: {exc}")
+
+            return (
+                f"Here are the directions to {result['destination']}: "
+                f"{result['directions']}"
+            )
+
         if not self.map_navigator or not self.map_navigator.available:
             return (
                 "I don't have the campus navigation graph loaded yet, "

@@ -365,7 +365,7 @@ talk_gesture:
   pose_duration: 0.4         # Seconds to transition between poses
   poll_interval: 0.02        # Seconds between updates (50 Hz)
   vertical_speed: 0.8        # Speed multiplier for a0, a1 (shoulder/elbow up/down)
-  horizontal_speed: 1.0      # Speed multiplier for a2, a3 (wrist/hand swap side-to-side) - reduced from 1.5 to prevent frame skipping in bye animations
+  horizontal_speed: 0.45      # Speed multiplier for a2, a3 (wrist/hand swap side-to-side) - reduced from 1.5 to prevent frame skipping in bye animations
 
 proximity:
   enabled: true

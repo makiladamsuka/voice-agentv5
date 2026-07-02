@@ -289,6 +289,7 @@ class EyeRenderer:
         delay = 1.0 / max(1, self.render_fps)
         current_emotion = "idle"
         amp_prev_fast = 0.0
+        amp_smoothed = 0.0
         print(f"[EyeRenderer] Target refresh: {self.render_fps} fps")
 
         while self.bb.read("running")["running"]:
@@ -309,13 +310,14 @@ class EyeRenderer:
             emotion   = state["emotion"]
             intensity = state["emotion_intensity"]
             af        = float(state.get("amplitude_fast", 0.0) or 0.0)
-            da        = af - amp_prev_fast
-            amp_prev_fast = af
+            amp_smoothed = 0.72 * amp_smoothed + 0.28 * af
+            da        = amp_smoothed - amp_prev_fast
+            amp_prev_fast = amp_smoothed
 
             talk_active = bool(state.get("voice_session_active")) and (
                 state.get("agent_speaking")
                 or state.get("conv_state") in ("speaking", "nodding")
-                or af > 0.06
+                or amp_smoothed > 0.06
             )
 
             if emotion != current_emotion:
@@ -325,8 +327,8 @@ class EyeRenderer:
 
             punch_w = 0.0
             punch_h = 0.0
-            if talk_active and af > 0.05:
-                punch_h = (da * 0.55) if da > 0.06 else (af * 0.22)
+            if talk_active and amp_smoothed > 0.05:
+                punch_h = (da * 0.45) if da > 0.05 else (amp_smoothed * 0.18)
                 punch_w = punch_h * 0.10
 
             for eye in (left_eye, right_eye):
@@ -341,7 +343,7 @@ class EyeRenderer:
                 now >= next_blink
                 and left_eye.blink_state == "IDLE"
                 and right_eye.blink_state == "IDLE"
-                and (not talk_active or af < 0.04)
+                and (not talk_active or amp_smoothed < 0.04)
             )
             if can_blink:
                 speed = random.uniform(self.blink_speed_min, self.blink_speed_max)

@@ -31,6 +31,7 @@ from voice.text_filters import filter_leaked_tool_syntax
 from voice.media_server import ImageServer, MediaServer
 from voice.image_manager import ImageManager
 from voice.map_navigation import MapNavigator
+from voice.wayfinding import Wayfinder
 from voice.event_database import build_event_database
 from voice.greetings import generate_presence_greeting
 from voice.tools import TimeTools, SearchTools, ContentTools, AppearanceTools
@@ -46,6 +47,7 @@ APP_DIR = Path(__file__).resolve().parent.parent
 _bb: Blackboard | None = None
 _global_image_server: MediaServer | None = None
 _global_map_navigator: MapNavigator | None = None
+_global_wayfinder: Wayfinder | None = None
 _global_event_db = None
 _active_session: AgentSession | None = None
 
@@ -151,6 +153,7 @@ class CampusAgent(Agent, TimeTools, SearchTools, AppearanceTools):
         self.image_server = image_server
         self.event_db = event_db
         self.map_navigator = _global_map_navigator or MapNavigator()
+        self.wayfinder = _global_wayfinder or Wayfinder()
         if image_server is not None:
             image_server.set_map_navigator(self.map_navigator)
         self._room: rtc.Room | None = None
@@ -159,6 +162,7 @@ class CampusAgent(Agent, TimeTools, SearchTools, AppearanceTools):
             image_server=self.image_server,
             room_provider=lambda: self._room,
             map_navigator=self.map_navigator,
+            wayfinder=self.wayfinder,
         )
         super().__init__(instructions=SYSTEM_INSTRUCTIONS)
 
@@ -243,11 +247,12 @@ def _init_image_server(
     kiosk_config: dict | None = None,
     blackboard: "Blackboard | None" = None,
 ) -> None:
-    global _global_image_server, _global_map_navigator
+    global _global_image_server, _global_map_navigator, _global_wayfinder
     if _global_image_server is None:
         assets_dir = APP_DIR / "assets"
         assets_dir.mkdir(exist_ok=True)
         _global_map_navigator = MapNavigator()
+        _global_wayfinder = Wayfinder()
         _global_image_server = MediaServer(
             assets_dir,
             app_dir=APP_DIR,
@@ -369,6 +374,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 if _bb is not None:
                     _bb.write(eye_color=rgb)
                 print(f"[VoiceService] theme_change: {theme!r} -> {rgb}")
+                return
+
+            if msg_type == "change_eye_color":
+                theme = data.get("color") or data.get("theme") or "default"
+                rgb = resolve_eye_color(theme)
+                if _bb is not None:
+                    _bb.write(eye_color=rgb)
+                print(f"[VoiceService] change_eye_color: {theme!r} -> {rgb}")
                 return
 
             if msg_type != "event_focus":

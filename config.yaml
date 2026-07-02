@@ -302,7 +302,7 @@ arms:
   turn_step_delta_deg: 4.0
   ref_step_deg: 8.0
   turn_sweep_factor: 0.45
-  blend_hz: 1.5
+  blend_hz: 0.5
   keepalive_sec: 0.8
   min_spin_moved_deg: 2.0
   detach_on_shutdown: false

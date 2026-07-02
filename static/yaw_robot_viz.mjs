@@ -3,17 +3,18 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const view = document.getElementById('view3d');
 const ROBOT_COL = 0xc8d6e5;
-const BODY_COL = 0x64748b;
+const TORSO_COL = 0x141414;
 const HEAD_COL = 0xf472b6;
 const HEADING_COL = 0x111111;
 const FRONT_MARK_COL = 0xffffff;
 const HOME_COL = 0x94a3b8;
 const ROBOT_RADIUS = 0.275;
 const BASE_THICKNESS = 0.07;
-const TORSO_W = 0.14;
-const TORSO_D = 0.12;
-const TORSO_H = 0.17;
-const TORSO_CORNER = 0.022;
+const TORSO_BELLY_R = 0.148;
+const TORSO_BELLY_SY = 0.9;
+const TORSO_BELLY_SX = 1.1;
+const TORSO_BELLY_SZ = 1.14;
+const TORSO_H = 2 * TORSO_BELLY_R * TORSO_BELLY_SY;
 const HEAD_W = 0.40;
 const HEAD_H = 0.15;
 const HEAD_D = 0.30;
@@ -52,14 +53,14 @@ scene.background = new THREE.Color(0x0a0c10);
 
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 30);
 camera.position.set(0, 3.9, 0.78);
-camera.lookAt(0, 0.14, 0.55);
+camera.lookAt(0, 0.26, 0.55);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 view.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0.14, 0.55);
+controls.target.set(0, 0.26, 0.55);
 controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI * 0.22;
 controls.minPolarAngle = Math.PI * 0.05;
@@ -112,7 +113,7 @@ function updateLimitArc(maxYawDeg) {
   limitGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.35 })));
 }
 
-// Base disc (unchanged) → torso body → head (pan + IMU pitch)
+// Base disc → black rounded torso → head (pan + pitch)
 const robot = new THREE.Group();
 scene.add(robot);
 
@@ -122,13 +123,6 @@ const baseDisc = new THREE.Mesh(
 );
 baseDisc.position.y = BASE_THICKNESS / 2;
 robot.add(baseDisc);
-
-const baseStrip = new THREE.Mesh(
-  new THREE.BoxGeometry(0.05, 0.02, 0.24),
-  new THREE.MeshBasicMaterial({ color: HEADING_COL })
-);
-baseStrip.position.set(0, BASE_THICKNESS + 0.01, ROBOT_RADIUS * 0.42);
-robot.add(baseStrip);
 
 const baseOutline = new THREE.Mesh(
   new THREE.RingGeometry(ROBOT_RADIUS - 0.01, ROBOT_RADIUS + 0.01, 64),
@@ -143,11 +137,21 @@ torsoMount.position.y = BASE_THICKNESS;
 robot.add(torsoMount);
 
 const torso = new THREE.Mesh(
-  roundedBoxGeometry(TORSO_W, TORSO_D, TORSO_H, TORSO_CORNER),
-  new THREE.MeshBasicMaterial({ color: BODY_COL })
+  new THREE.SphereGeometry(TORSO_BELLY_R, 36, 28),
+  new THREE.MeshBasicMaterial({ color: TORSO_COL })
 );
-torso.position.y = TORSO_H / 2;
+torso.scale.set(TORSO_BELLY_SX, TORSO_BELLY_SY, TORSO_BELLY_SZ);
+torso.position.y = TORSO_BELLY_R * TORSO_BELLY_SY;
 torsoMount.add(torso);
+
+// Collar where neck meets belly
+const neckRing = new THREE.Mesh(
+  new THREE.TorusGeometry(TORSO_BELLY_R * TORSO_BELLY_SX * 0.55, 0.009, 8, 32),
+  new THREE.MeshBasicMaterial({ color: 0x2a2a2a })
+);
+neckRing.rotation.x = Math.PI / 2;
+neckRing.position.y = TORSO_H - 0.012;
+torsoMount.add(neckRing);
 
 const headMount = new THREE.Group();
 headMount.position.y = TORSO_H;
@@ -163,34 +167,37 @@ const headBody = new THREE.Mesh(
   roundedBoxGeometry(HEAD_W, HEAD_D, HEAD_H, HEAD_CORNER),
   new THREE.MeshBasicMaterial({ color: HEAD_COL })
 );
-headBody.position.y = HEAD_H / 2;
+headBody.geometry.computeBoundingBox();
 tiltNode.add(headBody);
 
-// Black heading strip on top of head (+Z = forward)
-const headStrip = new THREE.Mesh(
-  new THREE.BoxGeometry(0.045, 0.012, 0.14),
-  new THREE.MeshBasicMaterial({ color: HEADING_COL })
-);
-headStrip.position.set(0, HEAD_H + 0.009, HEAD_D * 0.14);
-tiltNode.add(headStrip);
+// Eyes on the front face — placed from mesh bounds so they sit outside the bevel
+const headBounds = headBody.geometry.boundingBox;
+const frontZ = headBounds.max.z + 0.012;
+const eyeY = headBounds.min.y + (headBounds.max.y - headBounds.min.y) * 0.58;
+const EYE_WHITE_R = 0.032;
+const EYE_PUPIL_R = 0.014;
+const EYE_GAP = 0.1;
 
-// Front nose cone — points forward
-const frontNose = new THREE.Mesh(
-  new THREE.ConeGeometry(0.028, 0.055, 3),
-  new THREE.MeshBasicMaterial({ color: HEADING_COL })
-);
-frontNose.rotation.x = -Math.PI / 2;
-frontNose.position.set(0, HEAD_H * 0.52, HEAD_D * 0.52);
-tiltNode.add(frontNose);
+function addEye(x) {
+  const white = new THREE.Mesh(
+    new THREE.CircleGeometry(EYE_WHITE_R, 20),
+    new THREE.MeshBasicMaterial({ color: FRONT_MARK_COL, side: THREE.DoubleSide, depthTest: false })
+  );
+  white.position.set(x, eyeY, frontZ);
+  white.renderOrder = 2;
+  tiltNode.add(white);
 
-// White dot at front center
-const frontDot = new THREE.Mesh(
-  new THREE.CircleGeometry(0.018, 16),
-  new THREE.MeshBasicMaterial({ color: FRONT_MARK_COL })
-);
-frontDot.position.set(0, HEAD_H * 0.52, HEAD_D * 0.48 + 0.004);
-frontDot.rotation.y = 0;
-tiltNode.add(frontDot);
+  const pupil = new THREE.Mesh(
+    new THREE.CircleGeometry(EYE_PUPIL_R, 16),
+    new THREE.MeshBasicMaterial({ color: HEADING_COL, side: THREE.DoubleSide, depthTest: false })
+  );
+  pupil.position.set(x, eyeY, frontZ + 0.003);
+  pupil.renderOrder = 3;
+  tiltNode.add(pupil);
+}
+
+addEye(-EYE_GAP / 2);
+addEye(EYE_GAP / 2);
 
 let lastMaxYaw = 0;
 let latest = null;

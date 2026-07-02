@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { bodyLocalToWorld, bodyMmToWorld, mapBaseYawDeg, robotMapYawRad } from './yaw_map_pose.mjs';
 
 const view = document.getElementById('view3d');
 const vizLoading = document.getElementById('viz-loading');
@@ -412,36 +413,21 @@ let hasTarget = false;
 let latest3d = null;
 let robotYawRad = 0;
 
-function bodyLocalToWorld(x, z, yawRad) {
-  const c = Math.cos(yawRad);
-  const s = Math.sin(yawRad);
-  return {
-    x: x * c + z * s,
-    z: -x * s + z * c,
-  };
-}
-
-function bodyMmToWorld(xMm, zMm, yawRad) {
-  return bodyLocalToWorld(xMm / 1000, zMm / 1000, yawRad);
-}
-
 function fmtDeg(v) {
   const n = Math.round(Number(v) || 0);
   return `${n >= 0 ? '+' : ''}${n}°`;
 }
 
 function updateRobotPose(data) {
-  const baseSign = Number(data.base_yaw_sign ?? -1);
   const panSign = Number(data.pan_yaw_sign ?? data.base_yaw_sign ?? -1);
   const tiltSign = Number(data.tilt_sign ?? 1);
-  const baseYaw = Number(data.from_home_imu_deg ?? data.body_yaw_deg ?? data.map_yaw_deg ?? 0);
   const headPan = Number(data.pan_cmd_from_home_deg ?? data.pan_from_home_deg ?? data.head_yaw_on_body_deg ?? 0);
   const headPitch = Number(data.pitch_from_home_deg ?? 0);
   const maxYaw = Number(data.max_yaw_deg ?? 120);
 
   mapGroup.rotation.y = 0;
-  // Match legacy heading-up map spin: world fixed, robot turns opposite of old map rotation
-  robotYawRad = -deg(baseYaw) * baseSign;
+  // Encoder-closed-loop bearing spins — map heading tracks viz_base_yaw_deg (enc from HOME).
+  robotYawRad = robotMapYawRad(data);
   robot.rotation.y = robotYawRad;
   panNode.rotation.y = deg(headPan) * panSign;
   tiltNode.rotation.x = deg(headPitch) * tiltSign;
@@ -488,7 +474,8 @@ function updateScene3d(data) {
   const t = performance.now() * 0.001;
   const bodyYawDeg = Number(data.from_home_imu_deg ?? data.body_yaw_deg ?? 0);
   const encYaw = Number(data.from_home_enc_deg ?? data.encoder_yaw_deg ?? 0);
-  const frontOff = bodyYawDeg;
+  const mapYawDeg = mapBaseYawDeg(data);
+  const frontOff = mapYawDeg;
   const disagreement = Number(data.disagreement_deg ?? (bodyYawDeg - encYaw));
   const aimErr = data.aim_error_deg;
   const drift = Number(data.imu_drift_correction_deg ?? 0);
@@ -514,7 +501,7 @@ function updateScene3d(data) {
     } else {
       scan = 'STALE';
     }
-    hudLeft.innerHTML = `SCAN <span class="val">${scan}</span> · IMU <span class="val">${fmtDeg(frontOff)}</span>`;
+    hudLeft.innerHTML = `SCAN <span class="val">${scan}</span> · MAP <span class="val">${fmtDeg(frontOff)}</span>`;
     if (aimErr != null) {
       hudLeft.innerHTML += ` · AIM <span class="val">${fmtDeg(aimErr)}</span>`;
     }

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { robotMapYawRad } from './yaw_map_pose.mjs';
 
 const view = document.getElementById('view3d');
 const ROBOT_COL = 0xc8d6e5;
@@ -204,16 +205,14 @@ let latest = null;
 
 function updateYawScene(data) {
   latest = data;
-  const baseSign = Number(data.base_yaw_sign ?? -1);
   const panSign = Number(data.pan_yaw_sign ?? data.base_yaw_sign ?? -1);
   const tiltSign = Number(data.tilt_sign ?? 1);
-  const baseYaw = Number(data.from_home_imu_deg ?? data.map_yaw_deg ?? 0);
   const headPan = Number(data.pan_cmd_from_home_deg ?? data.pan_from_home_deg ?? 0);
   const headPitch = Number(data.pitch_from_home_deg ?? 0);
   const maxYaw = Number(data.max_yaw_deg ?? 120);
 
   mapGroup.rotation.y = 0;
-  robot.rotation.y = -deg(baseYaw) * baseSign;
+  robot.rotation.y = robotMapYawRad(data);
   panNode.rotation.y = deg(headPan) * panSign;
   tiltNode.rotation.x = deg(headPitch) * tiltSign;
 

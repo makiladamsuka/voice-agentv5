@@ -173,6 +173,7 @@ class TofState:
         self.base_busy = False
         self.stationary = False
         self.map_yaw_deg = 0.0
+        self.viz_base_yaw_deg = 0.0
         self.disagreement_deg = 0.0
         self.encoder_count_delta = 0
         self.imu_online = False
@@ -253,6 +254,7 @@ class TofState:
         from_home_enc_deg: float | None = None,
         from_home_imu_deg: float | None = None,
         map_yaw_deg: float | None = None,
+        viz_base_yaw_deg: float | None = None,
         disagreement_deg: float | None = None,
         encoder_count_delta: int | None = None,
         imu_online: bool | None = None,
@@ -299,6 +301,8 @@ class TofState:
                 self.from_home_imu_deg = float(from_home_imu_deg)
             if map_yaw_deg is not None:
                 self.map_yaw_deg = float(map_yaw_deg)
+            if viz_base_yaw_deg is not None:
+                self.viz_base_yaw_deg = float(viz_base_yaw_deg)
             if disagreement_deg is not None:
                 self.disagreement_deg = float(disagreement_deg)
             if encoder_count_delta is not None:
@@ -410,7 +414,8 @@ class TofState:
                 "home_locked": self.home_locked,
                 "base_busy": self.base_busy,
                 "stationary": self.stationary,
-                "map_yaw_deg": self.from_home_imu_deg,
+                "map_yaw_deg": self.map_yaw_deg,
+                "viz_base_yaw_deg": self.viz_base_yaw_deg,
                 "disagreement_deg": self.disagreement_deg,
                 "encoder_count_delta": self.encoder_count_delta,
                 "imu_online": self.imu_online,

@@ -157,8 +157,9 @@ class TalkGestureService:
         # Use longer duration for frame timing
         frame_duration = max(vertical_duration, horizontal_duration)
         
-        poll_interval = 0.01  # 100 Hz for smooth continuous motion
+        poll_interval = 0.02  # 50 Hz - reduced from 100Hz for better performance
         start_time = time.time()
+        speaking_check_counter = 0  # Check speaking flag every 5 iterations
         
         while True:
             elapsed = time.time() - start_time
@@ -187,9 +188,12 @@ class TalkGestureService:
                 arm_a3=new_a3,
             )
             
-            # Check if agent stopped speaking
-            if not read_speaking_flag():
-                break
+            # Check if agent stopped speaking (only every 5th iteration to reduce overhead)
+            speaking_check_counter += 1
+            if speaking_check_counter >= 5:
+                if not read_speaking_flag():
+                    break
+                speaking_check_counter = 0
             
             time.sleep(poll_interval)
         
@@ -258,8 +262,8 @@ class TalkGestureService:
             # Apply the pose with smooth interpolation (different speeds for vertical/horizontal)
             self._apply_pose_smooth(pose, self.pose_duration)
             
-            # Random wait time between poses (1-2 seconds)
-            wait_time = random.uniform(1.0, 2.0)
+            # Random wait time between poses (2-3 seconds) - increased for better performance
+            wait_time = random.uniform(2.0, 3.0)
             wait_start = time.time()
             
             # Wait while checking if speaking continues

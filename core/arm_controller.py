@@ -196,15 +196,31 @@ class ArmController:
             greeting_active = self._update_greeting(now)
 
             # Skip base lean accumulation during bye wave or greeting
-            if self.bb.read("bye_wave_active")["bye_wave_active"] or greeting_active:
-                # During greeting, use faster smoothing
-                smooth_hz = GREETING_SMOOTH_HZ if greeting_active else self.blend_hz
+            bye_wave_active = self.bb.read("bye_wave_active")["bye_wave_active"]
+
+            if bye_wave_active:
+                # ByeWaveService owns arm_a0..arm_a3 while playing — do NOT publish
+                # here or we will fight the animation thread and cause toggling jitter.
+                # Just track what the animation is writing so we have a sensible
+                # starting point when it finishes.
+                current_arm = self.bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
+                self._current[0] = float(current_arm["arm_a0"])
+                self._current[1] = float(current_arm["arm_a1"])
+                self._current[2] = float(current_arm["arm_a2"])
+                self._current[3] = float(current_arm["arm_a3"])
+                # Also keep _target in sync so the resume transition is smooth.
+                self._target[:] = list(self._current)
+                time.sleep(loop_delay)
+                continue
+
+            if greeting_active:
+                # During greeting, blend smoothly toward greeting pose
                 for i in range(4):
                     self._current[i] = smooth_toward(
                         self._current[i],
                         self._target[i],
                         loop_delay,
-                        smooth_hz=smooth_hz,
+                        smooth_hz=GREETING_SMOOTH_HZ,
                         lo=-360.0,
                         hi=360.0,
                     )

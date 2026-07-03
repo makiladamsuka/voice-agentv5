@@ -328,7 +328,7 @@ face_greeting:
   min_face_area_ratio: 0.008
 
 face_greeting_arm:
-  enabled: true
+  enabled: fasle
   memory_timeout_minutes: 30.0   # Remember faces for 30 minutes  
   min_face_area_ratio: 0.012     # Minimum face size to trigger greeting
   hold_sec: 1.5                  # Face must be visible this long before greeting (longer = more stable)

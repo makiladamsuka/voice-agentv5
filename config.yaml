@@ -318,8 +318,8 @@ bye_wave:
   cooldown_sec: 10.0
   max_hands: 2
   presets_path: "tests/arm_pose_presets.json"
-  vertical_speed: 0.4        # Bye wave vertical speed (slower = less conflict, 0.4 = very slow and smooth)
-  horizontal_speed: 0.3      # Bye wave horizontal speed  
+  vertical_speed: 0.25       # Bye wave vertical speed (VERY SLOW - 0.25 = 4x slower than normal)
+  horizontal_speed: 0.2      # Bye wave horizontal speed (VERY SLOW)
   smoothness: 3.0            # Bye wave easing smoothness
 
 face_greeting:

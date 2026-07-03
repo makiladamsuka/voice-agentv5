@@ -726,6 +726,8 @@ class ByeWaveService:
         self._max_hands = int(bw_cfg.get("max_hands", 2))
         self._mjpeg_host = str(bw_cfg.get("host", "0.0.0.0"))
         self._mjpeg_port = int(bw_cfg.get("port", 8000))
+        # Hand gesture detection control (set false to disable physical hand wave detection)
+        self._hand_gesture_enabled = bool(bw_cfg.get("hand_gesture_enabled", True))
         # FaceTracker swaps R/B when stream_swap_rb=true; undo that for CV/MediaPipe
         self._swap_rb: bool = bool(cam_cfg.get("stream_swap_rb", True))
         
@@ -808,6 +810,9 @@ class ByeWaveService:
         last_frame_token = -1
 
         print("[ByeWaveService] Running -- bring your hand near your face to trigger a bye animation.")
+        if not self._hand_gesture_enabled:
+            print("[ByeWaveService] NOTE: Hand gesture detection is DISABLED (hand_gesture_enabled: false)")
+            print("[ByeWaveService]       Only voice commands will trigger bye animations.")
 
         while self._bb.read("running")["running"]:
             raw = self._bb.read("stream_frame")["stream_frame"]
@@ -840,7 +845,10 @@ class ByeWaveService:
                 )
 
             cooldown_until = self._bb.read("bye_wave_cooldown_until")["bye_wave_cooldown_until"]
-            waving_detector.process(detections, now, cooldown_until, frame.shape)
+            
+            # Only process hand gestures if hand_gesture_enabled is True
+            if self._hand_gesture_enabled:
+                waving_detector.process(detections, now, cooldown_until, frame.shape)
 
             # Read arm positions and animation state for overlay
             arm_data = self._bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")

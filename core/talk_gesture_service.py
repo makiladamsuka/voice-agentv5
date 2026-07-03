@@ -14,6 +14,27 @@ import time
 from core.blackboard import Blackboard
 from voice.speaking_flag import read_speaking_flag
 
+# Module-level reference to active service instance
+_active_talk_gesture_service: "TalkGestureService | None" = None
+
+
+def get_active_service() -> "TalkGestureService | None":
+    """Get the currently running TalkGestureService instance."""
+    return _active_talk_gesture_service
+
+
+def return_to_home_position() -> None:
+    """Module-level function to return arms to home position.
+    
+    Can be called from anywhere (e.g., voice service) to reset arms.
+    Safe to call even if service is not running.
+    """
+    global _active_talk_gesture_service
+    if _active_talk_gesture_service is not None:
+        _active_talk_gesture_service.return_home_now()
+    else:
+        print("[TalkGesture] No active service - cannot return to home")
+
 
 class TalkGestureService:
     """Animates arms with talk poses while voice agent speaks.
@@ -113,6 +134,14 @@ class TalkGestureService:
             self._apply_pose_smooth(home_pose, self.pose_duration)
         else:
             print("[TalkGesture] WARNING: Home pose not found in presets")
+    
+    def return_home_now(self) -> None:
+        """Public method to immediately return arms to home position.
+        
+        Can be called externally (e.g., when voice session ends) to 
+        reset arm position to home regardless of current state.
+        """
+        self._return_to_home()
 
     def _apply_pose(self, pose: dict) -> None:
         """Apply a single pose to the arms via Blackboard."""
@@ -217,10 +246,14 @@ class TalkGestureService:
 
     def run(self) -> None:
         """Main loop: continuously switch between random talk poses while agent speaks."""
+        global _active_talk_gesture_service
+        _active_talk_gesture_service = self  # Register this instance globally
+        
         print("[TalkGesture] Service started")
         
         if not self._talk_pose_keys:
             print("[TalkGesture] No talk poses available - service disabled")
+            _active_talk_gesture_service = None
             return
         
         last_speaking = False
@@ -273,4 +306,5 @@ class TalkGestureService:
                     break
                 time.sleep(self.poll_interval)
         
+        _active_talk_gesture_service = None  # Unregister on exit
         print("[TalkGesture] Service stopped")

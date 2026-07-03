@@ -529,6 +529,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         _session_live = False
         _active_session = None
         write_speaking_flag(False)
+        
+        # Return arms to home position at end of voice session
+        try:
+            from core.talk_gesture_service import return_to_home_position
+            return_to_home_position()
+        except Exception as e:
+            print(f"[VoiceService] Failed to return arms to home: {e}")
+        
         if _bb is not None:
             _bb.write(
                 voice_session_active=False,

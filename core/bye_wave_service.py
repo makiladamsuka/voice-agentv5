@@ -500,7 +500,7 @@ class _ByeSequenceRunner:
         
         Uses high-frequency updates (100Hz) for continuous smooth motion.
         """
-        base_frame_duration = 0.5  # Base time to reach each frame (increased from 0.25 for slower movement)
+        base_frame_duration = 0.3  # Base time to reach each frame (0.3s = continuous smooth motion without long holds)
         poll_interval = 0.01  # 100 Hz update rate for smoother motion (was 0.02 = 50Hz)
         
         # Write animation state to Blackboard

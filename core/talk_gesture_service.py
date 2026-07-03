@@ -42,6 +42,7 @@ class TalkGestureService:
         poll_interval: float = 0.05,
         vertical_speed: float = 1.0,
         horizontal_speed: float = 1.5,
+        return_home_delay: float = 3.0,  # Delay before returning home after speaking stops
     ) -> None:
         self.bb = bb
         self.presets_path = presets_path
@@ -49,9 +50,11 @@ class TalkGestureService:
         self.poll_interval = poll_interval
         self.vertical_speed = vertical_speed  # Speed for a0, a1 (up/down)
         self.horizontal_speed = horizontal_speed  # Speed for a2, a3 (swap)
+        self.return_home_delay = return_home_delay  # Wait time before returning home
         self._talk_pose_keys: list[str] = []
         self._poses: dict = {}
         self._last_pose_key: str | None = None  # Track last played pose
+        self._speaking_stopped_time: float | None = None  # Track when speaking stopped
         
         # Load talk poses on init
         self._load_talk_poses()
@@ -222,15 +225,23 @@ class TalkGestureService:
             # Read current agent_speaking state from file
             is_speaking = read_speaking_flag()
             
-            # Log state changes
+            # Log state changes and track when speaking stopped
             if is_speaking and not last_speaking:
                 print("[TalkGesture] Agent started speaking")
+                self._speaking_stopped_time = None  # Reset the timer
             elif not is_speaking and last_speaking:
-                print("[TalkGesture] Agent stopped speaking")
-                # Return to home position when speaking stops
-                self._return_to_home()
+                print("[TalkGesture] Agent stopped speaking - waiting before returning home")
+                self._speaking_stopped_time = time.time()  # Start the delay timer
             
             last_speaking = is_speaking
+            
+            # Check if we should return to home after delay
+            if not is_speaking and self._speaking_stopped_time is not None:
+                elapsed_since_stop = time.time() - self._speaking_stopped_time
+                if elapsed_since_stop >= self.return_home_delay:
+                    print(f"[TalkGesture] Returning to home position after {self.return_home_delay}s delay")
+                    self._return_to_home()
+                    self._speaking_stopped_time = None  # Reset timer after returning home
             
             # Only play poses while speaking
             if not is_speaking:

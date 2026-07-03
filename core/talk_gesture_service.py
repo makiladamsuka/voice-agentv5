@@ -188,7 +188,6 @@ class TalkGestureService:
         
         poll_interval = 0.02  # 50 Hz - reduced from 100Hz for better performance
         start_time = time.time()
-        speaking_check_counter = 0  # Check speaking flag every 5 iterations
         
         while True:
             elapsed = time.time() - start_time
@@ -216,13 +215,6 @@ class TalkGestureService:
                 arm_a2=new_a2,
                 arm_a3=new_a3,
             )
-            
-            # Check if agent stopped speaking (only every 5th iteration to reduce overhead)
-            speaking_check_counter += 1
-            if speaking_check_counter >= 5:
-                if not read_speaking_flag():
-                    break
-                speaking_check_counter = 0
             
             time.sleep(poll_interval)
         
@@ -295,15 +287,12 @@ class TalkGestureService:
             # Apply the pose with smooth interpolation (different speeds for vertical/horizontal)
             self._apply_pose_smooth(pose, self.pose_duration)
             
-            # Random wait time between poses (2-3 seconds) - increased for better performance
+            # Random wait time between poses (2-3 seconds) - hold pose even if speaking stops
             wait_time = random.uniform(2.0, 3.0)
             wait_start = time.time()
             
-            # Wait while checking if speaking continues
+            # Hold pose for full duration - don't break early when speaking stops
             while time.time() - wait_start < wait_time:
-                # If agent stops speaking during wait, break immediately
-                if not read_speaking_flag():
-                    break
                 time.sleep(self.poll_interval)
         
         _active_talk_gesture_service = None  # Unregister on exit

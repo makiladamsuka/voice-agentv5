@@ -729,10 +729,11 @@ class ByeWaveService:
         # FaceTracker swaps R/B when stream_swap_rb=true; undo that for CV/MediaPipe
         self._swap_rb: bool = bool(cam_cfg.get("stream_swap_rb", True))
         
-        # Read dual-speed settings from talk_gesture config
-        self._vertical_speed = float(talk_cfg.get("vertical_speed", 0.8))
-        self._horizontal_speed = float(talk_cfg.get("horizontal_speed", 1.5))
-        self._smoothness = float(talk_cfg.get("smoothness", 3.0))
+        # Read dual-speed settings from bye_wave config (separate from talk_gesture)
+        # Fallback to talk_gesture config if not specified in bye_wave section
+        self._vertical_speed = float(bw_cfg.get("vertical_speed", talk_cfg.get("vertical_speed", 0.8)))
+        self._horizontal_speed = float(bw_cfg.get("horizontal_speed", talk_cfg.get("horizontal_speed", 1.5)))
+        self._smoothness = float(bw_cfg.get("smoothness", talk_cfg.get("smoothness", 3.0)))
 
         app_dir = pathlib.Path(__file__).resolve().parent.parent
         raw = bw_cfg.get("presets_path", "tests/arm_pose_presets.json")

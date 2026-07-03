@@ -317,6 +317,9 @@ bye_wave:
   cooldown_sec: 10.0
   max_hands: 2
   presets_path: "tests/arm_pose_presets.json"
+  vertical_speed: 0.8        # Bye wave vertical speed (keep at 0.8 for normal speed)
+  horizontal_speed: 1.5      # Bye wave horizontal speed  
+  smoothness: 3.0            # Bye wave easing smoothness
 
 face_greeting:
   enabled: true
@@ -373,7 +376,7 @@ talk_gesture:
   enabled: true              # Auto-enabled when voice + arms are both enabled
   pose_duration: 0.4         # Seconds to transition between poses
   poll_interval: 0.02        # Seconds between updates (50 Hz)
-  vertical_speed: 0.8        # Speed multiplier for a0, a1 (shoulder/elbow up/down)
+  vertical_speed: 0.5        # Speed multiplier for a0, a1 (shoulder/elbow up/down) - SLOWER for more graceful talking gestures
   horizontal_speed: 0.5      # Speed multiplier for a2, a3 (wrist/hand swap side-to-side) - reduced from 1.5 to prevent frame skipping in bye animations
   smoothness: 5.0         
   

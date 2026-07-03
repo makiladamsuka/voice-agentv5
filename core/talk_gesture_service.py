@@ -101,6 +101,15 @@ class TalkGestureService:
         
         # Pick randomly from remaining poses
         return random.choice(available_poses)
+    
+    def _return_to_home(self) -> None:
+        """Return arms to home position smoothly."""
+        if "home" in self._poses:
+            home_pose = self._poses["home"]
+            print("[TalkGesture] Returning to home position")
+            self._apply_pose_smooth(home_pose, self.pose_duration)
+        else:
+            print("[TalkGesture] WARNING: Home pose not found in presets")
 
     def _apply_pose(self, pose: dict) -> None:
         """Apply a single pose to the arms via Blackboard."""
@@ -218,6 +227,8 @@ class TalkGestureService:
                 print("[TalkGesture] Agent started speaking")
             elif not is_speaking and last_speaking:
                 print("[TalkGesture] Agent stopped speaking")
+                # Return to home position when speaking stops
+                self._return_to_home()
             
             last_speaking = is_speaking
             
@@ -236,6 +247,15 @@ class TalkGestureService:
             # Apply the pose with smooth interpolation (different speeds for vertical/horizontal)
             self._apply_pose_smooth(pose, self.pose_duration)
             
-            # No additional hold needed - interpolation takes pose_duration
+            # Random wait time between poses (1-2 seconds)
+            wait_time = random.uniform(1.0, 2.0)
+            wait_start = time.time()
+            
+            # Wait while checking if speaking continues
+            while time.time() - wait_start < wait_time:
+                # If agent stops speaking during wait, break immediately
+                if not read_speaking_flag():
+                    break
+                time.sleep(self.poll_interval)
         
         print("[TalkGesture] Service stopped")

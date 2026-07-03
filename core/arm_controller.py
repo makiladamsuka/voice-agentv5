@@ -129,20 +129,33 @@ class ArmController:
         clamped = self._clamp_accum(*pose)
         self._target[:] = list(clamped)
 
+    def _clamp_greeting(self, a0: float, a1: float, a2: float, a3: float) -> tuple[float, float, float, float]:
+        """Clamp a greeting/hi pose through the safety envelope only.
+
+        Intentionally does NOT apply the _raise_mid half-range limiter that
+        _clamp_accum uses for the lean accumulator — greeting poses like hi1/hi2
+        require a1 values below raise_mid that would otherwise be silently
+        clipped, preventing the arm from ever reaching the recorded position.
+        """
+        return self.envelope.clamp_arms(a0, a1, a2, a3)
+
     def _start_greeting(self, pose_name: str) -> None:
         """Start a greeting pose sequence."""
         pose = self._presets.get(pose_name)
         if pose is None:
             print(f"[ArmController] Warning: greeting pose '{pose_name}' not found, using home")
             pose = self._home
-        
+
+        # Clamp through safety envelope only — NOT the lean raise-mid limiter
+        pose = self._clamp_greeting(*pose)
+
         # Save current target to return to after greeting
         self._pre_greeting_target = list(self._target)
-        
+
         # Set greeting pose as target
         self._greeting_pose = pose
         self._greeting_start_time = time.time()
-        
+
         print(f"[ArmController] Starting greeting: {pose_name} → {pose}")
         self.bb.write(arm_greeting_active=True)
 
@@ -150,17 +163,21 @@ class ArmController:
         """Update greeting state. Returns True if greeting is active."""
         if self._greeting_start_time is None:
             return False
-        
+
         elapsed = now - self._greeting_start_time
-        
+
         if elapsed < GREETING_DURATION_SEC:
-            # Still greeting - set target to greeting pose
+            # Still greeting — pin target to greeting pose every tick so
+            # any external writes to _target don't drift us away
             if self._greeting_pose is not None:
                 self._target[:] = list(self._greeting_pose)
             return True
         else:
-            # Greeting complete - return to pre-greeting pose
+            # Greeting complete — snap _current to the pre-greeting target
+            # immediately so the normal blend path resumes from the right
+            # position rather than from wherever smooth_toward left off.
             self._target[:] = list(self._pre_greeting_target)
+            self._current[:] = list(self._pre_greeting_target)
             self._greeting_start_time = None
             self._greeting_pose = None
             print("[ArmController] Greeting complete, returning to previous pose")
@@ -214,7 +231,9 @@ class ArmController:
                 continue
 
             if greeting_active:
-                # During greeting, blend smoothly toward greeting pose
+                # During greeting, blend smoothly toward the greeting target.
+                # Use envelope-only clamp (not the lean raise-mid limiter) so
+                # hi poses with low a1 values actually reach their target.
                 for i in range(4):
                     self._current[i] = smooth_toward(
                         self._current[i],
@@ -224,7 +243,7 @@ class ArmController:
                         lo=-360.0,
                         hi=360.0,
                     )
-                pose = self._clamp_accum(*self._current)
+                pose = self._clamp_greeting(*self._current)
                 self._current[:] = list(pose)
                 self._publish_pose(pose)
                 time.sleep(loop_delay)

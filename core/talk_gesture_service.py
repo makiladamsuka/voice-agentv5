@@ -251,6 +251,12 @@ class TalkGestureService:
         last_speaking = False
         
         while self.bb.read("running")["running"]:
+            # Check if bye wave is active - pause talk gestures during bye animations
+            bye_wave_active = self.bb.read("bye_wave_active")["bye_wave_active"]
+            if bye_wave_active:
+                time.sleep(self.poll_interval)
+                continue
+            
             # Read current agent_speaking state from file
             is_speaking = read_speaking_flag()
             

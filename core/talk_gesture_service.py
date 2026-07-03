@@ -51,6 +51,7 @@ class TalkGestureService:
         self.horizontal_speed = horizontal_speed  # Speed for a2, a3 (swap)
         self._talk_pose_keys: list[str] = []
         self._poses: dict = {}
+        self._last_pose_key: str | None = None  # Track last played pose
         
         # Load talk poses on init
         self._load_talk_poses()
@@ -78,6 +79,28 @@ class TalkGestureService:
         except Exception as exc:
             print(f"[TalkGesture] ERROR loading talk poses: {exc}")
             self._talk_pose_keys = []
+
+    def _get_next_random_pose(self) -> str:
+        """Select a random pose key that's different from the last played pose.
+        
+        Returns
+        -------
+        str
+            A random pose key from available talk poses, guaranteed to be
+            different from the last played pose (if there are 2+ poses available).
+        """
+        # If only one pose available, return it
+        if len(self._talk_pose_keys) <= 1:
+            return self._talk_pose_keys[0] if self._talk_pose_keys else ""
+        
+        # Filter out the last played pose
+        available_poses = [
+            key for key in self._talk_pose_keys 
+            if key != self._last_pose_key
+        ]
+        
+        # Pick randomly from remaining poses
+        return random.choice(available_poses)
 
     def _apply_pose(self, pose: dict) -> None:
         """Apply a single pose to the arms via Blackboard."""
@@ -203,9 +226,12 @@ class TalkGestureService:
                 time.sleep(self.poll_interval)
                 continue
             
-            # Pick a random talk pose
-            pose_key = random.choice(self._talk_pose_keys)
+            # Pick a random talk pose (different from last one)
+            pose_key = self._get_next_random_pose()
             pose = self._poses[pose_key]
+            
+            # Track this pose as the last played
+            self._last_pose_key = pose_key
             
             # Apply the pose with smooth interpolation (different speeds for vertical/horizontal)
             self._apply_pose_smooth(pose, self.pose_duration)

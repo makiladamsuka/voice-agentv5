@@ -318,7 +318,7 @@ bye_wave:
   max_hands: 2
   presets_path: "tests/arm_pose_presets.json"
   vertical_speed: 0.8        # Bye wave vertical speed (keep at 0.8 for normal speed)
-  horizontal_speed: 1.5      # Bye wave horizontal speed  
+  horizontal_speed: 0.3      # Bye wave horizontal speed  
   smoothness: 3.0            # Bye wave easing smoothness
 
 face_greeting:

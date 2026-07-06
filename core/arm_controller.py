@@ -249,6 +249,20 @@ class ArmController:
                 time.sleep(loop_delay)
                 continue
 
+            # Yield to TalkGestureService while agent is speaking — same pattern
+            # as bye_wave: passively track BB values so we resume cleanly.
+            agent_speaking = self.bb.read("agent_speaking").get("agent_speaking", False)
+            if agent_speaking:
+                current_arm = self.bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
+                self._current[0] = float(current_arm["arm_a0"])
+                self._current[1] = float(current_arm["arm_a1"])
+                self._current[2] = float(current_arm["arm_a2"])
+                self._current[3] = float(current_arm["arm_a3"])
+                self._target[:] = list(self._current)
+                self._velocity = [0.0, 0.0, 0.0, 0.0]
+                time.sleep(loop_delay)
+                continue
+
             if greeting_active:
                 # During greeting, blend smoothly toward the greeting target
                 # using velocity-based accel/decel for natural motion.

@@ -293,8 +293,8 @@ class TalkGestureService:
             # Apply the pose with smooth interpolation (different speeds for vertical/horizontal)
             self._apply_pose_smooth(pose, self.pose_duration)
             
-            # Random wait time between poses (2-3 seconds) - hold pose even if speaking stops
-            wait_time = random.uniform(2.0, 3.0)
+            # Random wait time between poses (1-2 seconds) - hold pose even if speaking stops
+            wait_time = random.uniform(1.0, 2.0)
             wait_start = time.time()
             
             # Hold pose for full duration - don't break early when speaking stops

@@ -1,4 +1,4 @@
-"""FaceTracker: camera + YuNet face detection + YOLO body detection.
+"""FaceTracker: camera + YuNet face detection (face-only tracking).
 
 Writes to BB:
     face_detected, face_norm_x, face_norm_y, face_roll_deg,
@@ -114,7 +114,7 @@ class MultiFaceAttention:
 # ── FaceTracker ───────────────────────────────────────────────────────────────
 
 class FaceTracker:
-    """Camera + face/body detection — publishes vision fields to the Blackboard."""
+    """Camera + face detection — publishes vision fields to the Blackboard."""
 
     def __init__(self, bb: Blackboard, config_path: Path = DEFAULT_CONFIG_PATH) -> None:
         self.bb = bb
@@ -127,15 +127,6 @@ class FaceTracker:
         inv = _cfg(prox, "investigate", default={}) or {}
 
         self.face_model = str(APP_DIR / _cfg(cam, "face_model_path", default="face_detection_yunet_2023mar.onnx"))
-        self.body_model = str(APP_DIR / _cfg(cam, "body_model_path", default="yolov8n.onnx"))
-        self.body_enabled = bool(_cfg(cam, "body_enabled", default=True))
-        self.body_conf = float(_cfg(cam, "body_confidence_threshold", default=0.35))
-        self.body_nms = float(_cfg(cam, "body_nms_threshold", default=0.45))
-        self.body_input = int(_cfg(cam, "body_input_size", default=640))
-        self.body_stride = int(_cfg(cam, "body_detect_stride", default=3))
-        self.body_alpha = float(_cfg(cam, "body_track_servo_alpha", default=0.30))
-        self.body_aim_y = float(_cfg(cam, "body_aim_y_ratio", default=0.22))
-        self.body_cache_sec = float(_cfg(cam, "body_cache_sec", default=0.75))
         self.main_res = tuple(_cfg(cam, "main_res", default=[1920, 1080]))
         self.detect_res = tuple(_cfg(cam, "detect_res", default=[1280, 720]))
         self.stream_res = tuple(_cfg(stream, "res", default=[320, 180]))
@@ -153,7 +144,6 @@ class FaceTracker:
         self.pm_hfov = float(pm.get("camera_hfov_deg", 62.0))
         self.pm_max = int(pm.get("max_items", 6))
         self.pm_face_conf = float(pm.get("face_confidence", 1.0))
-        self.pm_body_conf = float(pm.get("body_confidence", 0.65))
 
         # Last-seen-at-edge search
         self.lss_enabled = bool(lss.get("enabled", True))
@@ -169,11 +159,6 @@ class FaceTracker:
         # Internals
         self._attention = MultiFaceAttention()
         self._squint_until = 0.0
-        self._frame_index = 0
-        self._body_norm_x = 0.0
-        self._body_norm_y = 0.0
-        self._body_last_ts = 0.0
-        self._body_box: tuple[float, float, float, float] | None = None
 
         self._person_memory: Optional[PersonMemory] = None
         if self.pm_enabled:
@@ -232,23 +217,6 @@ class FaceTracker:
             return d
         except Exception as e:
             print(f"[FaceTracker] Face detector init failed: {e}")
-            return None
-
-    def _init_body(self):
-        if not self.body_enabled:
-            return None
-        try:
-            from lib.person_detector import PersonDetector
-            pd = PersonDetector(
-                self.body_model,
-                confidence_threshold=self.body_conf,
-                nms_threshold=self.body_nms,
-                input_size=self.body_input,
-            )
-            print("[FaceTracker] YOLO body detector initialized.")
-            return pd
-        except Exception as e:
-            print(f"[FaceTracker] Body detector disabled: {e}")
             return None
 
     # ── Geometry helpers ──────────────────────────────────────────────────────
@@ -367,30 +335,20 @@ class FaceTracker:
 
         if state.get("prox_investigate_phase") not in ("scan", "turn", "done"):
             return None
-        if not face_detected and not body_detected:
+        if not face_detected:
             return None
 
         inv_yaw = float(state.get("prox_investigate_yaw", 0.0))
-        kind = "face" if face_detected else "body"
-        if face_detected:
-            self._person_memory.observe(
-                norm_x=face_norm_x,
-                norm_y=face_norm_y,
-                base_world_yaw_deg=float(state["base_world_yaw_deg"]),
-                pan_mech_deg=float(state["servo_pan"]) - 80.0,
-                kind=kind,
-                confidence=self.pm_face_conf if face_detected else self.pm_body_conf,
-                source="prox_verify",
-                now=now,
-            )
-        else:
-            self._person_memory.observe_at_yaw(
-                world_yaw_deg=inv_yaw,
-                kind=kind,
-                source="prox_verify",
-                confidence=self.pm_body_conf,
-                now=now,
-            )
+        self._person_memory.observe(
+            norm_x=face_norm_x,
+            norm_y=face_norm_y,
+            base_world_yaw_deg=float(state["base_world_yaw_deg"]),
+            pan_mech_deg=float(state["servo_pan"]) - 80.0,
+            kind="face",
+            confidence=self.pm_face_conf,
+            source="prox_verify",
+            now=now,
+        )
         if self._motion_memory is not None:
             self._motion_memory.mark_verified(inv_yaw, now=now)
         self.bb.write(
@@ -405,7 +363,6 @@ class FaceTracker:
     def run(self) -> None:
         cam = self._init_camera()
         detector = self._init_detector()
-        body_detector = self._init_body()
 
         if cam is None or detector is None:
             print("[FaceTracker] Cannot run: camera or detector unavailable.")
@@ -435,7 +392,6 @@ class FaceTracker:
             detector.setInputSize(self.detect_res)
 
             _, faces = detector.detect(frame)
-            self._frame_index += 1
 
             face_detected = False
             face_norm_x = 0.0
@@ -447,39 +403,6 @@ class FaceTracker:
             body_detected = False
             track_kind = "none"
             active_face_index = -1
-
-            # ── Body detection (lower frame rate) ──────────────────────────
-            run_body = (
-                body_detector is not None
-                and (faces is None or len(faces) == 0)
-                and (self._frame_index % self.body_stride == 0)
-            )
-            if run_body:
-                try:
-                    body_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    det = body_detector.detect_largest(body_bgr)
-                    if det is not None:
-                        bx, by, bw, bh = det.x, det.y, det.w, det.h
-                        cx_raw = (bx + bw * 0.5) / self.detect_res[0]
-                        cy_raw = (by + bh * self.body_aim_y) / self.detect_res[1]
-                        new_bx = cx_raw * 2.0 - 1.0
-                        new_by = cy_raw * 2.0 - 1.0
-                        self._body_norm_x += (new_bx - self._body_norm_x) * self.body_alpha
-                        self._body_norm_y += (new_by - self._body_norm_y) * self.body_alpha
-                        self._body_last_ts = now
-                        self._body_box = (bx, by, bw, bh)
-                except Exception:
-                    pass
-
-            body_fresh = (now - self._body_last_ts) < self.body_cache_sec
-            if body_fresh and (faces is None or len(faces) == 0):
-                body_detected = True
-                face_norm_x = self._body_norm_x
-                face_norm_y = self._body_norm_y
-                track_kind = "body"
-                self._update_memory(face_norm_x, face_norm_y, "body", now, confidence=0.65)
-            elif not body_fresh:
-                self._body_box = None
 
             # ── Face detection ──────────────────────────────────────────────
             if faces is not None and len(faces) > 0:
@@ -549,12 +472,7 @@ class FaceTracker:
 
             # ── Last-seen-at-edge tracking ──────────────────────────────────
             last_seen_yaw = None
-            if (
-                self.lss_enabled
-                and not face_detected
-                and not body_detected
-                and self._person_memory is not None
-            ):
+            if self.lss_enabled and not face_detected and self._person_memory is not None:
                 state = self.bb.read("base_world_yaw_deg")
                 world_yaw = state["base_world_yaw_deg"]
                 best = self._person_memory.best_for_current_view(current_world_yaw_deg=world_yaw, now=now)
@@ -587,8 +505,9 @@ class FaceTracker:
                 prox_verified_priority_yaw=verified_yaw,
             )
 
-            # ── Publish stream frame ─────────────────────────────────────────
-            if self.stream_enabled:
+            # ── Publish stream frame (only when a client is watching) ───────
+            stream_viewers = int(self.bb.read("stream_viewers")["stream_viewers"])
+            if self.stream_enabled and stream_viewers > 0:
                 try:
                     stream_frame = cv2.resize(frame, self.stream_res, interpolation=cv2.INTER_LINEAR)
                     if self.swap_rb:
@@ -646,32 +565,6 @@ class FaceTracker:
                         cx_s = int((face_norm_x + 1.0) * 0.5 * self.stream_res[0])
                         cy_s = int((face_norm_y + 1.0) * 0.5 * self.stream_res[1])
                         cv2.circle(stream_frame, (cx_s, cy_s), 6, (0, 255, 255), 2)
-
-                    if body_detected and self._body_box is not None:
-                        bx, by, bw, bh = self._body_box
-                        bx_s = int(bx * scale_x)
-                        by_s = int(by * scale_y)
-                        bw_s = int(bw * scale_x)
-                        bh_s = int(bh * scale_y)
-                        aim_x_s = int((face_norm_x + 1.0) * 0.5 * self.stream_res[0])
-                        aim_y_s = int((face_norm_y + 1.0) * 0.5 * self.stream_res[1])
-                        cv2.rectangle(
-                            stream_frame,
-                            (bx_s, by_s),
-                            (bx_s + bw_s, by_s + bh_s),
-                            (255, 120, 0),
-                            2,
-                        )
-                        cv2.circle(stream_frame, (aim_x_s, aim_y_s), 6, (255, 120, 0), 2)
-                        cv2.putText(
-                            stream_frame,
-                            "body",
-                            (bx_s, max(12, by_s - 4)),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.4,
-                            (255, 120, 0),
-                            1,
-                        )
 
                     self.bb.write(stream_frame=stream_frame)
                 except Exception:

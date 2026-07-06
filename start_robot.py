@@ -1,5 +1,6 @@
 """Main entry point for the modular Voice Agent V5."""
 
+import os
 import signal
 import sys
 import threading
@@ -91,7 +92,15 @@ def _print_yaw_decomposition(bb: Blackboard) -> None:
 
 
 def _print_debug_viz_banner(debug_viz_cfg: dict) -> None:
-    if not debug_viz_cfg.get("enabled", True):
+    if not debug_viz_cfg.get("enabled", True) and os.environ.get("DEBUG_VIZ", "").strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return
+    if not _should_start_debug_viz(debug_viz_cfg):
+        port = int(debug_viz_cfg.get("port", 8082))
+        print(f"[Bootstrap] Debug viz off (enable with DEBUG_VIZ=1 → port {port})")
         return
     host = str(debug_viz_cfg.get("host", "0.0.0.0"))
     port = int(debug_viz_cfg.get("port", 8082))
@@ -337,8 +346,34 @@ def _shutdown_home_base(
             pass
 
 
+def _resolve_config_path() -> Path:
+    """Config file: --config path, CONFIG_PATH env, or config.yaml."""
+    import argparse
+
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--config", type=str, default=None)
+    args, _ = parser.parse_known_args()
+    raw = args.config or os.environ.get("CONFIG_PATH", "").strip()
+    if not raw:
+        return DEFAULT_CONFIG_PATH
+    path = Path(raw)
+    if not path.is_absolute():
+        path = APP_DIR / path
+    return path
+
+
+def _should_start_debug_viz(debug_viz_cfg: dict) -> bool:
+    force = os.environ.get("DEBUG_VIZ", "").strip().lower() in ("1", "true", "yes")
+    if force:
+        return True
+    if not debug_viz_cfg.get("enabled", True):
+        return False
+    return bool(debug_viz_cfg.get("auto_start", True))
+
+
 def main():
-    cfg = _load_yaml(DEFAULT_CONFIG_PATH)
+    config_path = _resolve_config_path()
+    cfg = _load_yaml(config_path)
     servo_cfg = cfg.get("servo", {}) or {}
     base_cfg = cfg.get("base", {}) or {}
     arms_cfg = cfg.get("arms", {}) or {}
@@ -353,6 +388,8 @@ def main():
     baud = int(servo_cfg.get("baud", 115200))
 
     print("=== Voice Agent V5 (Modular) ===")
+    if config_path != DEFAULT_CONFIG_PATH:
+        print(f"[Bootstrap] Config: {config_path}")
 
     eyes_cfg = cfg.get("eyes", {}) or {}
     default_eye_color = tuple(eyes_cfg.get("eye_color", [255, 255, 255]))
@@ -370,6 +407,7 @@ def main():
         debug_head_step_deg=float(debug_viz_cfg.get("head_step_deg", 5.0)),
         debug_live_tune=load_tune_defaults_from_config(cfg),
         debug_tune_seq=0,
+        stream_viewers=0,
     )
 
     port_label = port if port else "auto"
@@ -520,13 +558,18 @@ def main():
         def _serial_pump() -> None:
             while bb.read("running")["running"]:
                 link._poll_prox_lines()
-                time.sleep(0.008)
+                pending = False
+                try:
+                    pending = link._ser is not None and link._ser.in_waiting > 0
+                except Exception:
+                    pending = False
+                time.sleep(0.008 if pending else 0.025)
 
         threading.Thread(target=_serial_pump, name="SerialPump", daemon=True).start()
 
     # ── Phase 2: remaining services ───────────────────────────────────────────
     threads = [
-        threading.Thread(target=FaceTracker(bb).run, daemon=True, name="FaceTracker"),
+        threading.Thread(target=FaceTracker(bb, config_path=config_path).run, daemon=True, name="FaceTracker"),
         threading.Thread(target=ServoLoop(bb).run, daemon=True, name="ServoLoop"),
         threading.Thread(
             target=BaseController(bb, link, gate=base_gate).run,
@@ -558,7 +601,7 @@ def main():
 
         threads.append(
             threading.Thread(
-                target=FaceGreetingMonitor(bb, config_path=DEFAULT_CONFIG_PATH).run,
+                target=FaceGreetingMonitor(bb, config_path=config_path).run,
                 daemon=True,
                 name="FaceGreeting",
             )
@@ -571,7 +614,7 @@ def main():
 
         threads.append(
             threading.Thread(
-                target=FaceGreetingArmService(bb, config_path=DEFAULT_CONFIG_PATH).run,
+                target=FaceGreetingArmService(bb, config_path=config_path).run,
                 daemon=True,
                 name="FaceGreetingArm",
             )
@@ -600,7 +643,8 @@ def main():
             f"hand stream port {bye_wave_cfg.get('port', 8000)}."
         )
 
-    if debug_viz_cfg.get("enabled", True):
+    if _should_start_debug_viz(debug_viz_cfg):
+        stream_cfg = cfg.get("stream", {}) or {}
         threads.append(
             threading.Thread(
                 target=DebugDashboard(
@@ -610,7 +654,8 @@ def main():
                     servo_cfg=servo_cfg,
                     debug_viz_cfg=debug_viz_cfg,
                     base_cfg=base_cfg,
-                    config_path=DEFAULT_CONFIG_PATH,
+                    config_path=config_path,
+                    stream_cfg=stream_cfg,
                     tof_state=TOF_STATE,
                 ).run,
                 daemon=True,

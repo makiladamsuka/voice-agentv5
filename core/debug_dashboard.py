@@ -138,6 +138,13 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     config_path: Any
     dashboard_html: str
     tof_state: Any
+    stream_fps: float = 8.0
+    stream_jpeg_quality: int = 70
+
+    def _adjust_stream_viewers(self, delta: int) -> None:
+        state = self.bb.read("stream_viewers")
+        viewers = max(0, int(state.get("stream_viewers", 0)) + delta)
+        self.bb.write(stream_viewers=viewers)
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -258,16 +265,18 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
             self.end_headers()
 
+            self._adjust_stream_viewers(1)
+            frame_delay = 1.0 / max(1.0, float(self.stream_fps))
             try:
                 while self.bb.read("running")["running"]:
                     frame = self.bb.read("stream_frame")["stream_frame"]
                     if frame is None:
-                        time.sleep(0.05)
+                        time.sleep(frame_delay)
                         continue
 
                     img = Image.fromarray(frame)
                     buf = io.BytesIO()
-                    img.save(buf, format="JPEG", quality=65)
+                    img.save(buf, format="JPEG", quality=int(self.stream_jpeg_quality))
                     jpg = buf.getvalue()
 
                     self.wfile.write(b"--frame\r\n")
@@ -275,9 +284,11 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     self.wfile.write(f"Content-Length: {len(jpg)}\r\n\r\n".encode("utf-8"))
                     self.wfile.write(jpg)
                     self.wfile.write(b"\r\n")
-                    time.sleep(0.05)
+                    time.sleep(frame_delay)
             except (BrokenPipeError, ConnectionResetError):
                 return
+            finally:
+                self._adjust_stream_viewers(-1)
             return
 
         self.send_error(404)
@@ -302,6 +313,7 @@ class DebugDashboard:
         base_cfg: dict[str, Any] | None = None,
         config_path: Any = None,
         include_camera_stream: bool = True,
+        stream_cfg: dict[str, Any] | None = None,
         tof_state: Any = None,
     ) -> None:
         self.bb = bb
@@ -312,6 +324,7 @@ class DebugDashboard:
         self.base_cfg = base_cfg or {}
         self.config_path = config_path
         self.include_camera_stream = include_camera_stream
+        self.stream_cfg = stream_cfg or {}
         self.tof_state = tof_state
         self._http = None
 
@@ -332,6 +345,8 @@ class DebugDashboard:
                 "config_path": self.config_path,
                 "dashboard_html": dashboard_html,
                 "tof_state": self.tof_state,
+                "stream_fps": float(self.stream_cfg.get("fps", 8)),
+                "stream_jpeg_quality": int(self.stream_cfg.get("jpeg_quality", 70)),
             },
         )
         try:

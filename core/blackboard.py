@@ -32,6 +32,7 @@ class Blackboard:
     body_detected: bool = False
     track_kind: str = "none"       # "face"|"multi"|"body"|"none"
     stream_frame: Any = None       # latest numpy frame for MJPEG
+    stream_viewers: int = 0        # active MJPEG /stream clients (skip encode when 0)
 
     # ── Servo targets (written by ServoLoop) ─────────────────────────────────
     servo_pan: float = 80.0        # servo command degrees

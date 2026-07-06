@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 
 /** Boost LiveKit agent audio above HTMLMediaElement max (1.0) via Web Audio gain. */
-const OUTPUT_GAIN = 1.85;
+const OUTPUT_GAIN = 1.25;
 
 export function KioskAudioBoost() {
   useEffect(() => {

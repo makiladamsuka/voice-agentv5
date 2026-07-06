@@ -1,9 +1,10 @@
-# Voice Agent V5 isolated face tracking head config.
+# Voice Agent V5 — Pi kiosk profile (lower CPU/RAM than config.yaml)
+# Usage: CONFIG_PATH=config.kiosk.yaml python start_robot.py
 
 camera:
   face_model_path: face_detection_yunet_2023mar.onnx
-  main_res: [1920, 1080]
-  detect_res: [1280, 720]
+  main_res: [1280, 720]
+  detect_res: [960, 540]
   confidence_threshold: 0.6
   nms_threshold: 0.3
   rotate_180: false
@@ -16,12 +17,12 @@ stream:
   fps: 8
   jpeg_quality: 70
   render_fps: 24
-  vision_fps: 10
+  vision_fps: 6
   res: [320, 180]
 
 debug_viz:
   enabled: true
-  auto_start: true
+  auto_start: false
   host: "0.0.0.0"
   port: 8082
   manual_control_enabled: false  # true = browser WASD/Z/R work alongside face tracking
@@ -77,7 +78,7 @@ imu:
   auto_level_min_samples: 40
   i2c_bus: 1
   address: 0x69
-  sample_hz: 100
+  sample_hz: 50
   roll_pitch_alpha: 0.02
   # PCB on head: +X up, +Y left, +Z back → forward=-Z, left=+Y, yaw-about-up=+X
   # Values are 1-based sensor axes (1=X, 2=Y, 3=Z); negative flips sign.
@@ -222,7 +223,7 @@ servo:
   deadzone_y: 0.06
   pan_center_norm_x: 0.05       # |norm_x| below this → face centered, hold pan
   tilt_center_norm_y: 0.08
-  loop_hz: 80.0
+  loop_hz: 50.0
   no_face_home_sec: 1.2
   debug_hz: 2.0
   face_alpha_x: 0.12 # tilt/velocity only
@@ -302,8 +303,8 @@ arms:
   loop_hz: 50.0
 
 bye_wave:
-  enabled: true
-  hand_gesture_enabled: true  # Enable/disable hand wave detection (set false to disable physical hand gestures)
+  enabled: false
+  hand_gesture_enabled: false
   port: 8000
   host: "0.0.0.0"
   cooldown_sec: 10.0
@@ -329,7 +330,7 @@ face_greeting_arm:
   use_landmarks_only: true       # Use only face landmarks (geometric), ignore color/texture (MORE STABLE!)
 
 eyes:
-  render_fps: 40          # ST7735 eye update rate (independent of camera stream)
+  render_fps: 24          # ST7735 eye update rate (independent of camera stream)
   blink_speed_min: 3.2
   blink_speed_max: 4.2
   eye_color: [255, 255, 255]
@@ -367,7 +368,7 @@ voice:
 talk_gesture:
   enabled: true              # Auto-enabled when voice + arms are both enabled
   pose_duration: 0.4         # Seconds to transition between poses
-  poll_interval: 0.02        # Seconds between updates (50 Hz)
+  poll_interval: 0.05        # Seconds between updates (50 Hz)
   vertical_speed: 0.5        # Speed multiplier for a0, a1 (shoulder/elbow up/down) - SLOWER for more graceful talking gestures
   horizontal_speed: 0.5      # Speed multiplier for a2, a3 (wrist/hand swap side-to-side) - reduced from 1.5 to prevent frame skipping in bye animations
   smoothness: 5.0         

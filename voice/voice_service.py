@@ -209,10 +209,11 @@ class CampusAgent(Agent, TimeTools, SearchTools, AppearanceTools):
     @function_tool
     async def ask_about_events(self, question: str, context: RunContext) -> str:
         """Answers questions about campus events using the vector database."""
-        if not self.event_db:
+        db = self.event_db or _get_event_db()
+        if not db:
             return "I'm sorry, the event database is not available right now."
 
-        results = self.event_db.query_events(question)
+        results = db.query_events(question)
         if not results:
             return "I couldn't find any specific events matching your question."
 
@@ -296,9 +297,17 @@ def _build_event_db_sync() -> None:
         _global_event_db = None
 
 
+def _get_event_db():
+    """Lazy-load ChromaDB on first query (saves RAM at startup)."""
+    global _global_event_db
+    if _global_event_db is None:
+        _build_event_db_sync()
+    return _global_event_db
+
+
 def prewarm(proc: agents.JobProcess) -> None:
     """Heavy init runs once per worker process before any frontend connect."""
-    print("[VoiceService] Prewarming worker (media server, event DB, VAD)...")
+    print("[VoiceService] Prewarming worker (media server)...")
     import yaml
 
     kiosk_cfg: dict = {}
@@ -312,14 +321,9 @@ def prewarm(proc: agents.JobProcess) -> None:
             pass
     port = int(kiosk_cfg.get("port", 8080))
     _init_image_server(port=port, kiosk_config=kiosk_cfg, blackboard=_bb)
-    _build_event_db_sync()
-    proc.userdata["vad"] = silero.VAD.load(
-        min_speech_duration=0.1,
-        min_silence_duration=0.3,
-        prefix_padding_duration=0.2,
-    )
+    proc.userdata["vad"] = None
     proc.userdata["image_server"] = _global_image_server
-    proc.userdata["event_db"] = _global_event_db
+    proc.userdata["event_db"] = None
     print("[VoiceService] Prewarm complete — ready for instant LiveKit connect")
 
 
@@ -328,27 +332,47 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     print(f"[VoiceService] Job received: room={ctx.room.name}")
 
-    vad = ctx.proc.userdata.get("vad")
-    if vad is None:
-        print("[VoiceService] Warning: VAD not prewarmed, loading on connect (slow)")
-        vad = silero.VAD.load(
-            min_speech_duration=0.1,
-            min_silence_duration=0.3,
-            prefix_padding_duration=0.2,
-        )
+    llm_model = os.getenv("OPENROUTER_MODEL", "openrouter/auto").strip() or "openrouter/auto"
+    max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS", "1024"))
+    endpointing_ms = int(os.getenv("VOICE_ENDPOINTING_MS", "400"))
+    use_local_vad = os.getenv("VOICE_USE_LOCAL_VAD", "").strip().lower() in ("1", "true", "yes")
+    print(
+        f"[VoiceService] LLM: {llm_model} (max_tokens={max_tokens}); "
+        f"turn_detection={'vad' if use_local_vad else 'stt'}; "
+        f"endpointing_ms={endpointing_ms}"
+    )
+
+    vad = None
+    if use_local_vad:
+        vad = ctx.proc.userdata.get("vad")
+        if vad is None:
+            print("[VoiceService] Loading local Silero VAD (CPU-heavy on Pi)")
+            vad = silero.VAD.load(
+                min_speech_duration=0.15,
+                min_silence_duration=0.4,
+                prefix_padding_duration=0.2,
+                sample_rate=8000,
+            )
 
     image_server = ctx.proc.userdata.get("image_server") or _global_image_server
-    event_db = ctx.proc.userdata.get("event_db") or _global_event_db
+    event_db = ctx.proc.userdata.get("event_db") or _get_event_db()
+
+    turn_handling = agents.TurnHandlingOptions(
+        turn_detection="vad" if use_local_vad else "stt",
+        endpointing={"min_delay": 0.4, "max_delay": 2.5},
+        interruption={"enabled": True},
+    )
 
     session = AgentSession(
-        turn_handling=agents.TurnHandlingOptions(interruption={"mode": "vad"}),
-        stt=deepgram.STT(model="nova-3"),
+        turn_handling=turn_handling,
+        stt=deepgram.STT(model="nova-3", endpointing_ms=endpointing_ms),
         tts=AmplitudeTTS(model="aura-2-luna-en", bb=_bb),
         vad=vad,
         llm=openai.LLM(
             base_url="https://openrouter.ai/api/v1",
             api_key=os.getenv("OPENROUTER_API_KEY"),
-            model="openrouter/auto",
+            model=llm_model,
+            max_completion_tokens=max_tokens,
         ),
         tts_text_transforms=[
             "filter_markdown",

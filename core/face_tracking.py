@@ -143,6 +143,8 @@ class FaceTracker:
         self.stream_enabled = bool(_cfg(stream, "enabled", default=True))
         self.vision_fps = int(_cfg(stream, "vision_fps", default=10))
         self.vision_fps_voice = int(_cfg(stream, "vision_fps_voice", default=0))
+        self.vision_pause_on_audio = bool(_cfg(stream, "vision_pause_on_audio", default=True))
+        self.vision_pause_poll_hz = float(_cfg(stream, "vision_pause_poll_hz", default=2.0))
 
         # Person memory
         self.pm_enabled = bool(pm.get("enabled", True))
@@ -184,6 +186,23 @@ class FaceTracker:
             )
         self._last_recorded_prox_ts = 0.0
         self._last_scan_complete_ts = 0.0
+        self._was_vision_paused = False
+
+    def _vision_audio_busy(self, state: dict) -> bool:
+        """True while user or agent audio is active — skip camera + YuNet."""
+        if not self.vision_pause_on_audio:
+            return False
+        if not state.get("voice_session_active"):
+            return False
+        if state.get("user_speaking") or state.get("agent_speaking"):
+            return True
+        return state.get("conv_state", "idle") in ("listening", "speaking", "nodding")
+
+    def _effective_vision_fps(self, state: dict) -> float:
+        voice_active = bool(state.get("voice_session_active"))
+        if voice_active and self.vision_fps_voice > 0:
+            return float(self.vision_fps_voice)
+        return float(max(1, self.vision_fps))
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -388,20 +407,32 @@ class FaceTracker:
             print("[FaceTracker] Cannot run: camera or detector unavailable.")
             return
 
-        interval = 1.0 / max(1, self.vision_fps)
         next_tick = time.perf_counter()
 
         while self.bb.read("running")["running"]:
             now_pc = time.perf_counter()
             if now_pc < next_tick:
                 time.sleep(max(0.001, next_tick - now_pc))
-            voice_active = bool(
-                self.bb.read("voice_session_active")["voice_session_active"]
+
+            voice_state = self.bb.read(
+                "voice_session_active",
+                "user_speaking",
+                "agent_speaking",
+                "conv_state",
             )
-            fps = self.vision_fps
-            if voice_active and self.vision_fps_voice > 0:
-                fps = self.vision_fps_voice
-            next_tick = time.perf_counter() + (1.0 / max(1, fps))
+            paused = self._vision_audio_busy(voice_state)
+            if paused != self._was_vision_paused:
+                label = "paused (voice audio — CPU saved)" if paused else "resumed"
+                print(f"[FaceTracker] Vision {label}")
+                self._was_vision_paused = paused
+
+            if paused:
+                poll_hz = max(0.5, self.vision_pause_poll_hz)
+                next_tick = time.perf_counter() + (1.0 / poll_hz)
+                continue
+
+            fps = self._effective_vision_fps(voice_state)
+            next_tick = time.perf_counter() + (1.0 / max(1.0, fps))
 
             now = time.time()
             try:

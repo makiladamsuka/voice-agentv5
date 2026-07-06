@@ -646,6 +646,23 @@ def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
 
     env_path = APP_DIR / ".env"
     load_dotenv(env_path)
+
+    from voice.local_speaker import init_from_config, shutdown as shutdown_local_speaker
+
+    config_raw = os.environ.get("CONFIG_PATH", "").strip()
+    config_path = (
+        Path(config_raw)
+        if config_raw and Path(config_raw).is_absolute()
+        else APP_DIR / (config_raw or "config.yaml")
+    )
+    try:
+        local_on = init_from_config(config_path)
+        if local_on:
+            bb.write(local_speaker_active=True)
+            print("[VoiceService] Local speaker active — browser agent audio should be muted")
+    except Exception as exc:
+        print(f"[VoiceService] Local speaker init failed: {exc}")
+
     if devmode:
         os.environ["LIVEKIT_DEV_MODE"] = "1"
 
@@ -689,6 +706,9 @@ def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
     try:
         loop.run_until_complete(_run_voice_worker(server, bb, devmode=devmode))
     finally:
+        shutdown_local_speaker()
+        with contextlib.suppress(Exception):
+            bb.write(local_speaker_active=False)
         if not loop.is_closed():
             with contextlib.suppress(Exception):
                 loop.run_until_complete(loop.shutdown_asyncgens())

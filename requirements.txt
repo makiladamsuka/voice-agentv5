@@ -40,3 +40,6 @@ python-dotenv==1.2.1
 duckduckgo-search
 pyyaml
 openai>=1.0.0
+
+# Local TTS speaker on Pi (apt: libportaudio2)
+sounddevice>=0.5.0

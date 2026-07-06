@@ -367,6 +367,7 @@ surroundings_emotion:
 
 voice:
   enabled: true
+  local_speaker: true        # play TTS on Pi speakers (set NEXT_PUBLIC_LOCAL_SPEAKER=true in frontend)
 
 # Lower loop rates while LiveKit mic session is active (reduces audio jitter on Pi)
 voice_profile:

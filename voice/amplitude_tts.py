@@ -13,10 +13,14 @@ Blackboard fields written every ~40ms:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import math
 import struct
 import time
 from typing import TYPE_CHECKING
+
+from voice.local_speaker import drain as drain_local_speaker
+from voice.local_speaker import write_pcm as local_speaker_write
 
 from livekit.plugins.deepgram.tts import (
     TTS as DeepgramTTS,
@@ -139,6 +143,7 @@ def drain_to_zero() -> None:
     """Called when speech ends — clear buffer and decay signals."""
     global _ampl_fast, _ampl_slow, _audio_buffer
     _audio_buffer.clear()
+    drain_local_speaker()
     _ampl_fast = 0.0
     _ampl_slow = 0.0
     if _bb is not None:
@@ -169,6 +174,7 @@ class _TappingEmitter:
     def push(self, data: bytes) -> None:
         """Intercept raw PCM bytes, compute RMS, then forward to real emitter."""
         _process_chunk(data)
+        local_speaker_write(data)
         return self._real.push(data)
 
     def push_timed_transcript(self, delta_text):

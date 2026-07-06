@@ -3,13 +3,12 @@
 import { useMemo } from "react";
 import { TokenSource } from "livekit-client";
 import {
-  RoomAudioRenderer,
   SessionProvider,
   StartAudio,
   useSession,
 } from "@livekit/components-react";
 import type { AppConfig } from "@/app-config";
-import { KioskAudioBoost } from "@/components/app/kiosk-audio-boost";
+import { VoiceAudioOutput } from "@/components/app/voice-audio-output";
 import {
   ViewController,
   type AppViewMode,
@@ -52,8 +51,7 @@ export function App({ appConfig, viewMode = "kiosk" }: AppProps) {
         <ViewController appConfig={appConfig} viewMode={viewMode} />
       </main>
       <StartAudio label="Start Audio" />
-      <RoomAudioRenderer />
-      <KioskAudioBoost />
+      <VoiceAudioOutput />
       <Toaster />
     </SessionProvider>
   );

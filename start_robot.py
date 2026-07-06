@@ -390,6 +390,13 @@ def main():
     print("=== Voice Agent V5 (Modular) ===")
     if config_path != DEFAULT_CONFIG_PATH:
         print(f"[Bootstrap] Config: {config_path}")
+    vp = cfg.get("voice_profile", {}) or {}
+    print(
+        f"[Bootstrap] Servo loop {servo_cfg.get('loop_hz', '?')} Hz "
+        f"(voice {vp.get('servo_loop_hz', '?')} Hz), "
+        f"base {base_cfg.get('loop_hz', 50)} Hz "
+        f"(voice {vp.get('base_loop_hz', '?')} Hz)"
+    )
 
     eyes_cfg = cfg.get("eyes", {}) or {}
     default_eye_color = tuple(eyes_cfg.get("eye_color", [255, 255, 255]))
@@ -545,7 +552,7 @@ def main():
 
     arm_controller: ArmController | None = None
     if arms_cfg.get("enabled", False):
-        arm_controller = ArmController(bb)
+        arm_controller = ArmController(bb, config_path=config_path)
         if link is not None and link.connected and not link.has_arm_firmware():
             print(
                 "[Bootstrap] WARNING: arms.enabled but ESP32 has no arm firmware. "
@@ -563,16 +570,20 @@ def main():
                     pending = link._ser is not None and link._ser.in_waiting > 0
                 except Exception:
                     pending = False
-                time.sleep(0.008 if pending else 0.025)
+                time.sleep(0.015 if pending else 0.04)
 
         threading.Thread(target=_serial_pump, name="SerialPump", daemon=True).start()
 
     # ── Phase 2: remaining services ───────────────────────────────────────────
     threads = [
         threading.Thread(target=FaceTracker(bb, config_path=config_path).run, daemon=True, name="FaceTracker"),
-        threading.Thread(target=ServoLoop(bb).run, daemon=True, name="ServoLoop"),
         threading.Thread(
-            target=BaseController(bb, link, gate=base_gate).run,
+            target=ServoLoop(bb, config_path=config_path).run,
+            daemon=True,
+            name="ServoLoop",
+        ),
+        threading.Thread(
+            target=BaseController(bb, link, config_path=config_path, gate=base_gate).run,
             daemon=True,
             name="BaseController",
         ),
@@ -580,6 +591,7 @@ def main():
             target=ServoMixer(
                 bb,
                 link,
+                config_path=config_path,
                 gate=base_gate,
                 tracker=tracker,
                 tof_state=TOF_STATE,
@@ -592,7 +604,11 @@ def main():
             daemon=True,
             name="ServoMixer",
         ),
-        threading.Thread(target=EmotionEngine(bb).run, daemon=True, name="EmotionEngine"),
+        threading.Thread(
+            target=EmotionEngine(bb, config_path=config_path).run,
+            daemon=True,
+            name="EmotionEngine",
+        ),
         threading.Thread(target=EyeRenderer(bb).run, daemon=True, name="EyeRenderer"),
     ]
     face_greeting_cfg = cfg.get("face_greeting", {}) or {}
@@ -683,15 +699,13 @@ def main():
         )
         threads.append(voice_thread)
 
-        if arms_cfg.get("enabled", False):
+        talk_cfg = cfg.get("talk_gesture", {}) or {}
+        if arms_cfg.get("enabled", False) and talk_cfg.get("enabled", True):
             from core.talk_gesture_service import TalkGestureService
 
             presets_path = Path(arms_cfg.get("presets_path", "tests/arm_pose_presets.json"))
             if not presets_path.is_absolute():
                 presets_path = APP_DIR / presets_path
-
-            # Get talk gesture config (with defaults)
-            talk_cfg = cfg.get("talk_gesture", {}) or {}
 
             talk_gesture_svc = TalkGestureService(
                 bb=bb,

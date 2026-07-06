@@ -5,6 +5,7 @@ camera:
   face_model_path: face_detection_yunet_2023mar.onnx
   main_res: [640, 480]       # lower capture cost vs 1280x720 (voice priority on Pi)
   detect_res: [480, 270]     # YuNet input — halved vs 960x540
+  full_sensor_fov: false     # skip 3280×2464 ISP crop (auto-off when max(main_res) ≤ 720)
   confidence_threshold: 0.6
   nms_threshold: 0.3
   rotate_180: false
@@ -18,7 +19,7 @@ stream:
   jpeg_quality: 60
   render_fps: 15
   vision_fps: 5
-  vision_fps_voice: 3        # throttle face detect while mic session is active
+  vision_fps_voice: 2        # throttle face detect while mic session is active
   res: [320, 180]
 
 debug_viz:
@@ -106,6 +107,7 @@ imu:
 
 base:
   enabled: true
+  loop_hz: 25.0
   # --- BASE CALIBRATION (change only via test_base_motor.py, not face-tracking tuning) ---
   counts_per_degree: 31.166667  # set by --calibrate-manual
   encoder_sign: -1  # set by --calibrate-manual (+deg → encoder counts decrease)
@@ -366,8 +368,20 @@ surroundings_emotion:
 voice:
   enabled: true
 
+# Lower loop rates while LiveKit mic session is active (reduces audio jitter on Pi)
+voice_profile:
+  servo_loop_hz: 16
+  servo_send_hz: 16
+  mixer_loop_hz: 16
+  base_loop_hz: 10
+  emotion_loop_hz: 6
+  freeze_base_during_voice: true
+  conv_nod_scale: 0.2
+  viz_pose_hz: 0              # off unless debug_viz.auto_start
+  viz_pose_voice_hz: 0
+
 talk_gesture:
-  enabled: true              # Auto-enabled when voice + arms are both enabled
+  enabled: false              # arm motion during TTS competes with audio on Pi
   pose_duration: 0.4         # Seconds to transition between poses
   poll_interval: 0.08        # 12.5 Hz arm updates (was 50 Hz — reduces jitter during TTS)
   vertical_speed: 0.5        # Speed multiplier for a0, a1 (shoulder/elbow up/down) - SLOWER for more graceful talking gestures

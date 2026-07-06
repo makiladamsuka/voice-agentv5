@@ -191,6 +191,11 @@ class BaseController:
         )
         self._yaw_state = BaseYawState(max_yaw_deg=self.max_yaw_deg)
 
+        vp = _cfg(cfg, "voice_profile", default={}) or {}
+        self.loop_hz = float(b.get("loop_hz", 50.0))
+        self.voice_loop_hz = float(vp.get("base_loop_hz", max(10.0, self.loop_hz * 0.35)))
+        self.freeze_base_during_voice = bool(vp.get("freeze_base_during_voice", True))
+
         # ── Proximity sensing (ToF approach detection) ────────────────────────
         prox = _cfg(cfg, "proximity", default={}) or {}
         self.prox_enabled = bool(prox.get("enabled", True))
@@ -810,10 +815,14 @@ class BaseController:
             print("[BaseController] Base rotation disabled in config.")
             return
 
-        loop_delay = 0.02  # 50 Hz
+        loop_delay = 1.0 / max(1.0, self.loop_hz)
         self._gate.clear_backoff()
 
         while self.bb.read("running")["running"]:
+            voice_active = self.bb.read("voice_session_active")["voice_session_active"]
+            loop_delay = 1.0 / (
+                self.voice_loop_hz if voice_active else self.loop_hz
+            )
             now = time.time()
             self._apply_live_tune_if_changed()
 
@@ -865,6 +874,12 @@ class BaseController:
                 continue
 
             if state["base_motion_busy"]:
+                time.sleep(loop_delay)
+                continue
+
+            if voice_active and self.freeze_base_during_voice:
+                if self.bb.read("base_step_ready")["base_step_ready"]:
+                    self.bb.write(base_step_ready=False, base_comp_pan_deg=0.0)
                 time.sleep(loop_delay)
                 continue
 

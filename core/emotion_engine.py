@@ -53,6 +53,7 @@ class EmotionEngine:
         cfg = _load_yaml(config_path)
         se = _cfg(cfg, "surroundings_emotion", default={}) or {}
         ft = _cfg(cfg, "face_tracking", default={}) or {}
+        vp = _cfg(cfg, "voice_profile", default={}) or {}
 
         self._controller = SurroundingsEmotionController(
             cfg=SurroundingsEmotionConfig(
@@ -80,6 +81,7 @@ class EmotionEngine:
         self._prev_norm_x = 0.0
         self._prev_norm_y = 0.0
         self._loop_hz = 24.0
+        self._voice_loop_hz = float(vp.get("emotion_loop_hz", 8.0))
         self._conv_emotion_last: str | None = None
         self._conv_emotion_hold_until = 0.0
 
@@ -97,10 +99,13 @@ class EmotionEngine:
             print(f"[emotion {time.strftime('%H:%M:%S')}] {resolved}")
 
     def run(self) -> None:
-        loop_delay = 1.0 / self._loop_hz
         self._set("idle")
 
         while self.bb.read("running")["running"]:
+            voice_active = self.bb.read("voice_session_active")["voice_session_active"]
+            loop_delay = 1.0 / (
+                self._voice_loop_hz if voice_active else self._loop_hz
+            )
             now = time.time()
 
             state = self.bb.read(

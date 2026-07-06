@@ -245,6 +245,9 @@ class ServoLoop:
 
         # ── Loop timing ───────────────────────────────────────────────────────
         self.loop_hz = float(s.get("loop_hz", 100.0))
+        vp = _cfg(cfg, "voice_profile", default={}) or {}
+        self.voice_loop_hz = float(vp.get("servo_loop_hz", min(self.loop_hz, 18.0)))
+        self.voice_conv_nod_scale = float(vp.get("conv_nod_scale", 0.35))
         self.no_face_home_sec = float(s.get("no_face_home_sec", 0.8))
         self.debug_hz = float(s.get("debug_hz", 2.0))
 
@@ -803,7 +806,13 @@ class ServoLoop:
             elif conv_state == "speaking" and amp_fast > 0.1:
                 # Speech nod: driven by amplitude punches
                 t = now * self._servo_cfg.get("conv_nod_hz", 5.5) * math.pi * 2
-                overlay_tilt = math.sin(t) * self._servo_cfg.get("conv_nod_deg", 6.0) * amp_fast * 0.4
+                nod_scale = self.voice_conv_nod_scale if voice_active else 0.4
+                overlay_tilt = (
+                    math.sin(t)
+                    * self._servo_cfg.get("conv_nod_deg", 6.0)
+                    * amp_fast
+                    * nod_scale
+                )
             elif conv_state == "thinking":
                 # Think bob: slower, gentler
                 t = now * self._servo_cfg.get("conv_think_bob_hz", 2.2) * math.pi * 2
@@ -1026,8 +1035,12 @@ class ServoLoop:
 
     # ── Main loop ──────────────────────────────────────────────────────────────
 
+    def _loop_sleep(self) -> None:
+        voice_active = self.bb.read("voice_session_active")["voice_session_active"]
+        hz = self.voice_loop_hz if voice_active else self.loop_hz
+        time.sleep(1.0 / max(1.0, hz))
+
     def run(self) -> None:
-        loop_delay = 1.0 / max(1.0, self.loop_hz)
         now0 = time.time()
         self._wander.reset(self.pan_center, self.tilt_center, now0)
         self._last_face_ts = now0
@@ -1044,7 +1057,7 @@ class ServoLoop:
 
             # Pause servo updates during bye wave animations
             if self.bb.read("bye_wave_active")["bye_wave_active"]:
-                time.sleep(loop_delay)
+                self._loop_sleep()
                 continue
 
             self._apply_live_tune_if_changed()
@@ -1071,7 +1084,7 @@ class ServoLoop:
                         wander_moving=False,
                         wander_last_step_deg=0.0,
                     )
-                    time.sleep(loop_delay)
+                    self._loop_sleep()
                     continue
 
             self._apply_proactive_base_comp()
@@ -1119,6 +1132,6 @@ class ServoLoop:
                 publish["wander_last_step_deg"] = 0.0
             self.bb.write(**publish)
 
-            time.sleep(loop_delay)
+            self._loop_sleep()
 
         print("[ServoLoop] Stopped.")

@@ -129,6 +129,12 @@ class FaceTracker:
         self.face_model = str(APP_DIR / _cfg(cam, "face_model_path", default="face_detection_yunet_2023mar.onnx"))
         self.main_res = tuple(_cfg(cam, "main_res", default=[1920, 1080]))
         self.detect_res = tuple(_cfg(cam, "detect_res", default=[1280, 720]))
+        _fsf = cam.get("full_sensor_fov")
+        if _fsf is None:
+            # Full 3280×2464 ISP path only when main stream is high-res (widest FOV).
+            self.full_sensor_fov = max(self.main_res) > 720
+        else:
+            self.full_sensor_fov = bool(_fsf)
         self.stream_res = tuple(_cfg(stream, "res", default=[320, 180]))
         self.confidence = float(_cfg(cam, "confidence_threshold", default=0.6))
         self.nms = float(_cfg(cam, "nms_threshold", default=0.3))
@@ -185,15 +191,28 @@ class FaceTracker:
         try:
             from picamera2 import Picamera2
             cam = Picamera2()
-            cfg = cam.create_video_configuration(
-                main={"format": "RGB888", "size": self.main_res},
-                raw={"size": (3280, 2464)},
-                buffer_count=1,
-            )
-            cam.configure(cfg)
-            cam.set_controls({"ScalerCrop": (0, 0, 3280, 2464)})
+            if self.full_sensor_fov:
+                cfg = cam.create_video_configuration(
+                    main={"format": "RGB888", "size": self.main_res},
+                    raw={"size": (3280, 2464)},
+                    buffer_count=1,
+                )
+                cam.configure(cfg)
+                cam.set_controls({"ScalerCrop": (0, 0, 3280, 2464)})
+                mode = "full-sensor 3280×2464"
+            else:
+                # Let libcamera pick a modest sensor mode — avoids ISP cost of full sensor.
+                cfg = cam.create_video_configuration(
+                    main={"format": "RGB888", "size": self.main_res},
+                    buffer_count=2,
+                )
+                cam.configure(cfg)
+                mode = "main-only"
             cam.start()
-            print(f"[FaceTracker] Camera started: {self.main_res} → detect {self.detect_res}")
+            print(
+                f"[FaceTracker] Camera started ({mode}): "
+                f"{self.main_res} → detect {self.detect_res}"
+            )
             return cam
         except Exception as e:
             print(f"[FaceTracker] Camera init failed: {e}")

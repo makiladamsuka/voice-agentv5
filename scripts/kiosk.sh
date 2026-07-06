@@ -10,7 +10,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 KIOSK_API_PORT="${KIOSK_API_PORT:-8080}"
-URL="${KIOSK_URL:-http://127.0.0.1:${FRONTEND_PORT}}"
+# Default to /voice (lite UI) — full dashboard at KIOSK_URL=http://127.0.0.1:3000/
+URL="${KIOSK_URL:-http://127.0.0.1:${FRONTEND_PORT}/voice}"
 CHROMIUM="${CHROMIUM:-chromium-browser}"
 PROFILE_DIR="${KIOSK_PROFILE_DIR:-${HOME}/.config/voice-agent-kiosk-chromium}"
 MAX_WAIT=180
@@ -83,8 +84,13 @@ exec "$CHROMIUM" \
   --no-first-run \
   --check-for-update-interval=31536000 \
   --disable-smooth-scrolling \
-  --disable-background-timer-throttling \
-  --disable-renderer-backgrounding \
+  --disable-gpu \
+  --disable-gpu-compositing \
+  --disable-accelerated-2d-canvas \
+  --disable-accelerated-video-decode \
+  --disable-webgl \
+  --renderer-process-limit=1 \
+  --num-raster-threads=1 \
   --autoplay-policy=no-user-gesture-required \
   --user-data-dir="$PROFILE_DIR" \
   "$URL"

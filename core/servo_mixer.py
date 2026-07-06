@@ -9,6 +9,7 @@ This is the hardware boundary — all other modules work with BB fields only.
 
 from __future__ import annotations
 
+import os
 import re
 import threading
 import time
@@ -130,7 +131,17 @@ class ServoMixer:
         self._encoder_poll_hz = 2.0
         self._last_debug_cmd_seq = 0
         dv = _cfg(cfg, "debug_viz", default={}) or {}
-        self._viz_pose_hz = 1000.0 / max(10, int(dv.get("map_poll_ms", 30)))
+        vp = _cfg(cfg, "voice_profile", default={}) or {}
+        force_viz = os.environ.get("DEBUG_VIZ", "").strip().lower() in ("1", "true", "yes")
+        auto_start = bool(dv.get("enabled", True)) and bool(dv.get("auto_start", True))
+        viz_hz = float(vp.get("viz_pose_hz", 0.0))
+        if viz_hz <= 0:
+            poll_ms = int(dv.get("map_poll_ms", 30))
+            viz_hz = 1000.0 / max(10, poll_ms)
+        self._viz_pose_hz = viz_hz if (auto_start or force_viz) else 0.0
+        self._viz_pose_voice_hz = float(vp.get("viz_pose_voice_hz", 2.0))
+        self.voice_loop_hz = float(vp.get("mixer_loop_hz", min(self.loop_hz, 18.0)))
+        self.voice_send_hz = float(vp.get("servo_send_hz", 18.0))
 
         self.max_yaw_deg = float(b.get("max_yaw_deg", 120.0))
 
@@ -311,8 +322,11 @@ class ServoMixer:
         tilt: float,
         arms: tuple[float, float, float, float] | None,
         now: float,
+        *,
+        send_hz: float | None = None,
     ) -> bool:
-        if (now - self._last_send_ts) < (1.0 / self.send_hz):
+        hz = self.send_hz if send_hz is None else send_hz
+        if (now - self._last_send_ts) < (1.0 / max(1.0, hz)):
             return False
         if self._prev_pan is None:
             return True
@@ -400,7 +414,7 @@ class ServoMixer:
         if self._link is not None:
             self._link._prox_callback = self._handle_prox_line
 
-        if self._tracker is not None:
+        if self._tracker is not None and self._viz_pose_hz > 0:
             threading.Thread(
                 target=self._viz_pose_loop,
                 daemon=True,
@@ -408,6 +422,11 @@ class ServoMixer:
             ).start()
 
         while self.bb.read("running")["running"]:
+            voice_active = self.bb.read("voice_session_active")["voice_session_active"]
+            loop_delay = 1.0 / (
+                self.voice_loop_hz if voice_active else self.loop_hz
+            )
+            send_hz = self.voice_send_hz if voice_active else self.send_hz
             now = time.time()
             if self._handle_debug_commands(now):
                 time.sleep(loop_delay)
@@ -465,7 +484,11 @@ class ServoMixer:
                 self._last_arm_keepalive_ts = now
 
             if self._should_send(
-                pan, tilt, self._read_arms() if self._arms_enabled else None, now
+                pan,
+                tilt,
+                self._read_arms() if self._arms_enabled else None,
+                now,
+                send_hz=send_hz,
             ):
                 self._send_pose(pan, tilt)
                 self._last_send_ts = now
@@ -477,14 +500,18 @@ class ServoMixer:
         print("[ServoMixer] Stopped.")
 
     def _viz_pose_loop(self) -> None:
-        """High-rate viz refresh — cached encoder, live head/IMU from BB (no serial query)."""
-        delay = 1.0 / max(1.0, self._viz_pose_hz)
+        """Viz refresh for debug dashboard — skipped when auto_start is off."""
         while self.bb.read("running")["running"]:
             try:
-                self._publish_viz_from_cache()
+                voice_active = self.bb.read("voice_session_active")["voice_session_active"]
+                hz = self._viz_pose_voice_hz if voice_active else self._viz_pose_hz
+                if hz > 0:
+                    self._publish_viz_from_cache()
+                    time.sleep(1.0 / hz)
+                else:
+                    time.sleep(0.5)
             except Exception:
-                pass
-            time.sleep(delay)
+                time.sleep(0.1)
 
     # ── Proximity event routing ────────────────────────────────────────────
 

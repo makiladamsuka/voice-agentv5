@@ -653,6 +653,15 @@ def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
     print(f"[VoiceService] .env loaded from {env_path}")
     print(f"[VoiceService] mode={'dev' if devmode else 'start'}")
 
+    # Pi runs face/servo/camera alongside voice. Production default load_threshold
+    # (0.7) rejects dispatch when CPU is busy — frontend connects but agent never joins.
+    load_threshold = float(os.getenv("LIVEKIT_LOAD_THRESHOLD", "0.95"))
+    worker_port = int(os.getenv("LIVEKIT_WORKER_HTTP_PORT", "0"))
+    print(
+        f"[VoiceService] worker load_threshold={load_threshold}, "
+        f"http_port={worker_port or 'ephemeral'}"
+    )
+
     server = AgentServer.from_server_options(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
@@ -661,8 +670,17 @@ def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
             initialize_process_timeout=120,
             num_idle_processes=1,
             job_executor_type=JobExecutorType.THREAD,
+            load_threshold=load_threshold,
+            port=worker_port,
         )
     )
+
+    @server.on("worker_registered")
+    def _on_worker_registered(worker_id: str, _server_info: object) -> None:
+        print(
+            f"[VoiceService] Worker registered with LiveKit "
+            f"(id={worker_id}, agent=campus-greeting-agent)"
+        )
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

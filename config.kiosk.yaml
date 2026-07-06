@@ -13,7 +13,7 @@ camera:
 stream:
   enabled: true
   host: "0.0.0.0"
-  port: 8081
+  port: 8083   # not 8081 — LiveKit worker health server uses 8081 in start mode
   fps: 8
   jpeg_quality: 70
   render_fps: 24

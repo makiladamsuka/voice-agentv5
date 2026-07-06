@@ -20,7 +20,8 @@ fi
 if [[ -f "$ENV_FILE" && ! -f "$LOCAL_ENV" ]]; then
   echo "Creating $LOCAL_ENV from $ENV_FILE"
   {
-    grep -E '^(LIVEKIT_URL|LIVEKIT_API_KEY|LIVEKIT_API_SECRET|AGENT_NAME)=' "$ENV_FILE" || true
+    grep -E '^(LIVEKIT_URL|LIVEKIT_API_KEY|LIVEKIT_API_SECRET)=' "$ENV_FILE" || true
+    grep -E '^AGENT_NAME=' "$ENV_FILE" || grep -E '^LIVEKIT_AGENT_NAME=' "$ENV_FILE" || echo "AGENT_NAME=campus-greeting-agent"
     echo "KIOSK_API_URL=http://127.0.0.1:8080"
   } > "$LOCAL_ENV"
 fi

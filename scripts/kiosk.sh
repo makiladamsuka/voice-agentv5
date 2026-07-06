@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
+# Fullscreen Chromium for the Next.js kiosk UI (NOT the Python API on :8080).
+#
+# Ports (voice-agentv5):
+#   3000  Next.js kiosk UI  <- this script opens this
+#   8080  Python MediaServer (start_robot.py) — proxied as /api/* from the UI
+#   8082  Debug dashboard + MJPEG (optional, DEBUG_VIZ=1)
 set -euo pipefail
 
-URL="${KIOSK_URL:-http://localhost:3000}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+KIOSK_API_PORT="${KIOSK_API_PORT:-8080}"
+URL="${KIOSK_URL:-http://127.0.0.1:${FRONTEND_PORT}}"
 CHROMIUM="${CHROMIUM:-chromium-browser}"
 PROFILE_DIR="${KIOSK_PROFILE_DIR:-${HOME}/.config/voice-agent-kiosk-chromium}"
 MAX_WAIT=180
@@ -9,29 +18,61 @@ MAX_WAIT=180
 export DISPLAY="${DISPLAY:-:0}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
-if pgrep -f "chromium.*--kiosk.*${URL}" >/dev/null 2>&1; then
+_kiosk_running() {
+  pgrep -f "chromium.*--user-data-dir=${PROFILE_DIR}" >/dev/null 2>&1
+}
+
+_port_listening() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -tln | grep -q ":${port} "
+    return $?
+  fi
+  curl -sf --max-time 2 "http://127.0.0.1:${port}/" >/dev/null 2>&1
+}
+
+if _kiosk_running; then
+  echo "Kiosk Chromium already running (profile: ${PROFILE_DIR})"
+  echo "  UI: ${URL}"
+  echo "  To reload after a frontend rebuild: ./scripts/refresh-kiosk.sh"
   exit 0
 fi
 
+echo "Waiting for Next.js on port ${FRONTEND_PORT}..."
+ready=0
 for _ in $(seq 1 "$MAX_WAIT"); do
-  if curl -sf --max-time 2 "$URL" >/dev/null 2>&1; then
+  if _port_listening "$FRONTEND_PORT"; then
+    ready=1
     break
   fi
   sleep 1
 done
 
+if [[ "$ready" -ne 1 ]]; then
+  echo "Error: nothing listening on port ${FRONTEND_PORT}." >&2
+  echo "Start the frontend first: ./scripts/run-frontend-prod.sh" >&2
+  exit 1
+fi
+
+if ! _port_listening "$KIOSK_API_PORT"; then
+  echo "Warning: Python kiosk API not detected on :${KIOSK_API_PORT}." >&2
+  echo "  Start backend: CONFIG_PATH=config.kiosk.yaml python start_robot.py" >&2
+  echo "  (Map/posters/upload will fail until :8080 is up.)" >&2
+fi
+
 mkdir -p "$PROFILE_DIR"
 
-# Hide mouse cursor on the touchscreen kiosk.
 if command -v unclutter >/dev/null 2>&1; then
   pkill -x unclutter 2>/dev/null || true
   unclutter -idle 0 -root &
 fi
 
-# Maximize playback volume for agent TTS on the kiosk speakers.
 amixer -q sset Master 100% unmute 2>/dev/null || true
 amixer -q sset PCM 100% unmute 2>/dev/null || true
 amixer -q sset Headphone 100% unmute 2>/dev/null || true
+
+echo "Opening kiosk UI: ${URL}"
+echo "  (API backend :${KIOSK_API_PORT} — not opened in browser)"
 
 exec "$CHROMIUM" \
   --kiosk \

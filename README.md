@@ -51,12 +51,13 @@ Kiosk API routes (`/api/map`, `/api/upload-status`, etc.) are proxied to the Pyt
 
 ### 3. Fullscreen touchscreen kiosk
 
-```bash
-./scripts/run-frontend-prod.sh   # start Next.js first
-./scripts/kiosk.sh               # Chromium fullscreen at :3000
-```
+Opens Chromium fullscreen at the **Next.js UI** on `http://127.0.0.1:3000` (not :8080 API).
 
-Opens Chromium fullscreen at `http://localhost:3000` (cursor hidden, speaker volume maxed).
+```bash
+./scripts/run-frontend-prod.sh   # start Next.js on :3000 first
+./scripts/kiosk.sh               # fullscreen browser
+./scripts/refresh-kiosk.sh     # restart browser after UI rebuild
+```
 
 ## Ports
 

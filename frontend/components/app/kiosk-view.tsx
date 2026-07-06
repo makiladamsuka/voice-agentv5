@@ -148,7 +148,7 @@ export function KioskView() {
     setIsConnecting(true);
     try {
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Connection timeout")), 15000)
+        setTimeout(() => reject(new Error("Connection timeout")), 30000)
       );
       await Promise.race([start(), timeoutPromise]);
     } catch (e) {

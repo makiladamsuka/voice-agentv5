@@ -38,7 +38,10 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
   startButtonText: "Start call",
 
   // agent dispatch configuration
-  agentName: process.env.AGENT_NAME ?? undefined,
+  agentName:
+    process.env.AGENT_NAME ??
+    process.env.LIVEKIT_AGENT_NAME ??
+    "campus-greeting-agent",
 
   // LiveKit Cloud Sandbox configuration
   sandboxId: undefined,

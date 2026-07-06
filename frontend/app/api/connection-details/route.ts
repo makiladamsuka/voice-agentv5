@@ -41,7 +41,7 @@ export async function POST(req: Request) {
     } catch (e) {
       // Body might be empty
     }
-    agentName = agentName || process.env.LIVEKIT_AGENT_NAME;
+    agentName = agentName || process.env.AGENT_NAME || process.env.LIVEKIT_AGENT_NAME || "campus-greeting-agent";
 
     // Generate participant token
     const participantName = "user";

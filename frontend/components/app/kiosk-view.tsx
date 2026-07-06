@@ -30,6 +30,10 @@ import LoadingOverlay from "@/components/ui/LoadingOverlay";
 import { GeminiMorphButton } from "@/components/ui/GeminiMorphButton";
 import { SiriGlow } from "@/components/ui/SiriGlow";
 import { ImageDisplay } from "@/components/app/image-display";
+import {
+  sessionStartOptions,
+  useVoiceConfig,
+} from "@/hooks/use-voice-config";
 
 // Lazy load 3D map to avoid SSR issues with Three.js
 const CampusMapEmbed = dynamic(
@@ -44,6 +48,11 @@ export function KioskView() {
   const [glowingSection, setGlowingSection] = useState<'where-to' | 'chat' | 'mic' | 'news' | null>(null);
   const session = useSessionContext();
   const { isConnected, start, end } = session;
+  const voiceConfig = useVoiceConfig();
+  const startSession = useCallback(
+    () => start(sessionStartOptions(voiceConfig?.localMic)),
+    [start, voiceConfig?.localMic],
+  );
   const { messages } = useSessionMessages(session);
   const room = useRoomContext();
 
@@ -131,12 +140,12 @@ export function KioskView() {
       setFocusedEvent(post);
       if (!isConnected) {
         pendingEventRef.current = post;
-        await start();
+        await startSession();
       } else {
         sendEventFocus(post);
       }
     },
-    [isConnected, start, sendEventFocus],
+    [isConnected, startSession, sendEventFocus],
   );
 
   // Handle mic button press — show blob overlay while connecting
@@ -150,12 +159,12 @@ export function KioskView() {
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error("Connection timeout")), 30000)
       );
-      await Promise.race([start(), timeoutPromise]);
+      await Promise.race([startSession(), timeoutPromise]);
     } catch (e) {
       console.error("Agent connection failed:", e);
       setIsConnecting(false);
     }
-  }, [isConnected, start, end]);
+  }, [isConnected, startSession, end]);
 
   // Auto-dismiss morphing button once agent is fully ready
   useEffect(() => {
@@ -936,7 +945,7 @@ export function KioskView() {
                         key={roomNode.id}
                         onClick={() => {
                           if (!isConnected) {
-                            start();
+                            startSession();
                           }
                           setTimeout(
                             () => {

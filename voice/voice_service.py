@@ -18,8 +18,9 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from livekit.agents import AgentServer, WorkerOptions
+from livekit.agents import AgentServer, WorkerOptions, NOT_GIVEN
 from livekit.agents.job import JobExecutorType
+from livekit.agents.voice import room_io
 
 from dotenv import load_dotenv
 from livekit import agents, rtc
@@ -505,7 +506,52 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 print(f"[VoiceService] Vader Error: {e}")
 
     print("[VoiceService] Starting LiveKit session...")
-    await session.start(room=ctx.room, agent=agent)
+
+    config_raw = os.environ.get("CONFIG_PATH", "").strip()
+    config_path = (
+        Path(config_raw)
+        if config_raw and Path(config_raw).is_absolute()
+        else APP_DIR / (config_raw or "config.yaml")
+    )
+
+    from voice.local_audio_io import (
+        resolve_local_speaker,
+        setup_local_audio,
+        shutdown_local_audio,
+    )
+
+    mic_input = None
+    use_local_mic = False
+    use_aec_speaker = False
+    try:
+        mic_input, use_local_mic, use_aec_speaker = await setup_local_audio(
+            asyncio.get_running_loop(),
+            config_path,
+        )
+        if mic_input is not None:
+            session.input.audio = mic_input
+            if _bb is not None:
+                _bb.write(local_mic_active=True)
+                if use_aec_speaker or resolve_local_speaker(config_path):
+                    _bb.write(local_speaker_active=True)
+
+        room_opts: dict = {}
+        if use_local_mic:
+            room_opts["audio_input"] = False
+        if use_local_mic or use_aec_speaker:
+            room_opts["audio_output"] = False
+        elif _bb is not None and _bb.read("local_speaker_active")["local_speaker_active"]:
+            room_opts["audio_output"] = False
+
+        room_options = (
+            room_io.RoomOptions(**room_opts) if room_opts else NOT_GIVEN
+        )
+        await session.start(room=ctx.room, agent=agent, room_options=room_options)
+    except Exception:
+        await shutdown_local_audio()
+        if _bb is not None:
+            _bb.write(local_mic_active=False)
+        raise
 
     _session_live = True
     if _bb is not None:
@@ -571,6 +617,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 user_speaking=False,
                 agent_speaking=False,
             )
+        from voice.local_audio_io import shutdown_local_audio
+
+        await shutdown_local_audio()
+        if _bb is not None:
+            _bb.write(local_mic_active=False)
 
 
 # ── Public entry point (called from start_robot.py thread) ───────────────────
@@ -647,6 +698,7 @@ def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
     env_path = APP_DIR / ".env"
     load_dotenv(env_path)
 
+    from voice.local_audio_io import resolve_local_mic, resolve_local_speaker
     from voice.local_speaker import init_from_config, shutdown as shutdown_local_speaker
 
     config_raw = os.environ.get("CONFIG_PATH", "").strip()
@@ -656,12 +708,24 @@ def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
         else APP_DIR / (config_raw or "config.yaml")
     )
     try:
-        local_on = init_from_config(config_path)
-        if local_on:
-            bb.write(local_speaker_active=True)
-            print("[VoiceService] Local speaker active — browser agent audio should be muted")
+        if resolve_local_mic(config_path):
+            bb.write(local_mic_active=True)
+            if resolve_local_speaker(config_path):
+                bb.write(local_speaker_active=True)
+            print(
+                "[VoiceService] Local mic configured — "
+                "browser mic should be disabled"
+            )
+        else:
+            local_on = init_from_config(config_path)
+            if local_on:
+                bb.write(local_speaker_active=True)
+                print(
+                    "[VoiceService] Local speaker active — "
+                    "browser agent audio should be muted"
+                )
     except Exception as exc:
-        print(f"[VoiceService] Local speaker init failed: {exc}")
+        print(f"[VoiceService] Local audio init failed: {exc}")
 
     if devmode:
         os.environ["LIVEKIT_DEV_MODE"] = "1"
@@ -708,7 +772,7 @@ def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
     finally:
         shutdown_local_speaker()
         with contextlib.suppress(Exception):
-            bb.write(local_speaker_active=False)
+            bb.write(local_speaker_active=False, local_mic_active=False)
         if not loop.is_closed():
             with contextlib.suppress(Exception):
                 loop.run_until_complete(loop.shutdown_asyncgens())

@@ -21,6 +21,11 @@ from typing import TYPE_CHECKING
 
 from voice.local_speaker import drain as drain_local_speaker
 from voice.local_speaker import write_pcm as local_speaker_write
+from voice.local_audio_io import (
+    drain_speaker as drain_aec_speaker,
+    is_aec_speaker_active,
+    write_speaker_pcm as aec_speaker_write,
+)
 
 from livekit.plugins.deepgram.tts import (
     TTS as DeepgramTTS,
@@ -143,7 +148,10 @@ def drain_to_zero() -> None:
     """Called when speech ends — clear buffer and decay signals."""
     global _ampl_fast, _ampl_slow, _audio_buffer
     _audio_buffer.clear()
-    drain_local_speaker()
+    if is_aec_speaker_active():
+        drain_aec_speaker()
+    else:
+        drain_local_speaker()
     _ampl_fast = 0.0
     _ampl_slow = 0.0
     if _bb is not None:
@@ -174,7 +182,10 @@ class _TappingEmitter:
     def push(self, data: bytes) -> None:
         """Intercept raw PCM bytes, compute RMS, then forward to real emitter."""
         _process_chunk(data)
-        local_speaker_write(data)
+        if is_aec_speaker_active():
+            aec_speaker_write(data)
+        else:
+            local_speaker_write(data)
         return self._real.push(data)
 
     def push_timed_transcript(self, delta_text):

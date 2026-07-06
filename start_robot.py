@@ -449,7 +449,11 @@ def main():
     bb.write(base_motion_allowed=True)
 
     # ── Phase 1: IMU startup (yaw reference needs still samples) ─────────────
-    imu_thread = threading.Thread(target=ImuService(bb).run, daemon=True, name="ImuService")
+    imu_thread = threading.Thread(
+        target=ImuService(bb, config_path=config_path).run,
+        daemon=True,
+        name="ImuService",
+    )
     imu_thread.start()
     if imu_cfg.get("enabled", False):
         settle = float(imu_cfg.get("auto_level_sec", 2.0)) + float(

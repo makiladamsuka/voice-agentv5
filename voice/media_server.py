@@ -121,11 +121,19 @@ class MediaServer:
                 elif path == "/api/network-ip":
                     self._json_response(200, {"ip": media_server._get_local_ip()})
                 elif path == "/api/voice-config":
-                    local = False
+                    local_speaker = False
+                    local_mic = False
                     if media_server.blackboard is not None:
-                        state = media_server.blackboard.read("local_speaker_active")
-                        local = bool(state.get("local_speaker_active"))
-                    self._json_response(200, {"localSpeaker": local})
+                        state = media_server.blackboard.read(
+                            "local_speaker_active",
+                            "local_mic_active",
+                        )
+                        local_speaker = bool(state.get("local_speaker_active"))
+                        local_mic = bool(state.get("local_mic_active"))
+                    self._json_response(
+                        200,
+                        {"localSpeaker": local_speaker, "localMic": local_mic},
+                    )
                 elif path == "/api/upload-status":
                     status = get_upload_status(
                         media_server.assets_dir,

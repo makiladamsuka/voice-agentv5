@@ -86,6 +86,8 @@ class ArmController:
         self.sweep_factor = float(a.get("turn_sweep_factor", 0.45))
         self.blend_hz = float(a.get("blend_hz", 5.0))
         self.loop_hz = float(a.get("loop_hz", 50.0))
+        vp = _cfg(cfg, "voice_profile", default={}) or {}
+        self.voice_loop_hz = float(vp.get("arms_loop_hz", min(self.loop_hz, 14.0)))
         self.min_spin_moved_deg = float(a.get("min_spin_moved_deg", 2.0))
 
         self._target = list(self._home)
@@ -189,16 +191,19 @@ class ArmController:
             print("[ArmController] Disabled in config.")
             return
 
-        loop_delay = 1.0 / max(1.0, self.loop_hz)
         print(
             f"[ArmController] Cumulative lean + greeting gestures "
             f"(+{self.step_delta_deg:.1f}°/spin, mid A0≤{self._raise_mid[0]:.0f} "
-            f"A1≥{self._raise_mid[1]:.0f}, home={self._home})"
+            f"A1≥{self._raise_mid[1]:.0f}, home={self._home}, "
+            f"loop={self.loop_hz:.0f}Hz voice={self.voice_loop_hz:.0f}Hz)"
         )
 
         while self.bb.read("running")["running"]:
             t0 = time.time()
             now = time.time()
+            voice_active = self.bb.read("voice_session_active")["voice_session_active"]
+            hz = self.voice_loop_hz if voice_active else self.loop_hz
+            loop_delay = 1.0 / max(1.0, hz)
 
             # Check for new greeting request
             greeting_state = self.bb.read("arm_greeting_seq", "arm_greeting_pose")

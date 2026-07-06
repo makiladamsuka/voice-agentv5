@@ -7,6 +7,10 @@ import {
 } from "@livekit/components-react";
 import { Mic, MicOff, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import {
+  sessionStartOptions,
+  useVoiceConfig,
+} from "@/hooks/use-voice-config";
 
 /** Minimal voice UI for Pi kiosk — no 3D maps, polling, or rAF morph animations. */
 export function VoiceLiteView() {
@@ -15,8 +19,9 @@ export function VoiceLiteView() {
   const { state: agentState } = useVoiceAssistant();
   const transcriptions = useTranscriptions();
 
+  const voiceConfig = useVoiceConfig();
   const [isConnecting, setIsConnecting] = useState(false);
-  const [status, setStatus] = useState("Tap the mic to talk");
+  const [status, setStatus] = useState("Tap to start voice");
 
   const latestText =
     transcriptions[transcriptions.length - 1]?.text?.trim() ?? "";
@@ -27,7 +32,7 @@ export function VoiceLiteView() {
       return;
     }
     if (!isConnected) {
-      setStatus("Tap the mic to talk");
+      setStatus("Tap to start voice");
       return;
     }
     if (agentState === "thinking") {
@@ -51,14 +56,17 @@ export function VoiceLiteView() {
       const timeout = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("Connection timeout")), 30000),
       );
-      await Promise.race([start(), timeout]);
+      await Promise.race([
+        start(sessionStartOptions(voiceConfig?.localMic)),
+        timeout,
+      ]);
     } catch (e) {
       console.error("Agent connection failed:", e);
       setStatus("Connection failed — tap to retry");
     } finally {
       setIsConnecting(false);
     }
-  }, [isConnected, start, end]);
+  }, [isConnected, start, end, voiceConfig?.localMic]);
 
   return (
     <div className="flex h-svh w-full flex-col items-center justify-center gap-8 bg-[#f0f4f9] px-6 dark:bg-[#0f1419]">

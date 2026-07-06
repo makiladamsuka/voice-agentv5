@@ -159,8 +159,10 @@ class ImuService:
         )
         print("[ImuService] IMU online (pitch/horizon + raw yaw for tracker).")
 
+        loop_delay = 1.0 / max(1.0, self.sample_hz)
         prev_ts = time.perf_counter()
         while self.bb.read("running")["running"]:
+            t0 = time.time()
             if self.bb.read("base_watchdog_reset")["base_watchdog_reset"]:
                 self._reader.filter.reset_yaw_integral()
                 self.bb.write(base_watchdog_reset=False)
@@ -199,7 +201,8 @@ class ImuService:
                 imu_horizon_ok=gyro_ok,
                 imu_effective_tilt_center=self._held_tilt_center,
             )
-            time.sleep(0.008)
+            elapsed = time.time() - t0
+            time.sleep(max(0.0, loop_delay - elapsed))
 
         if self._reader is not None:
             self._reader.stop()

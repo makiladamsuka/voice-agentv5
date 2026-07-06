@@ -151,6 +151,7 @@ class Blackboard:
     user_speaking: bool = False              # True when user VAD triggers
     agent_speaking: bool = False             # True when agent TTS is playing
     local_speaker_active: bool = False       # Pi plays TTS locally — frontend should mute
+    local_mic_active: bool = False           # Pi captures mic locally — frontend should not publish mic
 
     # ── Face greeting (written by FaceGreetingMonitor, consumed by VoiceService) ─
     face_greeting_seq: int = 0

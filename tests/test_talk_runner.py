@@ -133,6 +133,7 @@ class TalkAnimationRunner:
         print("[DEBUG] Monitoring agent_speaking flag from file...")
         
         last_speaking = False
+        last_pose_key = None
         
         while self._running:
             # Read current state - use file-based flag (works across processes)
@@ -161,21 +162,33 @@ class TalkAnimationRunner:
                 time.sleep(self._poll_interval)
                 continue
             
-            # Pick a random talk pose
-            pose_key = random.choice(self._talk_pose_keys)
+            # Pick a random talk pose that is different from the previous one
+            available_poses = [k for k in self._talk_pose_keys if k != last_pose_key]
+            if not available_poses:
+                available_poses = self._talk_pose_keys
+                
+            pose_key = random.choice(available_poses)
+            last_pose_key = pose_key
             pose = self._poses[pose_key]
             
             # Apply the pose
             print(f"[DEBUG] Playing pose: {pose_key} (a0={pose['a0']:.1f}, a1={pose['a1']:.1f}, a2={pose['a2']:.1f}, a3={pose['a3']:.1f})")
             self._apply_pose(pose)
             
-            # Hold the pose for the specified duration (or until agent stops speaking)
+            # Hold the pose for a random duration between 1.0 and 2.0 seconds
+            current_duration = random.uniform(1.0, 2.0)
             start = time.time()
-            while time.time() - start < self._pose_duration:
+            agent_stopped_logged = False
+            
+            while time.time() - start < current_duration:
                 is_speaking = read_speaking_flag()
-                if not is_speaking:
-                    print(f"[DEBUG] Agent stopped mid-pose")
+                if not is_speaking and not agent_stopped_logged:
+                    print(f"[DEBUG] Agent stopped mid-pose, holding until duration ({current_duration:.1f}s) is over")
+                    agent_stopped_logged = True
+                
+                if not self._running:
                     break
+                
                 time.sleep(self._poll_interval)
         
         print("[INFO] Talk pose loop stopped")

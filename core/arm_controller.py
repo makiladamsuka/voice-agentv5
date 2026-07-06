@@ -15,7 +15,7 @@ from arm_pose_presets import ArmPosePresets, DEFAULT_PRESETS_PATH
 from arm_safety_envelope import ArmSafetyEnvelope, DEFAULT_LIMITS_PATH
 from core.blackboard import Blackboard
 from lib.arm_base_lean import lean_delta_per_spin
-from lib.elastic_head_motion import smooth_toward
+from lib.elastic_head_motion import tick_toward, HeadMotionParams
 
 # Greeting pose parameters
 GREETING_DURATION_SEC = 2.0  # How long to hold greeting pose
@@ -90,8 +90,27 @@ class ArmController:
 
         self._target = list(self._home)
         self._current = list(self._home)
+        self._velocity = [0.0, 0.0, 0.0, 0.0]
         self._was_busy = False
         self._pending_step_deg = 0.0
+
+        # Velocity-based arm motion params (accel / decel for smoothness)
+        self._arm_params = HeadMotionParams(
+            max_vel_pos=float(a.get("arm_max_vel", 50.0)),
+            max_vel_neg=float(a.get("arm_max_vel", 50.0)),
+            accel=float(a.get("arm_accel", 120.0)),
+            decel=float(a.get("arm_decel", 150.0)),
+            goal_deadband_deg=float(a.get("arm_deadband_deg", 0.1)),
+            track_gain=float(a.get("arm_track_gain", 6.0)),
+        )
+        self._greeting_arm_params = HeadMotionParams(
+            max_vel_pos=float(a.get("arm_greeting_max_vel", 80.0)),
+            max_vel_neg=float(a.get("arm_greeting_max_vel", 80.0)),
+            accel=float(a.get("arm_greeting_accel", 200.0)),
+            decel=float(a.get("arm_greeting_decel", 250.0)),
+            goal_deadband_deg=float(a.get("arm_deadband_deg", 0.1)),
+            track_gain=float(a.get("arm_greeting_track_gain", 10.0)),
+        )
 
         # Greeting state
         self._presets = presets
@@ -175,9 +194,10 @@ class ArmController:
         else:
             # Greeting complete — snap _current to the pre-greeting target
             # immediately so the normal blend path resumes from the right
-            # position rather than from wherever smooth_toward left off.
+            # position rather than from wherever tick_toward left off.
             self._target[:] = list(self._pre_greeting_target)
             self._current[:] = list(self._pre_greeting_target)
+            self._velocity = [0.0, 0.0, 0.0, 0.0]
             self._greeting_start_time = None
             self._greeting_pose = None
             print("[ArmController] Greeting complete, returning to previous pose")
@@ -225,23 +245,24 @@ class ArmController:
                 self._current[1] = float(current_arm["arm_a1"])
                 self._current[2] = float(current_arm["arm_a2"])
                 self._current[3] = float(current_arm["arm_a3"])
-                # Also keep _target in sync so the resume transition is smooth.
-                self._target[:] = list(self._current)
+                self._velocity = [0.0, 0.0, 0.0, 0.0]
                 time.sleep(loop_delay)
                 continue
 
             if greeting_active:
-                # During greeting, blend smoothly toward the greeting target.
+                # During greeting, blend smoothly toward the greeting target
+                # using velocity-based accel/decel for natural motion.
                 # Use envelope-only clamp (not the lean raise-mid limiter) so
                 # hi poses with low a1 values actually reach their target.
                 for i in range(4):
-                    self._current[i] = smooth_toward(
+                    self._current[i], self._velocity[i] = tick_toward(
                         self._current[i],
+                        self._velocity[i],
                         self._target[i],
                         loop_delay,
-                        smooth_hz=GREETING_SMOOTH_HZ,
                         lo=-360.0,
                         hi=360.0,
+                        params=self._greeting_arm_params,
                     )
                 pose = self._clamp_greeting(*self._current)
                 self._current[:] = list(pose)
@@ -266,13 +287,14 @@ class ArmController:
                     self._accumulate_spin(self._pending_step_deg)
 
             for i in range(4):
-                self._current[i] = smooth_toward(
+                self._current[i], self._velocity[i] = tick_toward(
                     self._current[i],
+                    self._velocity[i],
                     self._target[i],
                     loop_delay,
-                    smooth_hz=self.blend_hz,
                     lo=-360.0,
                     hi=360.0,
+                    params=self._arm_params,
                 )
 
             pose = self._clamp_accum(*self._current)

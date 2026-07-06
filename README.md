@@ -2,84 +2,155 @@
 
 Raspberry Pi robot stack: face tracking, servos, TFT eyes, LiveKit voice agent, and kiosk UI.
 
-## Quick start (Pi)
+## How to start the robot
 
-### 1. Python backend (robot + voice + kiosk APIs on :8080)
+Run these in **separate terminals** on the Pi. Order matters: backend first, then frontend, then kiosk browser.
+
+### One-time setup
 
 ```bash
 cd /home/nema/Documents/voice-agentv5
-python3 -m venv --system-site-packages venv && source venv/bin/activate
+python3 -m venv --system-site-packages venv
+source venv/bin/activate
 pip install -r requirements.txt
-
-# Copy .env with LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
-python start_robot.py
 ```
 
-**Pi kiosk profile** (lower CPU — recommended when running frontend + Chromium on the same Pi):
+Create a repo `.env` with LiveKit credentials (used by backend and to seed the frontend):
 
 ```bash
-CONFIG_PATH=config.kiosk.yaml python start_robot.py
-# or
-python start_robot.py --config config.kiosk.yaml
+# .env
+LIVEKIT_URL=wss://...
+LIVEKIT_API_KEY=...
+LIVEKIT_API_SECRET=...
+LIVEKIT_AGENT_NAME=campus-greeting-agent
 ```
 
-Optional debug dashboard (3D ToF map + MJPEG) on demand:
+Copy `frontend/.env.local.example` → `frontend/.env.local` if you prefer to edit frontend env by hand. The run scripts can seed `.env.local` from `.env` on first run.
+
+**Audio:** set the system default **microphone** and **speakers** in the Pi audio menu (USB webcam mic, Bluetooth neckband, etc.). The kiosk browser uses OS defaults — no mic setting in `start_robot.py`. Vision uses the **Pi Camera** (CSI) via `Picamera2`, not a USB webcam.
+
+---
+
+### Terminal 1 — Backend (robot + voice agent + APIs on :8080)
+
+**Recommended on the Pi** (lower CPU for frontend + Chromium):
 
 ```bash
-DEBUG_VIZ=1 CONFIG_PATH=config.kiosk.yaml python start_robot.py
+cd /home/nema/Documents/voice-agentv5
+source venv/bin/activate
+CONFIG_PATH=config.kiosk.yaml python start_robot.py start
 ```
 
-Measure backend CPU/RAM over 60 seconds:
+| Command | Use when |
+|---------|----------|
+| `python start_robot.py start` | **Demo / kiosk** — LiveKit agent dispatch (`devmode` off) |
+| `python start_robot.py` | Default — same as `dev` |
+| `python start_robot.py dev` | Development — LiveKit dev worker |
+
+Wait until you see `Robot running. Press Ctrl+C to exit.` and the ESP32 connects (or dry-run warning if serial is unplugged).
+
+Optional debug dashboard (3D ToF map + MJPEG on :8082):
+
+```bash
+DEBUG_VIZ=1 CONFIG_PATH=config.kiosk.yaml python start_robot.py start
+```
+
+Measure backend CPU/RAM:
 
 ```bash
 ./scripts/measure_resources.sh 60 1 start_robot.py
 ```
 
-### 2. Frontend (native Next.js kiosk on :3000 — no Docker)
+---
+
+### Terminal 2 — Frontend (Next.js kiosk UI on :3000)
 
 Requires **Node.js 20+** and `pnpm` (or npm).
 
 ```bash
-./scripts/run-frontend-dev.sh    # hot reload while editing UI
-# or
-./scripts/run-frontend-prod.sh   # production build for stable demo (use on Pi)
+cd /home/nema/Documents/voice-agentv5
+./scripts/run-frontend-prod.sh   # production — builds then starts (slow first time on Pi)
 ```
 
-On first run, `run-frontend-dev.sh` seeds `frontend/.env.local` from the repo `.env`.
-
-Kiosk API routes (`/api/map`, `/api/upload-status`, etc.) are proxied to the Python MediaServer on **:8080** via `next.config.ts` rewrites. LiveKit token minting stays in Next.js (`/api/connection-details`).
-
-### 3. Fullscreen touchscreen kiosk
-
-Opens Chromium fullscreen at the **Next.js UI** on `http://127.0.0.1:3000` (not :8080 API).
+If the UI code did **not** change since the last build, skip the rebuild:
 
 ```bash
-./scripts/run-frontend-prod.sh   # start Next.js on :3000 first
-./scripts/kiosk.sh               # fullscreen browser
-./scripts/refresh-kiosk.sh     # restart browser after UI rebuild
+cd frontend
+pnpm start
 ```
+
+For UI development with hot reload:
+
+```bash
+./scripts/run-frontend-dev.sh
+```
+
+Kiosk API routes (`/api/map`, `/api/upload-status`, etc.) proxy to Python on **:8080**. LiveKit tokens are minted in Next.js (`/api/connection-details`).
+
+---
+
+### Terminal 3 — Fullscreen kiosk browser (optional)
+
+Opens Chromium at `http://127.0.0.1:3000` (the Next.js UI, **not** :8080).
+
+```bash
+cd /home/nema/Documents/voice-agentv5
+./scripts/kiosk.sh
+```
+
+After rebuilding the frontend:
+
+```bash
+./scripts/refresh-kiosk.sh
+```
+
+Kiosk does **not** start on boot by default — run `kiosk.sh` manually when needed.
+
+---
+
+### Verify voice works
+
+1. Backend log should show `Voice agent enabled (LiveKit start)` when the mic is used.
+2. Tap the mic on the kiosk UI — backend should log `[VoiceService] Job received: room=...`.
+3. `AGENT_NAME` must be `campus-greeting-agent` in `frontend/.env.local` (seeded automatically from `LIVEKIT_AGENT_NAME` in `.env`).
+
+---
 
 ## Ports
 
 | Port | Service |
 |------|---------|
 | 3000 | Next.js kiosk UI |
-| 8080 | MediaServer (posters, maps, upload APIs) |
-| 8082 | Debug dashboard + MJPEG `/stream` (on-demand via `DEBUG_VIZ=1`) |
+| 8080 | MediaServer (posters, maps, upload APIs) + voice blackboard hooks |
+| 8082 | Debug dashboard + MJPEG `/stream` (`DEBUG_VIZ=1` or `debug_viz.auto_start` in config) |
 | 8000 | Bye-wave hand stream (disabled in `config.kiosk.yaml`) |
+
+## Config profiles
+
+| File | Purpose |
+|------|---------|
+| `config.yaml` | Default / dev tuning |
+| `config.kiosk.yaml` | **Pi kiosk** — lower vision FPS/resolution, 50 Hz servo loops, bye-wave off, debug viz off by default |
+
+```bash
+CONFIG_PATH=config.kiosk.yaml python start_robot.py start
+# or
+python start_robot.py --config config.kiosk.yaml start
+```
 
 ## CPU notes
 
-- **Face-only tracking** — YOLO body detection removed; YuNet face detection only.
-- **`config.kiosk.yaml`** — lower vision FPS/resolution, 50 Hz servo loops, bye-wave off, debug viz off by default.
-- Run **production** frontend (`run-frontend-prod.sh`) on the Pi, not dev mode.
+- **Face-only tracking** — YuNet face detection only (no YOLO body detection).
+- Use **`config.kiosk.yaml`** when running frontend + Chromium on the same Pi.
+- Run **production** frontend (`run-frontend-prod.sh` or `pnpm start`) on the Pi, not dev mode, for demos.
+- `run-frontend-prod.sh` runs a full `next build` every time; use `cd frontend && pnpm start` when the UI has not changed.
 
 ## Project layout
 
 ```
 voice-agentv5/
-├── start_robot.py       # Main entry
-├── config.yaml          # Default / dev tuning
+├── start_robot.py       # Main entry (hardware, vision, voice, APIs)
+├── config.yaml          # Default config
 ├── config.kiosk.yaml    # Pi kiosk (lower CPU)
 ├── core/                # Face tracking, servos, eyes, blackboard
 ├── voice/               # LiveKit agent + MediaServer
@@ -90,8 +161,8 @@ voice-agentv5/
     ├── run-frontend-dev.sh
     ├── run-frontend-prod.sh
     ├── kiosk.sh
-    ├── measure_resources.sh
-    └── refresh-kiosk.sh
+    ├── refresh-kiosk.sh
+    └── measure_resources.sh
 ```
 
 ## ESP32 firmware

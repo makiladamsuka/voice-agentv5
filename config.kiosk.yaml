@@ -3,8 +3,8 @@
 
 camera:
   face_model_path: face_detection_yunet_2023mar.onnx
-  main_res: [1280, 720]
-  detect_res: [960, 540]
+  main_res: [640, 480]       # lower capture cost vs 1280x720 (voice priority on Pi)
+  detect_res: [480, 270]     # YuNet input — halved vs 960x540
   confidence_threshold: 0.6
   nms_threshold: 0.3
   rotate_180: false
@@ -14,10 +14,11 @@ stream:
   enabled: true
   host: "0.0.0.0"
   port: 8083   # not 8081 — LiveKit worker health server uses 8081 in start mode
-  fps: 8
-  jpeg_quality: 70
-  render_fps: 24
-  vision_fps: 6
+  fps: 6
+  jpeg_quality: 60
+  render_fps: 15
+  vision_fps: 5
+  vision_fps_voice: 3        # throttle face detect while mic session is active
   res: [320, 180]
 
 debug_viz:
@@ -78,7 +79,7 @@ imu:
   auto_level_min_samples: 40
   i2c_bus: 1
   address: 0x69
-  sample_hz: 50
+  sample_hz: 25
   roll_pitch_alpha: 0.02
   # PCB on head: +X up, +Y left, +Z back → forward=-Z, left=+Y, yaw-about-up=+X
   # Values are 1-based sensor axes (1=X, 2=Y, 3=Z); negative flips sign.
@@ -163,7 +164,7 @@ base:
   fast_face_max_step_deg: 25.0
   fast_face_velocity_to_deg_gain: 2.0
   fast_face_compensation_gain: 0.45
-  wander_enabled: true
+  wander_enabled: false      # idle base wander off on kiosk — fewer spins during voice
   wander_step_deg: 15 # base follows head with ~15° plate steps
   wander_cooldown_sec: 12.0
   wander_chance: 0.15
@@ -223,7 +224,7 @@ servo:
   deadzone_y: 0.06
   pan_center_norm_x: 0.05       # |norm_x| below this → face centered, hold pan
   tilt_center_norm_y: 0.08
-  loop_hz: 50.0
+  loop_hz: 35.0
   no_face_home_sec: 1.2
   debug_hz: 2.0
   face_alpha_x: 0.12 # tilt/velocity only
@@ -280,7 +281,7 @@ servo:
   pan_track_smooth_hz: 16.25 # always applied during track — limits overshoot
   tilt_smooth_hz: 5.5 
   servo_send_min_deg: 0.04
-  servo_send_hz: 50.0
+  servo_send_hz: 35.0
   servo_angle_quantum_deg: 0.05
   pan_send_smooth_hz: 6.0    # softer final serial smoothing for pan
   tilt_send_smooth_hz: 5.0
@@ -300,7 +301,7 @@ arms:
   min_spin_moved_deg: 2.0
   detach_on_shutdown: false
   turn_sign: 1.0
-  loop_hz: 50.0
+  loop_hz: 35.0
 
 bye_wave:
   enabled: false
@@ -330,7 +331,7 @@ face_greeting_arm:
   use_landmarks_only: true       # Use only face landmarks (geometric), ignore color/texture (MORE STABLE!)
 
 eyes:
-  render_fps: 24          # ST7735 eye update rate (independent of camera stream)
+  render_fps: 12          # ST7735 eye update rate (independent of camera stream)
   blink_speed_min: 3.2
   blink_speed_max: 4.2
   eye_color: [255, 255, 255]
@@ -368,7 +369,7 @@ voice:
 talk_gesture:
   enabled: true              # Auto-enabled when voice + arms are both enabled
   pose_duration: 0.4         # Seconds to transition between poses
-  poll_interval: 0.05        # Seconds between updates (50 Hz)
+  poll_interval: 0.08        # 12.5 Hz arm updates (was 50 Hz — reduces jitter during TTS)
   vertical_speed: 0.5        # Speed multiplier for a0, a1 (shoulder/elbow up/down) - SLOWER for more graceful talking gestures
   horizontal_speed: 0.5      # Speed multiplier for a2, a3 (wrist/hand swap side-to-side) - reduced from 1.5 to prevent frame skipping in bye animations
   smoothness: 5.0         

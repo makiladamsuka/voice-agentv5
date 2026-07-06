@@ -136,6 +136,7 @@ class FaceTracker:
         self.swap_rb = bool(_cfg(cam, "stream_swap_rb", default=True))
         self.stream_enabled = bool(_cfg(stream, "enabled", default=True))
         self.vision_fps = int(_cfg(stream, "vision_fps", default=10))
+        self.vision_fps_voice = int(_cfg(stream, "vision_fps_voice", default=0))
 
         # Person memory
         self.pm_enabled = bool(pm.get("enabled", True))
@@ -375,7 +376,13 @@ class FaceTracker:
             now_pc = time.perf_counter()
             if now_pc < next_tick:
                 time.sleep(max(0.001, next_tick - now_pc))
-            next_tick = time.perf_counter() + interval
+            voice_active = bool(
+                self.bb.read("voice_session_active")["voice_session_active"]
+            )
+            fps = self.vision_fps
+            if voice_active and self.vision_fps_voice > 0:
+                fps = self.vision_fps_voice
+            next_tick = time.perf_counter() + (1.0 / max(1, fps))
 
             now = time.time()
             try:

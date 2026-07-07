@@ -519,10 +519,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         setup_local_audio,
         shutdown_local_audio,
     )
+    from voice.local_speaker import create_audio_output
 
     mic_input = None
     use_local_mic = False
     use_aec_speaker = False
+    use_local_speaker = resolve_local_speaker(config_path)
     try:
         mic_input, use_local_mic, use_aec_speaker = await setup_local_audio(
             asyncio.get_running_loop(),
@@ -532,15 +534,22 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             session.input.audio = mic_input
             if _bb is not None:
                 _bb.write(local_mic_active=True)
-                if use_aec_speaker or resolve_local_speaker(config_path):
-                    _bb.write(local_speaker_active=True)
+
+        # LiveKit skips TTS entirely when output.audio is None — attach Pi speaker sink.
+        if use_local_speaker:
+            session.output.audio = create_audio_output()
+            if _bb is not None:
+                _bb.write(local_speaker_active=True)
+            print("[VoiceService] Local speaker output attached — TTS will play on Pi")
 
         room_opts: dict = {}
         if use_local_mic:
             room_opts["audio_input"] = False
-        if use_local_mic or use_aec_speaker:
-            room_opts["audio_output"] = False
-        elif _bb is not None and _bb.read("local_speaker_active")["local_speaker_active"]:
+        if (
+            use_local_mic
+            or use_aec_speaker
+            or resolve_local_speaker(config_path)
+        ):
             room_opts["audio_output"] = False
 
         room_options = (
@@ -708,15 +717,7 @@ def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
         else APP_DIR / (config_raw or "config.yaml")
     )
     try:
-        if resolve_local_mic(config_path):
-            bb.write(local_mic_active=True)
-            if resolve_local_speaker(config_path):
-                bb.write(local_speaker_active=True)
-            print(
-                "[VoiceService] Local mic configured — "
-                "browser mic should be disabled"
-            )
-        else:
+        if resolve_local_speaker(config_path):
             local_on = init_from_config(config_path)
             if local_on:
                 bb.write(local_speaker_active=True)
@@ -724,6 +725,12 @@ def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
                     "[VoiceService] Local speaker active — "
                     "browser agent audio should be muted"
                 )
+        if resolve_local_mic(config_path):
+            bb.write(local_mic_active=True)
+            print(
+                "[VoiceService] Local mic configured — "
+                "browser mic should be disabled"
+            )
     except Exception as exc:
         print(f"[VoiceService] Local audio init failed: {exc}")
 

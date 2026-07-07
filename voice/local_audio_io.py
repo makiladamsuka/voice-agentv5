@@ -159,7 +159,6 @@ async def setup_local_audio(
     global _output_player, _mic_input, _pump_task
 
     use_mic = resolve_local_mic(config_path)
-    use_speaker = resolve_local_speaker(config_path)
 
     if not use_mic:
         return None, False, False
@@ -171,6 +170,7 @@ async def setup_local_audio(
             noise_suppression=True,
             high_pass_filter=True,
             auto_gain_control=True,
+            queue_capacity=200,
         )
         _mic_input = LocalMicAudioInput()
         track = rtc.LocalAudioTrack.create_audio_track(
@@ -184,22 +184,15 @@ async def setup_local_audio(
         )
         _pump_task = asyncio.create_task(_pump_mic_stream(stream, _mic_input))
 
-        if use_speaker:
-            _output_player = _devices.open_output()
-            await _output_player.start()
-            _aec_speaker = True
-            print(
-                "[LocalAudioIO] AEC mic + speaker active "
-                f"@ {_DEVICE_SAMPLE_RATE} Hz — mute browser mic and agent audio"
-            )
-        else:
-            print(
-                f"[LocalAudioIO] AEC mic active @ {_DEVICE_SAMPLE_RATE} Hz "
-                "— mute browser mic"
-            )
+        # Speaker: use voice/local_speaker.py (init at worker startup), not OutputPlayer.
+        # OutputPlayer + empty mixer was silent on Pi; local_speaker is proven @ 24 kHz.
+        print(
+            f"[LocalAudioIO] Backend mic active @ {_DEVICE_SAMPLE_RATE} Hz "
+            "(speaker via local_speaker.py — mute browser mic and agent audio)"
+        )
 
         _enabled_mic = True
-        return _mic_input, True, _aec_speaker
+        return _mic_input, True, False
     except Exception as exc:
         print(f"[LocalAudioIO] Setup failed, falling back to browser mic: {exc}")
         await shutdown_local_audio()

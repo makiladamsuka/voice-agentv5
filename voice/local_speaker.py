@@ -11,12 +11,17 @@ When active, the frontend must not play agent audio (see ``/api/voice-config``).
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import os
 import queue
 import threading
+import time
 from pathlib import Path
 from typing import Optional
+
+from livekit import rtc
+from livekit.agents.voice.io import AudioOutput, AudioOutputCapabilities
 
 _SAMPLE_RATE = 24000
 _CHANNELS = 1
@@ -133,6 +138,68 @@ def drain() -> None:
 
 def shutdown() -> None:
     configure(enabled=False)
+
+
+class LocalSpeakerAudioOutput(AudioOutput):
+    """AgentSession audio sink — drives TTS synthesis and plays on Pi speakers."""
+
+    def __init__(self, sample_rate: int = _SAMPLE_RATE) -> None:
+        super().__init__(
+            label="LocalSpeaker",
+            next_in_chain=None,
+            sample_rate=sample_rate,
+            capabilities=AudioOutputCapabilities(pause=False),
+        )
+        self._pushed_duration = 0.0
+        self._flush_task: asyncio.Task[None] | None = None
+        self._interrupted = False
+        self._started_playback = False
+
+    async def capture_frame(self, frame: rtc.AudioFrame) -> None:
+        await super().capture_frame(frame)
+        if not _enabled:
+            return
+        write_pcm(frame.data.tobytes())
+        self._pushed_duration += frame.duration
+        if not self._started_playback:
+            self._started_playback = True
+            self.on_playback_started(created_at=time.time())
+
+    def flush(self) -> None:
+        super().flush()
+        self._started_playback = False
+        if self._pushed_duration <= 0:
+            return
+        duration = self._pushed_duration
+        self._pushed_duration = 0.0
+        self._interrupted = False
+        if self._flush_task and not self._flush_task.done():
+            self._flush_task.cancel()
+        loop = asyncio.get_event_loop()
+        self._flush_task = loop.create_task(self._finish_after(duration))
+
+    def clear_buffer(self) -> None:
+        self._interrupted = True
+        self._started_playback = False
+        self._pushed_duration = 0.0
+        if self._flush_task and not self._flush_task.done():
+            self._flush_task.cancel()
+        drain()
+
+    async def _finish_after(self, duration: float) -> None:
+        try:
+            await asyncio.sleep(duration)
+        except asyncio.CancelledError:
+            return
+        if not self._interrupted:
+            self.on_playback_finished(
+                playback_position=duration,
+                interrupted=False,
+            )
+
+
+def create_audio_output(sample_rate: int = _SAMPLE_RATE) -> LocalSpeakerAudioOutput:
+    return LocalSpeakerAudioOutput(sample_rate=sample_rate)
 
 
 def _audio_callback(outdata, frames, _time, _status) -> None:

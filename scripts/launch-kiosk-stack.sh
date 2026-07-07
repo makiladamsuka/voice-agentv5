@@ -135,6 +135,7 @@ else
   (
     cd "$ROOT"
     export CONFIG_PATH
+    export PYTHONUNBUFFERED=1
     exec "$PYTHON" start_robot.py start
   ) >>"$LOG_DIR/backend.log" 2>&1 &
   BACKEND_PID=$!

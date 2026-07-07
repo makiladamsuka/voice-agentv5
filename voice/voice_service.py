@@ -737,6 +737,12 @@ def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
     if devmode:
         os.environ["LIVEKIT_DEV_MODE"] = "1"
 
+    log_level = os.getenv("LIVEKIT_LOG_LEVEL", "DEBUG" if devmode else "INFO").upper()
+    from livekit.agents.cli.log import setup_logging
+
+    setup_logging(log_level, devmode=devmode, console=True)
+    print(f"[VoiceService] LiveKit log level: {log_level}")
+
     print("[VoiceService] Starting LiveKit agent...")
     print(f"[VoiceService] .env loaded from {env_path}")
     print(f"[VoiceService] mode={'dev' if devmode else 'start'}")
@@ -760,6 +766,7 @@ def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
             job_executor_type=JobExecutorType.THREAD,
             load_threshold=load_threshold,
             port=worker_port,
+            log_level=log_level,
         )
     )
 

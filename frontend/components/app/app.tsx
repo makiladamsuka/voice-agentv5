@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
-import { TokenSource } from "livekit-client";
+import { useEffect, useMemo } from "react";
+import { LogLevel, TokenSource, setLogLevel } from "livekit-client";
 import {
   SessionProvider,
   StartAudio,
@@ -20,6 +20,15 @@ const IN_DEVELOPMENT = process.env.NODE_ENV !== "production";
 function AppSetup() {
   useDebugMode({ enabled: IN_DEVELOPMENT });
   useAgentErrors();
+
+  useEffect(() => {
+    const debug =
+      process.env.NEXT_PUBLIC_LIVEKIT_DEBUG === "1" ||
+      process.env.NEXT_PUBLIC_LIVEKIT_DEBUG === "true";
+    if (debug) {
+      setLogLevel(LogLevel.debug);
+    }
+  }, []);
 
   return null;
 }

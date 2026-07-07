@@ -13,6 +13,8 @@ KIOSK_API_PORT="${KIOSK_API_PORT:-8080}"
 URL="${KIOSK_URL:-http://127.0.0.1:${FRONTEND_PORT}/}"
 CHROMIUM="${CHROMIUM:-chromium-browser}"
 PROFILE_DIR="${KIOSK_PROFILE_DIR:-${HOME}/.config/voice-agent-kiosk-chromium}"
+LOG_DIR="${LOG_DIR:-${ROOT}/logs}"
+CHROMIUM_LOG="${CHROMIUM_LOG:-${LOG_DIR}/chromium.log}"
 MAX_WAIT=180
 
 export DISPLAY="${DISPLAY:-:0}"
@@ -60,7 +62,7 @@ if ! _port_listening "$KIOSK_API_PORT"; then
   echo "  (Map/posters/upload will fail until :8080 is up.)" >&2
 fi
 
-mkdir -p "$PROFILE_DIR"
+mkdir -p "$PROFILE_DIR" "$LOG_DIR"
 
 if command -v unclutter >/dev/null 2>&1; then
   pkill -x unclutter 2>/dev/null || true
@@ -73,6 +75,7 @@ amixer -q sset Headphone 100% unmute 2>/dev/null || true
 
 echo "Opening kiosk UI: ${URL}"
 echo "  (API backend :${KIOSK_API_PORT} — not opened in browser)"
+echo "  Chromium log: ${CHROMIUM_LOG} (stderr suppressed in this terminal)"
 
 exec "$CHROMIUM" \
   --kiosk \
@@ -91,5 +94,14 @@ exec "$CHROMIUM" \
   --renderer-process-limit=1 \
   --num-raster-threads=1 \
   --autoplay-policy=no-user-gesture-required \
+  --disable-background-networking \
+  --disable-sync \
+  --disable-default-apps \
+  --disable-component-update \
+  --disable-features=TranslateUI,MediaRouter \
+  --use-fake-device-for-media-stream \
+  --log-level=3 \
+  --disable-logging \
   --user-data-dir="$PROFILE_DIR" \
-  "$URL"
+  "$URL" \
+  >>"$CHROMIUM_LOG" 2>&1

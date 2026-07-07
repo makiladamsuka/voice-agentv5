@@ -48,6 +48,8 @@ FACE_ALPHA_X = 0.22        # core: servo.face_alpha_x
 FACE_ALPHA_Y = 0.06        # core: servo.face_alpha_y
 HAND_ALPHA_X = 0.25        # slightly more responsive than face (hands jitter more)
 HAND_ALPHA_Y = 0.08
+BLOB_ALPHA_X = 0.30        # very fast tracking for massive skin blobs
+BLOB_ALPHA_Y = 0.10
 
 # Deadzone — ignore errors this small to prevent micro-oscillation near center.
 DEADZONE_X = 0.04          # core: servo.deadzone_x
@@ -60,6 +62,7 @@ TILT_MAX_STEP_DEG = 2.0    # core: 1.8°
 # Exponential smooth rates — lower = smoother but more sluggish.
 FACE_SMOOTH_HZ = 4.5       # matches core's pan_track_smooth_hz
 HAND_SMOOTH_HZ = 3.5       # extra smoothing for noisier hand detections
+BLOB_SMOOTH_HZ = 3.0       # absorbs noisy centroid wobbles of shapeless blobs
 
 # Camera FOV half-angles (degrees) used to convert normalized error to servo degrees.
 FOV_HALF_X_DEG = 30.0
@@ -247,7 +250,12 @@ def draw_hud(
     # Crosshair
     if target is not None:
         tx, ty = target
-        color = (0, 255, 0) if target_type == "FACE" else (0, 255, 255)
+        if target_type == "FACE":
+            color = (0, 255, 0)
+        elif target_type == "HAND":
+            color = (0, 255, 255)
+        else:
+            color = (255, 0, 255) # Magenta for CLOSE_UP
         length = 20
         cv2.line(frame, (tx - length, ty), (tx + length, ty), color, 2)
         cv2.line(frame, (tx, ty - length), (tx, ty + length), color, 2)
@@ -387,6 +395,27 @@ def main():
                 best_hand = max(hands, key=lambda h: h.confidence)
                 target = best_hand.palm_center
                 target_type = "HAND"
+                
+            # 3. Fallback to Skin Blob if Hand not detected (hand too close/large)
+            if target is None:
+                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                # Typical human skin color range in HSV
+                lower_skin = np.array([0, 30, 60], dtype=np.uint8)
+                upper_skin = np.array([20, 255, 255], dtype=np.uint8)
+                mask = cv2.inRange(hsv, lower_skin, upper_skin)
+                
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if contours:
+                    largest_blob = max(contours, key=cv2.contourArea)
+                    area = cv2.contourArea(largest_blob)
+                    # If blob covers at least 15% of the frame, it's likely a close-up block
+                    if area > (w * h * 0.15):
+                        M = cv2.moments(largest_blob)
+                        if M["m00"] > 0:
+                            cx = int(M["m10"] / M["m00"])
+                            cy = int(M["m01"] / M["m00"])
+                            target = (cx, cy)
+                            target_type = "CLOSE_UP"
 
             # 3. Servo Tracking Update — multi-layer smoothing pipeline
             #    (EMA filter → deadzone → velocity-adaptive alpha → smooth + step clamp)
@@ -409,9 +438,12 @@ def main():
                 if target_type == "FACE":
                     alpha_x, alpha_y = FACE_ALPHA_X, FACE_ALPHA_Y
                     smooth_hz = FACE_SMOOTH_HZ
-                else:
+                elif target_type == "HAND":
                     alpha_x, alpha_y = HAND_ALPHA_X, HAND_ALPHA_Y
                     smooth_hz = HAND_SMOOTH_HZ
+                else:
+                    alpha_x, alpha_y = BLOB_ALPHA_X, BLOB_ALPHA_Y
+                    smooth_hz = BLOB_SMOOTH_HZ
 
                 # On target-type switch, snap filter to raw to avoid lag.
                 if target_type != prev_target_type:

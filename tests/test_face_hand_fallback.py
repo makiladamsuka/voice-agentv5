@@ -23,6 +23,7 @@ import socket
 import socketserver
 import threading
 import time
+import json
 from pathlib import Path
 
 # ── Headless-safe OpenCV import ───────────────────────────────────────────────
@@ -37,6 +38,7 @@ import cv2
 import numpy as np
 
 from lib.hand_detector import HandDetector, draw_skeleton
+from hardware.arduino_servo import ArduinoServoLink
 
 # Streaming Server State
 latest_frame = None
@@ -234,8 +236,33 @@ def main():
         target_id=cv2.dnn.DNN_TARGET_CPU,
     )
 
+    # Init Servo Link
+    link = ArduinoServoLink()
+    
+    # Load Arm Homes
+    arm_homes = [0.0, 180.0, 90.0, 90.0]
+    limits_path = app_dir / "tests" / "captured_arm_limits.json"
+    if limits_path.exists():
+        try:
+            with open(limits_path, 'r') as f:
+                data = json.load(f)
+                if "homes" in data:
+                    arm_homes = data["homes"]
+        except Exception as e:
+            print(f"[ERROR] Failed to load arm limits: {e}")
+
+    if link.connect():
+        print("[INFO] Servo Link connected.")
+        # Move arms to home position without touching head (pan/tilt)
+        link.write_arms(*arm_homes, force=True)
+    else:
+        print("[WARN] Servo Link failed to connect. Running in software-only mode.")
+        link = None
+
     prev_time = time.time()
     fps = 0.0
+    pan = 90.0
+    tilt = 90.0
 
     print("\n[INFO] Starting loop. Press Ctrl+C to exit.")
     
@@ -291,6 +318,33 @@ def main():
                 target = best_hand.palm_center
                 target_type = "HAND"
 
+            # 3. Servo Tracking Update
+            if target is not None:
+                cx, cy = target
+                
+                # Frame center is (320, 240)
+                error_x = cx - 320
+                error_y = cy - 240
+                
+                # Proportional control
+                # If target is on the right (cx > 320), error_x is positive.
+                # Assuming pan decreases to move right (mirroring typical servo setup):
+                # Adjust the sign if the robot turns the wrong way.
+                if args.mirror:
+                    pan += error_x * 0.05
+                else:
+                    pan -= error_x * 0.05
+                    
+                # Tilt adjustment
+                tilt -= error_y * 0.05
+                
+                # Limit angles to safe mechanical boundaries
+                pan = max(30.0, min(150.0, pan))
+                tilt = max(50.0, min(130.0, tilt))
+                
+                if link is not None:
+                    link.write_angles(pan, tilt)
+
             # Calculate FPS
             now = time.time()
             fps = 1.0 / max(now - prev_time, 1e-6)
@@ -315,6 +369,8 @@ def main():
     finally:
         camera.stop()
         hand_detector.close()
+        if link is not None:
+            link.close()
         server.shutdown()
         if not args.no_window:
             cv2.destroyAllWindows()

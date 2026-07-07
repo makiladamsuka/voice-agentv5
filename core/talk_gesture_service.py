@@ -142,6 +142,7 @@ class TalkGestureService:
         reset arm position to home regardless of current state.
         """
         self._return_to_home()
+        self.bb.write(talk_gesture_active=False)
 
     def _apply_pose(self, pose: dict) -> None:
         """Apply a single pose to the arms via Blackboard."""
@@ -249,6 +250,7 @@ class TalkGestureService:
             return
         
         last_speaking = False
+        self.bb.write(talk_gesture_active=False)
         
         while self.bb.read("running")["running"]:
             # Check if bye wave is active - pause talk gestures during bye animations
@@ -263,20 +265,13 @@ class TalkGestureService:
             # Log state changes and track when speaking stopped
             if is_speaking and not last_speaking:
                 print("[TalkGesture] Agent started speaking")
-                self._speaking_stopped_time = None  # Reset the timer
+                self.bb.write(talk_gesture_active=True)
             elif not is_speaking and last_speaking:
-                print("[TalkGesture] Agent stopped speaking - waiting before returning home")
-                self._speaking_stopped_time = time.time()  # Start the delay timer
+                print("[TalkGesture] Agent stopped speaking - returning home")
+                self._return_to_home()
+                self.bb.write(talk_gesture_active=False)
             
             last_speaking = is_speaking
-            
-            # Check if we should return to home after delay
-            if not is_speaking and self._speaking_stopped_time is not None:
-                elapsed_since_stop = time.time() - self._speaking_stopped_time
-                if elapsed_since_stop >= self.return_home_delay:
-                    print(f"[TalkGesture] Returning to home position after {self.return_home_delay}s delay")
-                    self._return_to_home()
-                    self._speaking_stopped_time = None  # Reset timer after returning home
             
             # Only play poses while speaking
             if not is_speaking:
@@ -293,8 +288,8 @@ class TalkGestureService:
             # Apply the pose with smooth interpolation (different speeds for vertical/horizontal)
             self._apply_pose_smooth(pose, self.pose_duration)
             
-            # Random wait time between poses (2-3 seconds) - hold pose even if speaking stops
-            wait_time = random.uniform(2.0, 3.0)
+            # Random wait time between poses (1-2 seconds) - hold pose even if speaking stops
+            wait_time = random.uniform(1.0, 2.0)
             wait_start = time.time()
             
             # Hold pose for full duration - don't break early when speaking stops
@@ -302,4 +297,5 @@ class TalkGestureService:
                 time.sleep(self.poll_interval)
         
         _active_talk_gesture_service = None  # Unregister on exit
+        self.bb.write(talk_gesture_active=False)
         print("[TalkGesture] Service stopped")

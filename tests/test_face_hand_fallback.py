@@ -34,12 +34,40 @@ if not _has_display:
     os.environ.setdefault("OPENCV_VIDEOIO_PRIORITY_MSMF", "0")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
+import math
 import cv2
 import numpy as np
 
 from lib.hand_detector import HandDetector, draw_skeleton
-from lib.elastic_head_motion import smooth_toward
+from lib.elastic_head_motion import clamp, smooth_toward
 from hardware.arduino_servo import ArduinoServoLink
+
+# ── Smoothing constants (ported from core/servo_loop.py) ──────────────────────
+# EMA input filter alphas — separate per axis; tilt is gentler to avoid bobbing.
+FACE_ALPHA_X = 0.22        # core: servo.face_alpha_x
+FACE_ALPHA_Y = 0.06        # core: servo.face_alpha_y
+HAND_ALPHA_X = 0.25        # slightly more responsive than face (hands jitter more)
+HAND_ALPHA_Y = 0.08
+
+# Deadzone — ignore errors this small to prevent micro-oscillation near center.
+DEADZONE_X = 0.04          # core: servo.deadzone_x
+DEADZONE_Y = 0.05          # core: servo.deadzone_y
+
+# Per-tick step clamp — prevents servo snaps on detection dropout/reappear.
+PAN_MAX_STEP_DEG  = 1.5    # core: 1.2° (slightly more generous for hand tracking)
+TILT_MAX_STEP_DEG = 2.0    # core: 1.8°
+
+# Exponential smooth rates — lower = smoother but more sluggish.
+FACE_SMOOTH_HZ = 4.5       # matches core's pan_track_smooth_hz
+HAND_SMOOTH_HZ = 3.5       # extra smoothing for noisier hand detections
+
+# Camera FOV half-angles (degrees) used to convert normalized error to servo degrees.
+FOV_HALF_X_DEG = 30.0
+FOV_HALF_Y_DEG = 20.0
+
+# Servo limits
+PAN_LO, PAN_HI   = 30.0, 150.0
+TILT_LO, TILT_HI = 50.0, 130.0
 
 # Streaming Server State
 latest_frame = None
@@ -173,14 +201,48 @@ class CameraFeed:
         else:
             self.cap.release()
 
-def draw_hud(frame: cv2.Mat, target: tuple[int, int] | None, target_type: str, fps: float) -> cv2.Mat:
-    """Draws HUD and target crosshair."""
+# ── Smoothing helpers (ported from core/servo_loop.py) ────────────────────────
+
+def _apply_deadzone(value: float, deadzone: float) -> float:
+    """Suppress small errors inside ±deadzone to prevent micro-oscillation."""
+    if abs(value) <= deadzone:
+        return 0.0
+    sign = 1.0 if value > 0 else -1.0
+    return sign * (abs(value) - deadzone) / (1.0 - deadzone)
+
+
+def _smooth_toward_stepped(
+    pos: float,
+    target: float,
+    dt: float,
+    *,
+    smooth_hz: float,
+    lo: float,
+    hi: float,
+    max_step: float,
+) -> float:
+    """Exponential smooth with per-tick step cap — prevents servo snaps."""
+    next_pos = smooth_toward(pos, target, dt, smooth_hz=smooth_hz, lo=lo, hi=hi)
+    step = clamp(next_pos - pos, -max_step, max_step)
+    return clamp(pos + step, lo, hi)
+
+
+def draw_hud(
+    frame: cv2.Mat,
+    target: tuple[int, int] | None,
+    target_type: str,
+    fps: float,
+    pan: float,
+    tilt: float,
+) -> cv2.Mat:
+    """Draws HUD with target crosshair and servo angle readout."""
     h, w, _ = frame.shape
     
     # Top info bar
     cv2.rectangle(frame, (0, 0), (w, 40), (15, 15, 20), -1)
     cv2.putText(frame, f"FPS: {fps:.1f}", (10, 25), cv2.FONT_HERSHEY_DUPLEX, 0.6, (0, 255, 120), 1)
     cv2.putText(frame, f"TARGET: {target_type}", (150, 25), cv2.FONT_HERSHEY_DUPLEX, 0.6, (255, 106, 0), 1)
+    cv2.putText(frame, f"PAN:{pan:.1f} TILT:{tilt:.1f}", (370, 25), cv2.FONT_HERSHEY_DUPLEX, 0.5, (180, 180, 220), 1)
 
     # Crosshair
     if target is not None:
@@ -265,6 +327,13 @@ def main():
     pan = 90.0
     tilt = 90.0
 
+    # ── EMA filter + velocity tracking state (matches core servo_loop) ────────
+    filtered_norm_x = 0.0
+    filtered_norm_y = 0.0
+    prev_raw_norm_x = 0.0
+    prev_raw_norm_y = 0.0
+    prev_target_type = "NONE"
+
     print("\n[INFO] Starting loop. Press Ctrl+C to exit.")
     
     try:
@@ -319,33 +388,77 @@ def main():
                 target = best_hand.palm_center
                 target_type = "HAND"
 
-            # 3. Servo Tracking Update
+            # 3. Servo Tracking Update — multi-layer smoothing pipeline
+            #    (EMA filter → deadzone → velocity-adaptive alpha → smooth + step clamp)
             if target is not None:
                 cx, cy = target
-                
-                # Frame center is (320, 240)
-                norm_x = (cx - 320) / 320.0
-                norm_y = (cy - 240) / 240.0
-                
-                # Approximate degree errors based on camera FOV
-                pan_error_deg = norm_x * 30.0
-                tilt_error_deg = norm_y * 20.0
-                
+                dt = 1.0 / max(fps, 1.0)
+
+                # ── Layer 1: Normalize to [-1, +1] ────────────────────────────
+                raw_norm_x = (cx - (w / 2.0)) / (w / 2.0)
+                raw_norm_y = (cy - (h / 2.0)) / (h / 2.0)
+
+                # ── Layer 2: Velocity tracking (for adaptive alpha) ───────────
+                vel_x = abs(raw_norm_x - prev_raw_norm_x) / max(dt, 0.001)
+                vel_y = abs(raw_norm_y - prev_raw_norm_y) / max(dt, 0.001)
+                prev_raw_norm_x = raw_norm_x
+                prev_raw_norm_y = raw_norm_y
+
+                # ── Layer 3: EMA input filter with velocity-adaptive alpha ────
+                # Pick base alphas by target type.
+                if target_type == "FACE":
+                    alpha_x, alpha_y = FACE_ALPHA_X, FACE_ALPHA_Y
+                    smooth_hz = FACE_SMOOTH_HZ
+                else:
+                    alpha_x, alpha_y = HAND_ALPHA_X, HAND_ALPHA_Y
+                    smooth_hz = HAND_SMOOTH_HZ
+
+                # On target-type switch, snap filter to raw to avoid lag.
+                if target_type != prev_target_type:
+                    filtered_norm_x = raw_norm_x
+                    filtered_norm_y = raw_norm_y
+                    prev_target_type = target_type
+
+                # Boost alpha when target moves fast (core servo_loop L710-L713).
+                if vel_x > 2.0:
+                    alpha_x = min(0.58, alpha_x + (vel_x - 2.0) * 0.05)
+                if vel_y > 1.5:
+                    alpha_y = min(0.40, alpha_y + (vel_y - 1.5) * 0.04)
+
+                filtered_norm_x += (raw_norm_x - filtered_norm_x) * alpha_x
+                filtered_norm_y += (raw_norm_y - filtered_norm_y) * alpha_y
+
+                # ── Layer 4: Deadzone — suppress micro-corrections near center ─
+                err_x = _apply_deadzone(filtered_norm_x, DEADZONE_X)
+                err_y = _apply_deadzone(filtered_norm_y, DEADZONE_Y)
+
+                # ── Layer 5: Convert to servo degree error ─────────────────────
+                pan_error_deg = err_x * FOV_HALF_X_DEG
+                tilt_error_deg = err_y * FOV_HALF_Y_DEG
+
                 # Absolute targets
                 if args.mirror:
                     target_pan = pan + pan_error_deg
                 else:
                     target_pan = pan - pan_error_deg
-                    
                 target_tilt = tilt - tilt_error_deg
-                
-                # Smooth the movement over time (dt = 1/fps)
-                dt = 1.0 / max(fps, 1.0)
-                pan = smooth_toward(pan, target_pan, dt, smooth_hz=4.5, lo=30.0, hi=150.0)
-                tilt = smooth_toward(tilt, target_tilt, dt, smooth_hz=4.5, lo=50.0, hi=130.0)
-                
+
+                # ── Layer 6: Exponential smooth + per-tick step clamp ──────────
+                pan = _smooth_toward_stepped(
+                    pan, target_pan, dt,
+                    smooth_hz=smooth_hz, lo=PAN_LO, hi=PAN_HI,
+                    max_step=PAN_MAX_STEP_DEG,
+                )
+                tilt = _smooth_toward_stepped(
+                    tilt, target_tilt, dt,
+                    smooth_hz=smooth_hz, lo=TILT_LO, hi=TILT_HI,
+                    max_step=TILT_MAX_STEP_DEG,
+                )
+
                 if link is not None:
                     link.write_angles(pan, tilt)
+            else:
+                prev_target_type = "NONE"
 
             # Calculate FPS
             now = time.time()
@@ -353,7 +466,7 @@ def main():
             prev_time = now
 
             # Draw HUD
-            frame = draw_hud(frame, target, target_type, fps)
+            frame = draw_hud(frame, target, target_type, fps, pan, tilt)
 
             # Publish to Stream
             global latest_frame

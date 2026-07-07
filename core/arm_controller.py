@@ -249,10 +249,10 @@ class ArmController:
                 time.sleep(loop_delay)
                 continue
 
-            # Yield to TalkGestureService while agent is speaking — same pattern
+            # Yield to TalkGestureService while it is active — same pattern
             # as bye_wave: passively track BB values so we resume cleanly.
-            agent_speaking = self.bb.read("agent_speaking").get("agent_speaking", False)
-            if agent_speaking:
+            talk_active = self.bb.read("talk_gesture_active").get("talk_gesture_active", False)
+            if talk_active:
                 current_arm = self.bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
                 self._current[0] = float(current_arm["arm_a0"])
                 self._current[1] = float(current_arm["arm_a1"])

@@ -2,7 +2,7 @@
 # Start the full Pi kiosk stack (3 processes):
 #   1. Backend  — CONFIG_PATH=config.kiosk.yaml python start_robot.py start  (:8080)
 #   2. Frontend — pnpm start only (no build)                               (:3000)
-#   3. Chromium — ./scripts/kiosk.sh fullscreen UI                         (/voice)
+#   3. Chromium — ./scripts/kiosk.sh fullscreen UI                         (/)
 #
 # Usage:
 #   ./scripts/launch-kiosk-stack.sh
@@ -10,7 +10,7 @@
 # Env overrides:
 #   CONFIG_PATH=config.kiosk.yaml   backend config (default)
 #   FRONTEND_PORT=3000
-#   KIOSK_URL=http://127.0.0.1:3000/voice
+#   KIOSK_URL=http://127.0.0.1:3000/
 #   SKIP_KIOSK=1                    backend + frontend only
 #   PYTHON_BIN=/path/to/python      override python (default: active venv or v4 venv)
 #
@@ -184,7 +184,7 @@ echo ""
 echo "Kiosk stack running:"
 echo "  Backend  : http://127.0.0.1:${KIOSK_API_PORT}  (PID ${BACKEND_PID})"
 echo "  Frontend : http://127.0.0.1:${FRONTEND_PORT}     (PID ${FRONTEND_PID})"
-echo "  Kiosk    : ${KIOSK_URL:-http://127.0.0.1:${FRONTEND_PORT}/voice}  (PID ${KIOSK_PID})"
+echo "  Kiosk    : ${KIOSK_URL:-http://127.0.0.1:${FRONTEND_PORT}/}  (PID ${KIOSK_PID})"
 echo "  Logs     : ${LOG_DIR}/"
 echo "Press Ctrl+C to stop all."
 echo ""

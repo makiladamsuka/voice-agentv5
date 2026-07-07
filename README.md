@@ -130,18 +130,23 @@ Kiosk does **not** start on boot by default — run `kiosk.sh` manually when nee
 | File | Purpose |
 |------|---------|
 | `config.yaml` | Default / dev tuning |
-| `config.kiosk.yaml` | **Pi kiosk** — lower vision FPS/resolution, 50 Hz servo loops, bye-wave off, debug viz off by default |
+| `config.kiosk.yaml` | **Pi kiosk** — lower vision FPS/resolution, throttled loops, bye-wave off, debug viz off by default |
+
+**Full breakdown of what kiosk saves vs what still runs (ToF approach, wander, voice throttles):**  
+See **[docs/KIOSK-CPU-PROFILE.md](docs/KIOSK-CPU-PROFILE.md)**.
 
 ```bash
 CONFIG_PATH=config.kiosk.yaml python start_robot.py start
 # or
 python start_robot.py --config config.kiosk.yaml start
+# all-in-one (backend + frontend + Chromium):
+./scripts/launch-kiosk-stack.sh
 ```
 
 ## CPU notes
 
 - **Face-only tracking** — YuNet face detection only (no YOLO body detection).
-- Use **`config.kiosk.yaml`** when running frontend + Chromium on the same Pi.
+- Use **`config.kiosk.yaml`** when running frontend + Chromium on the same Pi — see [docs/KIOSK-CPU-PROFILE.md](docs/KIOSK-CPU-PROFILE.md).
 - Run **production** frontend (`run-frontend-prod.sh` or `pnpm start`) on the Pi, not dev mode, for demos.
 - `run-frontend-prod.sh` runs a full `next build` every time; use `cd frontend && pnpm start` when the UI has not changed.
 
@@ -158,11 +163,15 @@ voice-agentv5/
 ├── assets/              # Poster images (events, competitions, posts)
 ├── data/                # Campus map graphs
 └── scripts/
+    ├── launch-kiosk-stack.sh  # Backend + frontend + Chromium (kiosk config)
+    ├── start-ui.sh            # Frontend + kiosk when backend already up
     ├── run-frontend-dev.sh
     ├── run-frontend-prod.sh
     ├── kiosk.sh
     ├── refresh-kiosk.sh
     └── measure_resources.sh
+docs/
+└── KIOSK-CPU-PROFILE.md       # What kiosk config changes (ToF, wander, voice CPU)
 ```
 
 ## ESP32 firmware

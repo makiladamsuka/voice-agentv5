@@ -8,11 +8,8 @@ import {
   useSession,
 } from "@livekit/components-react";
 import type { AppConfig } from "@/app-config";
+import { KioskView } from "@/components/app/kiosk-view";
 import { VoiceAudioOutput } from "@/components/app/voice-audio-output";
-import {
-  ViewController,
-  type AppViewMode,
-} from "@/components/app/view-controller";
 import { Toaster } from "@/components/livekit/toaster";
 import { useAgentErrors } from "@/hooks/useAgentErrors";
 import { useDebugMode } from "@/hooks/useDebug";
@@ -29,10 +26,9 @@ function AppSetup() {
 
 interface AppProps {
   appConfig: AppConfig;
-  viewMode?: AppViewMode;
 }
 
-export function App({ appConfig, viewMode = "kiosk" }: AppProps) {
+export function App({ appConfig }: AppProps) {
   const tokenSource = useMemo(() => {
     return typeof process.env.NEXT_PUBLIC_CONN_DETAILS_ENDPOINT === "string"
       ? getSandboxTokenSource(appConfig)
@@ -48,7 +44,7 @@ export function App({ appConfig, viewMode = "kiosk" }: AppProps) {
     <SessionProvider session={session}>
       <AppSetup />
       <main className="grid h-svh grid-cols-1 place-content-center">
-        <ViewController appConfig={appConfig} viewMode={viewMode} />
+        <KioskView />
       </main>
       <StartAudio label="Start Audio" />
       <VoiceAudioOutput />

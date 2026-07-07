@@ -10,8 +10,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 KIOSK_API_PORT="${KIOSK_API_PORT:-8080}"
-# Default to /voice (lite UI) — full dashboard at KIOSK_URL=http://127.0.0.1:3000/
-URL="${KIOSK_URL:-http://127.0.0.1:${FRONTEND_PORT}/voice}"
+URL="${KIOSK_URL:-http://127.0.0.1:${FRONTEND_PORT}/}"
 CHROMIUM="${CHROMIUM:-chromium-browser}"
 PROFILE_DIR="${KIOSK_PROFILE_DIR:-${HOME}/.config/voice-agent-kiosk-chromium}"
 MAX_WAIT=180

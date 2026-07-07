@@ -26,8 +26,12 @@ from livekit.agents.voice.io import AudioOutput, AudioOutputCapabilities
 _SAMPLE_RATE = 24000
 _CHANNELS = 1
 _BLOCK_FRAMES = 2048  # ~85 ms @ 24 kHz — reduces ALSA underruns on Pi
+_AEC_SAMPLE_RATE = 48000
+_AEC_FRAME_SAMPLES = 480  # 10 ms @ 48 kHz (WebRTC APM frame size)
 
 _enabled = False
+_apm: rtc.AudioProcessingModule | None = None
+_delay_estimator = None
 _running = False
 _stream = None
 _writer: Optional[threading.Thread] = None
@@ -39,6 +43,23 @@ _lock = threading.Lock()
 
 def is_enabled() -> bool:
     return _enabled
+
+
+def attach_aec(
+    apm: rtc.AudioProcessingModule,
+    delay_estimator: object | None = None,
+) -> None:
+    """Wire APM reverse stream so mic AEC can cancel speaker bleed."""
+    global _apm, _delay_estimator
+    _apm = apm
+    _delay_estimator = delay_estimator
+    print("[LocalSpeaker] AEC reverse stream attached")
+
+
+def detach_aec() -> None:
+    global _apm, _delay_estimator
+    _apm = None
+    _delay_estimator = None
 
 
 def _env_override() -> bool | None:
@@ -202,7 +223,37 @@ def create_audio_output(sample_rate: int = _SAMPLE_RATE) -> LocalSpeakerAudioOut
     return LocalSpeakerAudioOutput(sample_rate=sample_rate)
 
 
-def _audio_callback(outdata, frames, _time, _status) -> None:
+def _feed_apm_reverse(outdata: memoryview, frames: int, time_info) -> None:
+    """Feed speaker PCM into APM reverse path (48 kHz, 10 ms frames)."""
+    if _apm is None or frames <= 0:
+        return
+    if _delay_estimator is not None and time_info is not None:
+        with contextlib.suppress(Exception):
+            output_delay = float(time_info.outputBufferDacTime - time_info.currentTime)
+            _delay_estimator.set_output_delay(output_delay)
+    try:
+        import numpy as np
+
+        pcm = bytes(outdata[: frames * 2])
+        samples_24k = np.frombuffer(pcm, dtype=np.int16, count=frames)
+        samples_48k = np.repeat(samples_24k, 2)
+        for start in range(0, len(samples_48k), _AEC_FRAME_SAMPLES):
+            chunk = samples_48k[start : start + _AEC_FRAME_SAMPLES]
+            if len(chunk) < _AEC_FRAME_SAMPLES:
+                break
+            frame = rtc.AudioFrame(
+                chunk.tobytes(),
+                _AEC_SAMPLE_RATE,
+                _CHANNELS,
+                _AEC_FRAME_SAMPLES,
+            )
+            with contextlib.suppress(Exception):
+                _apm.process_reverse_stream(frame)
+    except Exception:
+        pass
+
+
+def _audio_callback(outdata, frames, time_info, _status) -> None:
     """Pull fixed-size blocks from the ring buffer (callback thread)."""
     bytes_needed = frames * _CHANNELS * 2
     with _buf_lock:
@@ -216,6 +267,7 @@ def _audio_callback(outdata, frames, _time, _status) -> None:
             _play_buffer.clear()
         else:
             outdata[:bytes_needed] = b"\x00" * bytes_needed
+    _feed_apm_reverse(outdata, frames, time_info)
 
 
 def _start(sample_rate: int) -> None:
@@ -254,6 +306,7 @@ def _start(sample_rate: int) -> None:
 
 def _stop() -> None:
     global _running, _stream, _writer
+    detach_aec()
     _running = False
     try:
         _pcm_queue.put_nowait(None)

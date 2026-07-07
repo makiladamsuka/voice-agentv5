@@ -38,6 +38,7 @@ import cv2
 import numpy as np
 
 from lib.hand_detector import HandDetector, draw_skeleton
+from lib.elastic_head_motion import smooth_toward
 from hardware.arduino_servo import ArduinoServoLink
 
 # Streaming Server State
@@ -323,24 +324,25 @@ def main():
                 cx, cy = target
                 
                 # Frame center is (320, 240)
-                error_x = cx - 320
-                error_y = cy - 240
+                norm_x = (cx - 320) / 320.0
+                norm_y = (cy - 240) / 240.0
                 
-                # Proportional control
-                # If target is on the right (cx > 320), error_x is positive.
-                # Assuming pan decreases to move right (mirroring typical servo setup):
-                # Adjust the sign if the robot turns the wrong way.
+                # Approximate degree errors based on camera FOV
+                pan_error_deg = norm_x * 30.0
+                tilt_error_deg = norm_y * 20.0
+                
+                # Absolute targets
                 if args.mirror:
-                    pan += error_x * 0.05
+                    target_pan = pan + pan_error_deg
                 else:
-                    pan -= error_x * 0.05
+                    target_pan = pan - pan_error_deg
                     
-                # Tilt adjustment
-                tilt -= error_y * 0.05
+                target_tilt = tilt - tilt_error_deg
                 
-                # Limit angles to safe mechanical boundaries
-                pan = max(30.0, min(150.0, pan))
-                tilt = max(50.0, min(130.0, tilt))
+                # Smooth the movement over time (dt = 1/fps)
+                dt = 1.0 / max(fps, 1.0)
+                pan = smooth_toward(pan, target_pan, dt, smooth_hz=4.5, lo=30.0, hi=150.0)
+                tilt = smooth_toward(tilt, target_tilt, dt, smooth_hz=4.5, lo=50.0, hi=130.0)
                 
                 if link is not None:
                     link.write_angles(pan, tilt)

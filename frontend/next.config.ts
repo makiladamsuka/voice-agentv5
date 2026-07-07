@@ -19,6 +19,8 @@ const nextConfig: NextConfig = {
       { source: "/api/facebook", destination: `${kioskApi}/api/facebook` },
       { source: "/api/network-ip", destination: `${kioskApi}/api/network-ip` },
       { source: "/api/weather", destination: `${kioskApi}/api/weather` },
+      { source: "/api/eye-color", destination: `${kioskApi}/api/eye-color` },
+      { source: "/api/voice-config", destination: `${kioskApi}/api/voice-config` },
     ];
   },
 };

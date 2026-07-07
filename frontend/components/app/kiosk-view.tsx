@@ -88,6 +88,40 @@ export function KioskView() {
       ? 0.5
       : 0.2 + maxVolume * 0.8;
 
+  const applyEyeColor = useCallback(
+    async (eyeTheme: string, uiTheme: string) => {
+      if (uiTheme) {
+        document.documentElement.setAttribute("data-pixel-theme", uiTheme);
+      } else {
+        document.documentElement.removeAttribute("data-pixel-theme");
+      }
+
+      try {
+        await fetch("/api/eye-color", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ theme: eyeTheme }),
+        });
+      } catch (e) {
+        console.error("Failed to set eye color:", e);
+      }
+
+      if (room) {
+        try {
+          room.localParticipant.publishData(
+            new TextEncoder().encode(
+              JSON.stringify({ type: "theme_change", theme: eyeTheme }),
+            ),
+            { reliable: true },
+          );
+        } catch (e) {
+          console.error("Failed to publish color data:", e);
+        }
+      }
+    },
+    [room],
+  );
+
   // Send event context to backend via LiveKit data channel
   const sendEventFocus = useCallback(
     (event: any) => {
@@ -476,14 +510,14 @@ export function KioskView() {
 
   return (
     <div
-      className="kiosk-mode relative text-on-background w-full h-screen overflow-hidden flex flex-col select-none bg-[#f4f7fb] dark:bg-[#131314]"
+      className="kiosk-mode relative text-on-background w-full h-screen overflow-hidden flex flex-col select-none bg-[#f4f7fb] dark:bg-black"
       style={{ fontFamily: "Inter, sans-serif", touchAction: "manipulation" }}
     >
       {/* Subtle Material You Premium Background */}
       <div className="absolute inset-0 -z-20 pointer-events-none overflow-hidden">
-        {/* Ambient Glowing Blobs */}
-        <div className="absolute -top-[20%] -left-[10%] w-[60%] h-[60%] bg-primary-container/40 dark:bg-primary-container/10 rounded-full kiosk-ambient-blur pointer-events-none" />
-        <div className="absolute -bottom-[20%] -right-[10%] w-[60%] h-[60%] bg-tertiary-container/40 dark:bg-tertiary-container/10 rounded-full kiosk-ambient-blur pointer-events-none" />
+        {/* Ambient Glowing Blobs - Hidden in true dark mode */}
+        <div className="absolute -top-[20%] -left-[10%] w-[60%] h-[60%] bg-primary-container/40 dark:hidden rounded-full kiosk-ambient-blur pointer-events-none" />
+        <div className="absolute -bottom-[20%] -right-[10%] w-[60%] h-[60%] bg-tertiary-container/40 dark:hidden rounded-full kiosk-ambient-blur pointer-events-none" />
       </div>
 
       {/* Main Content Wrapper (must be above background) */}
@@ -544,7 +578,7 @@ export function KioskView() {
             >
               {/* Clock & Weather Card */}
               {!focusedEvent && (
-                <div className="bg-[#d3e3fd] text-[#041e49] dark:bg-[#004a77] dark:text-[#c2e7ff] rounded-[32px] p-6 pt-10 flex flex-col items-center justify-center relative overflow-hidden flex-shrink-0 transition-transform hover:scale-[1.02]">
+                <div className="bg-[#d3e3fd] text-[#041e49] dark:bg-[#0a0a0a] dark:text-white rounded-[32px] px-8 py-10 pt-12 flex flex-col items-center justify-center relative overflow-hidden flex-shrink-0 transition-transform hover:scale-[1.02]">
                 {weather ? (
                   <div className="absolute top-3 right-4 flex items-center opacity-80 text-primary">
                     <span className="material-symbols-outlined text-[24px] fill-current">
@@ -556,10 +590,10 @@ export function KioskView() {
                     light_mode
                   </span>
                 )}
-                <div className="text-[44px] 2xl:text-[52px] leading-none tracking-[-0.04em] font-black whitespace-nowrap">
+                <div className="text-[64px] 2xl:text-[80px] leading-none tracking-[-0.04em] font-black whitespace-nowrap">
                   {time || "10:42"}
                 </div>
-                <div className="text-[14px] leading-[20px] mt-1 font-semibold opacity-80">
+                <div className="text-[16px] leading-[20px] mt-1 font-semibold opacity-80">
                   {dateStr || "Thursday, June 4"}
                 </div>
                 </div>
@@ -567,7 +601,7 @@ export function KioskView() {
 
               <div className="relative h-full flex flex-col min-h-0">
                 <SiriGlow active={glowingSection === 'news'} />
-                <div className="z-10 bg-[#ffe7e3] dark:bg-[#33201e] rounded-[32px] h-full flex flex-col min-h-0 overflow-hidden relative">
+                <div className={`z-10 rounded-[32px] h-full flex flex-col min-h-0 overflow-hidden relative ${focusedEvent ? "bg-[#f0f4f9] dark:bg-[#121212]" : "bg-[#ffe7e3] dark:bg-[#050505]"}`}>
                 {focusedEvent ? (
                   /* Full poster view */
                   <>
@@ -703,7 +737,7 @@ export function KioskView() {
 
             {/* Middle Column: Events Carousel & Microphone — flex-1 fills freed space */}
             <motion.div layout initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 30, delay: 0.1 }} className="flex-1 h-full min-h-0 flex flex-col gap-2 min-w-0">
-              <div className="bg-[#e6f4ea] dark:bg-[#182a1d] rounded-[32px] flex-1 overflow-hidden relative flex flex-col min-h-0">
+              <div className="bg-[#e6f4ea] dark:bg-[#050505] rounded-[32px] flex-1 overflow-hidden relative flex flex-col min-h-0">
                 {navData ? (
                   <div className="flex-1 flex flex-col relative h-full bg-surface-container rounded-[32px] overflow-hidden">
                     <div className="absolute top-4 left-6 right-6 z-20 flex justify-between items-center bg-surface-container-highest border-none rounded-full px-6 py-3">
@@ -857,7 +891,7 @@ export function KioskView() {
               </div>
               {/* Microphone Action Area */}
               <div className="relative flex-shrink-0 min-h-[112px] h-auto rounded-[32px] w-full">
-                <SiriGlow active={glowingSection === 'mic'} />
+                <SiriGlow active={glowingSection === 'mic' || isThinking} />
                 <div
                   className={`z-10 h-full py-4 flex items-center justify-center rounded-[32px] relative px-4 overflow-hidden transition-all duration-300 ${isConnected ? "bg-primary-container dark:bg-primary-container" : "bg-[#f0f4f9] dark:bg-[#1a2235]"}`}
                   style={{
@@ -921,7 +955,7 @@ export function KioskView() {
               {/* Where to? Card — with embedded 3D map (Material Secondary Tint) */}
               <div className="relative flex-1 flex flex-col min-h-0">
                 <SiriGlow active={glowingSection === 'where-to'} />
-                <div className="z-10 bg-[#f3edf7] dark:bg-[#211a2a] rounded-[32px] p-5 flex-1 flex flex-col relative overflow-hidden min-h-0">
+                <div className="z-10 bg-[#f3edf7] dark:bg-[#050505] rounded-[32px] p-5 flex-1 flex flex-col relative overflow-hidden min-h-0">
                 <h2 className="text-[24px] leading-[32px] tracking-[-0.02em] text-on-surface mb-2 font-bold flex-shrink-0">
                   Where to?
                 </h2>
@@ -1071,25 +1105,7 @@ export function KioskView() {
                     <button
                       key={c.name}
                       onClick={() => {
-                        if (c.uiTheme) {
-                          document.documentElement.setAttribute("data-pixel-theme", c.uiTheme);
-                        } else {
-                          document.documentElement.removeAttribute("data-pixel-theme");
-                        }
-                        if (room) {
-                          const payload = JSON.stringify({
-                            type: "theme_change",
-                            theme: c.eyeTheme,
-                          });
-                          try {
-                            room.localParticipant.publishData(
-                              new TextEncoder().encode(payload),
-                              { reliable: true }
-                            );
-                          } catch (e) {
-                            console.error("Failed to publish color data:", e);
-                          }
-                        }
+                        applyEyeColor(c.eyeTheme, c.uiTheme);
                         setIsColorModalOpen(false);
                       }}
                       className={`h-12 rounded-xl flex items-center justify-center font-bold transition-transform active:scale-95 border ${c.color} ${c.name === 'White' || c.name === 'Yellow' || c.name === 'Cyan' ? 'text-black' : 'text-white'}`}

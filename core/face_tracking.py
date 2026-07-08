@@ -575,17 +575,6 @@ class FaceTracker:
                             hand_gesture = "bye_wave"
                             hand_gesture_side = best_hand.physical_side
 
-                # ── Hand fallback tracking (only when face NOT detected) ──
-                if not face_detected and hands:
-                    best_hand = max(hands, key=lambda h: h.confidence)
-                    px, py = best_hand.palm_center
-                    dw, dh = self.detect_res
-                    hand_norm_x = (px / dw) * 2.0 - 1.0
-                    hand_norm_y = (py / dh) * 2.0 - 1.0
-                    hand_detected = True
-                    hand_physical_side = best_hand.physical_side
-                    track_kind = "hand"
-
                 # ── Skin blob fallback (when neither face nor hand) ────────
                 if not face_detected and not hand_detected:
                     try:

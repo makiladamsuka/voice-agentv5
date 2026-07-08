@@ -736,7 +736,6 @@ class ByeWaveService:
                 cooldown_until, fps, now,
                 arm_positions=arm_data,
                 animation_state=animation_state,
-                hi_wave_end_time=hi_wave_end_time,
                 talking_active=talk_active,
                 track_kind=track_kind
             )

@@ -62,12 +62,11 @@ class HandDetector:
                 landmarks = [{"x": lm.x, "y": lm.y, "z": lm.z} for lm in hand_landmarks.landmark]
                 pixel_landmarks = [(int(lm.x * w), int(lm.y * h)) for lm in hand_landmarks.landmark]
                 
-                # Calculate palm center: average of Wrist (0), Index MCP (5), and Pinky MCP (17)
+                # Calculate palm center: average of Wrist (0) and Middle MCP (9) for stability
                 wrist = pixel_landmarks[0]
-                index_mcp = pixel_landmarks[5]
-                pinky_mcp = pixel_landmarks[17]
-                palm_x = (wrist[0] + index_mcp[0] + pinky_mcp[0]) // 3
-                palm_y = (wrist[1] + index_mcp[1] + pinky_mcp[1]) // 3
+                middle_mcp = pixel_landmarks[9]
+                palm_x = (wrist[0] + middle_mcp[0]) // 2
+                palm_y = (wrist[1] + middle_mcp[1]) // 2
                 palm_center = (palm_x, palm_y)
                 
                 # Check palm orientation (Frontside vs Backside Knuckles)

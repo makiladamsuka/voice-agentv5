@@ -399,23 +399,22 @@ def main():
             # 3. Fallback to Skin Blob if Hand not detected (hand too close/large)
             if target is None:
                 hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                # Broaden the skin color bounds for dark/reddish lighting (hue wrap-around)
-                lower_skin1 = np.array([0, 10, 20], dtype=np.uint8)
-                upper_skin1 = np.array([25, 255, 255], dtype=np.uint8)
-                mask1 = cv2.inRange(hsv, lower_skin1, upper_skin1)
-                
-                lower_skin2 = np.array([160, 10, 20], dtype=np.uint8)
-                upper_skin2 = np.array([179, 255, 255], dtype=np.uint8)
-                mask2 = cv2.inRange(hsv, lower_skin2, upper_skin2)
-                
+                # Broadened human skin color range in HSV (handling red wrap-around)
+                # Lower red/orange hues
+                mask1 = cv2.inRange(hsv, np.array([0, 20, 40], dtype=np.uint8), np.array([25, 255, 255], dtype=np.uint8))
+                # Upper red hues
+                mask2 = cv2.inRange(hsv, np.array([155, 20, 40], dtype=np.uint8), np.array([180, 255, 255], dtype=np.uint8))
                 mask = cv2.bitwise_or(mask1, mask2)
+                
+                # Apply morphological opening to clean up isolated noise
+                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
                 
                 contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 if contours:
                     largest_blob = max(contours, key=cv2.contourArea)
                     area = cv2.contourArea(largest_blob)
-                    # Lower threshold to 5% since dark lighting might fracture the mask
-                    if area > (w * h * 0.05):
+                    # If blob covers at least 15% of the frame, it's likely a close-up block
+                    if area > (w * h * 0.15):
                         M = cv2.moments(largest_blob)
                         if M["m00"] > 0:
                             cx = int(M["m10"] / M["m00"])

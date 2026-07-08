@@ -562,19 +562,15 @@ class FaceTracker:
                     px, py = best_hand.palm_center
                     dw, dh = self.detect_res
 
-                    # Bye gesture: hand near detected face, frontside
+                    # Bye gesture: hand detected with face, frontside (no distance limit)
                     if (
                         self._bye_gesture_from_hand
                         and face_detected
                         and best_hand.is_frontside
                         and not hand_gesture
                     ):
-                        face_px_x = int((face_norm_x + 1.0) * 0.5 * dw)
-                        face_px_y = int((face_norm_y + 1.0) * 0.5 * dh)
-                        dist = ((px - face_px_x) ** 2 + (py - face_px_y) ** 2) ** 0.5
-                        if dist < BYE_WAVE_NEAR_FACE_PX:
-                            hand_gesture = "bye_wave"
-                            hand_gesture_side = best_hand.physical_side
+                        hand_gesture = "bye_wave"
+                        hand_gesture_side = best_hand.physical_side
 
                 # ── Skin blob fallback (when neither face nor hand) ────────
                 if not face_detected and not hand_detected:

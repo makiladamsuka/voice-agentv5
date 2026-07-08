@@ -7,6 +7,7 @@ import json
 import socketserver
 import threading
 import time
+import cv2
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
@@ -273,6 +274,27 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     if frame is None:
                         time.sleep(frame_delay)
                         continue
+
+                    # Draw what is triggering
+                    frame = frame.copy()
+                    state = self.bb.read("track_kind", "hand_gesture")
+                    track_kind = state.get("track_kind", "none")
+                    hand_gesture = state.get("hand_gesture", "")
+                    
+                    text = f"TRACKING: {track_kind}"
+                    if hand_gesture:
+                        text += f" | GESTURE: {hand_gesture}"
+                        
+                    cv2.putText(
+                        frame,
+                        text,
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.0,
+                        (0, 255, 0), # Green in RGB
+                        2,
+                        cv2.LINE_AA,
+                    )
 
                     img = Image.fromarray(frame)
                     buf = io.BytesIO()

@@ -180,6 +180,31 @@ class FaceTracker:
         self._hand_max_num = int(hand_cfg.get("max_hands", 1))
         self._hi_gesture_enabled = bool(hand_cfg.get("hi_gesture", True))
         self._bye_gesture_from_hand = bool(hand_cfg.get("bye_gesture", True))
+        
+        # Waving detection config
+        self._wave_threshold_enabled = bool(hand_cfg.get("wave_threshold", True))
+        self._wave_reversals_min = int(hand_cfg.get("wave_reversals_min", 4))
+        self._wave_amplitude_min = float(hand_cfg.get("wave_amplitude_min", 40.0))
+        self._wave_history_len = int(hand_cfg.get("wave_history_len", 25))
+        self._wave_dead_zone_px = int(hand_cfg.get("wave_dead_zone_px", 10))
+        
+        # Waving detection state (per hand)
+        self._hand_wave_state = {
+            "Left": {
+                "x_history": collections.deque(maxlen=self._wave_history_len),
+                "y_history": collections.deque(maxlen=self._wave_history_len),
+                "last_seen": 0.0,
+                "reversals": 0,
+                "amplitude": 0.0,
+            },
+            "Right": {
+                "x_history": collections.deque(maxlen=self._wave_history_len),
+                "y_history": collections.deque(maxlen=self._wave_history_len),
+                "last_seen": 0.0,
+                "reversals": 0,
+                "amplitude": 0.0,
+            },
+        }
 
         # Internals
         self._attention = MultiFaceAttention()
@@ -216,6 +241,35 @@ class FaceTracker:
         if state.get("user_speaking") or state.get("agent_speaking"):
             return True
         return state.get("conv_state", "idle") in ("listening", "speaking", "nodding")
+    
+    def _detect_reversals(self, history: list[int]) -> tuple[int, float]:
+        """Analyzes coordinate history for peak-to-peak swing counts (reversals) and amplitude.
+        
+        Returns (reversals, amplitude) where reversals is the number of direction changes
+        and amplitude is the pixel range of movement.
+        """
+        if len(history) < 6:
+            return 0, 0.0
+        
+        reversals = 0
+        anchor = history[0]
+        direction = 0  # +1 = increasing, -1 = decreasing
+        peaks = [history[0]]
+        
+        for val in history[1:]:
+            diff = val - anchor
+            if abs(diff) < self._wave_dead_zone_px:
+                continue
+            
+            new_dir = 1 if diff > 0 else -1
+            if direction != 0 and new_dir != direction:
+                reversals += 1
+                peaks.append(anchor)
+            direction = new_dir
+            anchor = val
+        
+        amplitude = max(peaks) - min(peaks) if peaks else 0.0
+        return reversals, amplitude
 
     def _effective_vision_fps(self, state: dict) -> float:
         voice_active = bool(state.get("voice_session_active"))
@@ -561,16 +615,48 @@ class FaceTracker:
                     best_hand = max(hands, key=lambda h: h.confidence)
                     px, py = best_hand.palm_center
                     dw, dh = self.detect_res
+                    side = best_hand.physical_side
+                    
+                    # Update waving state history
+                    wave_state = self._hand_wave_state[side]
+                    wave_state["last_seen"] = now
+                    
+                    if best_hand.is_frontside:
+                        wave_state["x_history"].append(px)
+                        wave_state["y_history"].append(py)
+                    else:
+                        wave_state["x_history"].clear()
+                        wave_state["y_history"].clear()
+                    
+                    # Calculate wave motion
+                    rev_x, amp_x = self._detect_reversals(list(wave_state["x_history"]))
+                    wave_state["reversals"] = rev_x
+                    wave_state["amplitude"] = amp_x
 
-                    # Bye gesture: hand detected with face, frontside (no distance limit)
+                    # Bye gesture: either threshold-based waving OR static hand detection
                     if (
                         self._bye_gesture_from_hand
                         and face_detected
                         and best_hand.is_frontside
                         and not hand_gesture
                     ):
-                        hand_gesture = "bye_wave"
-                        hand_gesture_side = best_hand.physical_side
+                        # Check if waving threshold is met
+                        if self._wave_threshold_enabled:
+                            if rev_x >= self._wave_reversals_min and amp_x >= self._wave_amplitude_min:
+                                hand_gesture = "bye_wave"
+                                hand_gesture_side = best_hand.physical_side
+                        else:
+                            # Original static hand detection (no waving required)
+                            hand_gesture = "bye_wave"
+                            hand_gesture_side = best_hand.physical_side
+                
+                # Timeout unobserved hands (clear history after 0.4s)
+                for side_name, wave_state in self._hand_wave_state.items():
+                    if now - wave_state["last_seen"] > 0.4:
+                        wave_state["x_history"].clear()
+                        wave_state["y_history"].clear()
+                        wave_state["reversals"] = 0
+                        wave_state["amplitude"] = 0.0
 
                 # ── Skin blob fallback (when neither face nor hand) ────────
                 if not face_detected and not hand_detected:

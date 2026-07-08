@@ -9,6 +9,17 @@ camera:
   rotate_180: false
   stream_swap_rb: true
 
+hand_fallback:
+  enabled: true
+  max_hands: 1
+  hi_gesture: true
+  bye_gesture: true
+  wave_threshold: true         # Require waving motion (not just static hand)
+  wave_reversals_min: 4        # Minimum swings/reversals to trigger
+  wave_amplitude_min: 40.0     # Minimum pixel sweep amplitude
+  wave_history_len: 25         # History buffer length for motion detection
+  wave_dead_zone_px: 10        # Ignore movements smaller than this
+
 stream:
   enabled: true
   host: "0.0.0.0"

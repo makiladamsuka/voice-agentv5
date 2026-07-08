@@ -485,6 +485,7 @@ class FaceTracker:
             body_detected = False
             track_kind = "none"
             active_face_index = -1
+            hands = None
 
             # ── Face detection ──────────────────────────────────────────────
             if faces is not None and len(faces) > 0:
@@ -718,6 +719,20 @@ class FaceTracker:
             stream_viewers = int(self.bb.read("stream_viewers")["stream_viewers"])
             if self.stream_enabled and stream_viewers > 0:
                 try:
+                    # Draw debug annotations onto frame before resize
+                    if hands:
+                        from lib.hand_detector import draw_skeleton
+                        for hand in hands:
+                            is_active = (hand_gesture != "") or (track_kind == "hand" and hand.physical_side == hand_physical_side)
+                            draw_skeleton(frame, hand, is_active=is_active)
+                    
+                    if skin_blob_detected:
+                        cx = int((skin_blob_norm_x + 1.0) * 0.5 * self.detect_res[0])
+                        cy = int((skin_blob_norm_y + 1.0) * 0.5 * self.detect_res[1])
+                        cv2.circle(frame, (cx, cy), 15, (0, 0, 255), -1)
+                        cv2.circle(frame, (cx, cy), 10, (0, 165, 255), -1)
+                        cv2.putText(frame, "BLOB", (cx + 20, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
+
                     stream_frame = cv2.resize(frame, self.stream_res, interpolation=cv2.INTER_LINEAR)
                     if self.swap_rb:
                         stream_frame = cv2.cvtColor(stream_frame, cv2.COLOR_BGR2RGB)

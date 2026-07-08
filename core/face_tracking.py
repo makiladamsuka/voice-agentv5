@@ -428,6 +428,10 @@ class FaceTracker:
             print("[FaceTracker] Cannot run: camera or detector unavailable.")
             return
 
+        hand_detector = None
+        if self._hand_fallback_enabled or self._hi_gesture_enabled or self._bye_gesture_from_hand:
+            hand_detector = HandDetector(max_num_hands=self._hand_max_num)
+
         next_tick = time.perf_counter()
 
         while self.bb.read("running")["running"]:
@@ -776,6 +780,8 @@ class FaceTracker:
                     pass
 
         print("[FaceTracker] Stopped.")
+        if hand_detector is not None:
+            hand_detector.close()
         try:
             cam.stop()
         except Exception:

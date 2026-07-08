@@ -238,6 +238,14 @@ class ServoLoop:
         self.pan_track_smooth_hz = float(s.get("pan_track_smooth_hz", 4.5))
         self.tilt_smooth_hz = float(s.get("tilt_smooth_hz", 5.5))
         
+        # ── Hand / blob fallback constants ────────────────────────────────────
+        self.hand_alpha_x = float(s.get("hand_alpha_x", 0.25))
+        self.hand_alpha_y = float(s.get("hand_alpha_y", 0.08))
+        self.blob_alpha_x = float(s.get("blob_alpha_x", 0.30))
+        self.blob_alpha_y = float(s.get("blob_alpha_y", 0.10))
+        self.hand_smooth_hz = float(s.get("hand_smooth_hz", 3.5))
+        self.blob_smooth_hz = float(s.get("blob_smooth_hz", 4.5))
+        
         # ── Base compensation ─────────────────────────────────────────────────
         self.base_sign = float(b.get("sign", 1.0))
         self.base_comp_gain = float(b.get("track_compensation_gain", 0.95))
@@ -668,6 +676,8 @@ class ServoLoop:
             "face_detected", "face_norm_x", "face_norm_y",
             "face_count", "track_kind", "face_candidates",
             "body_detected",
+            "hand_detected", "hand_norm_x", "hand_norm_y",
+            "skin_blob_detected", "skin_blob_norm_x", "skin_blob_norm_y",
             "conv_state", "voice_session_active", "amplitude_fast",
             "prox_glance_active", "prox_glance_phase", "prox_glance_since", "prox_glance_target_pan"
         )
@@ -676,15 +686,22 @@ class ServoLoop:
         norm_y = state["face_norm_y"]
         track_kind = state["track_kind"]
         body_detected = state["body_detected"]
-        tracking_active = face_detected or body_detected
+        
+        # ── Hand / Blob fallback selection ──
+        if not face_detected and not body_detected:
+            if state["hand_detected"]:
+                norm_x = state["hand_norm_x"]
+                norm_y = state["hand_norm_y"]
+                track_kind = "hand"
+            elif state["skin_blob_detected"]:
+                norm_x = state["skin_blob_norm_x"]
+                norm_y = state["skin_blob_norm_y"]
+                track_kind = "close_up"
 
-        if face_detected:
-            self._last_face_ts = now
-            self._no_face_since = None
-            self._lss_active = False
-            self._forward_return_active = False
-        if body_detected:
-            self._last_body_ts = now
+        tracking_active = face_detected or body_detected or state["hand_detected"] or state["skin_blob_detected"]
+
+        if tracking_active:
+            self._last_face_ts = now  # Treat hand/blob as face to prevent dropping track
             self._no_face_since = None
             self._lss_active = False
             self._forward_return_active = False
@@ -695,8 +712,22 @@ class ServoLoop:
 
         # Smooth face bearing for tilt / velocity (pan uses raw frame-center error).
         glide_y_scale = self.multi_face_alpha if track_kind in ("multi", "center") else 1.0
-        self._filtered_norm_x += (norm_x - self._filtered_norm_x) * self.face_alpha_x
-        self._filtered_norm_y += (norm_y - self._filtered_norm_y) * self.face_alpha_y * glide_y_scale
+        
+        # Select smoothing based on track_kind
+        alpha_x = self.face_alpha_x
+        alpha_y = self.face_alpha_y
+        smooth_hz = self.pan_track_smooth_hz
+        if track_kind == "hand":
+            alpha_x = self.hand_alpha_x
+            alpha_y = self.hand_alpha_y
+            smooth_hz = self.hand_smooth_hz
+        elif track_kind == "close_up":
+            alpha_x = self.blob_alpha_x
+            alpha_y = self.blob_alpha_y
+            smooth_hz = self.blob_smooth_hz
+
+        self._filtered_norm_x += (norm_x - self._filtered_norm_x) * alpha_x
+        self._filtered_norm_y += (norm_y - self._filtered_norm_y) * alpha_y * glide_y_scale
 
         self._face_vel_x = (norm_x - self._prev_face_raw_x) / max(dt, 0.001)
         self._face_vel_y = (norm_y - self._prev_face_raw_y) / max(dt, 0.001)
@@ -741,7 +772,7 @@ class ServoLoop:
         pan_max_step = min(self.pan_max_step_deg, self.pan_track_slew_dps * max(dt, 0.001))
         self._pan = _smooth_toward_stepped(
             self._pan, pan_target, dt,
-            smooth_hz=self.pan_track_smooth_hz, lo=self.pan_min, hi=self.pan_max,
+            smooth_hz=smooth_hz, lo=self.pan_min, hi=self.pan_max,
             max_step=pan_max_step,
         )
 

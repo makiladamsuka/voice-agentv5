@@ -17,7 +17,6 @@ import collections, json, pathlib, random, socket, socketserver, sys, threading,
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import cv2
 from core.blackboard import Blackboard
-from lib.hand_detector import HandDetector, HandDetection, draw_skeleton, draw_motion_trail
 
 _latest_frame = None
 _frame_lock = threading.Lock()
@@ -348,266 +347,14 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
         pass
 
 
-class _HandNearFaceDetector:
-    """Tracks palm position and triggers when hand is near the face."""
-
-    def __init__(self, bb, trigger_distance_px=110, trigger_callback=None):
-        self._bb = bb
-        self.trigger_distance_px = trigger_distance_px
-        self.trigger_callback = trigger_callback
-        self.announcement_end_time = 0.0
-        self.announcement_hand = ""
-        self.hand_states = {
-            side: {
-                "x_history": collections.deque(maxlen=25),
-                "y_history": collections.deque(maxlen=25),
-                "last_seen": 0.0,
-                "is_near_face": False,
-                "distance": 999.0,
-                "intensity": 0.0,
-            }
-            for side in ("Left", "Right")
-        }
-
-    def process(self, detections, now, cooldown_until, frame_shape):
-        fh, fw = frame_shape[:2]
-        face_detected = self._bb.read("face_detected")["face_detected"]
-        face_px = None
-        if face_detected:
-            face_norm_x = self._bb.read("face_norm_x")["face_norm_x"]
-            face_norm_y = self._bb.read("face_norm_y")["face_norm_y"]
-            face_px = (
-                int((face_norm_x + 1.0) * 0.5 * fw),
-                int((face_norm_y + 1.0) * 0.5 * fh)
-            )
-
-        for side in ("Left", "Right"):
-            if now - self.hand_states[side]["last_seen"] > 0.4:
-                st = self.hand_states[side]
-                st["x_history"].clear()
-                st["y_history"].clear()
-                st["is_near_face"] = False
-                st["distance"] = 999.0
-                st["intensity"] = 0.0
-
-        for hand in detections:
-            side = hand.physical_side
-            state = self.hand_states[side]
-            state["last_seen"] = now
-            px, py = hand.palm_center
-
-            if hand.is_frontside:
-                state["x_history"].append(px)
-                state["y_history"].append(py)
-            else:
-                state["x_history"].clear()
-                state["y_history"].clear()
-
-            is_near = False
-            dist = 999.0
-            if face_px:
-                dist = ((px - face_px[0])**2 + (py - face_px[1])**2)**0.5
-                state["distance"] = dist
-                if dist < self.trigger_distance_px:
-                    is_near = True
-
-            state["is_near_face"] = is_near
-            if dist < self.trigger_distance_px * 2:
-                state["intensity"] = max(0.0, 1.0 - (dist / (self.trigger_distance_px * 2)))
-            else:
-                state["intensity"] = 0.0
-
-            if is_near and now > cooldown_until:
-                self.announcement_end_time = now + 3.0
-                self.announcement_hand = side
-                if self.trigger_callback is not None:
-                    self.trigger_callback(side)
-
-
-class _ByeSequenceRunner:
-    """Plays a random bye animation by writing arm frames to the Blackboard.
-    ServoMixer picks up arm_a0..arm_a3 and sends to ESP32 automatically.
-    bye_wave_active=True on Blackboard pauses ArmController lean updates.
-    Now with dual-speed interpolation for natural movements.
-    """
-    def __init__(self, bb, presets_path, cooldown_sec=10.0, on_complete=None, envelope=None,
-                 vertical_speed=0.8, horizontal_speed=1.5, smoothness=3.0):
-        self._bb = bb
-        self._presets_path = presets_path
-        self._cooldown_sec = cooldown_sec
-        self._on_complete = on_complete
-        self._envelope = envelope
-        self._vertical_speed = vertical_speed  # Speed for a0, a1
-        self._horizontal_speed = horizontal_speed  # Speed for a2, a3
-        self._smoothness = smoothness  # Easing power (1.0=linear, 3.0=cubic, 5.0=quintic)
-        self._lock = threading.Lock()
-        self._thread = None
-        self._running = False
-
-    @property
-    def is_running(self):
-        return self._running
-    
-    def _ease_in_out(self, t):
-        """Smooth ease-in-out function for continuous motion.
-        
-        Uses configurable easing power for adjustable smoothness.
-        Input t should be in range [0, 1], output is also [0, 1].
-        
-        This prevents jerky starts/stops and creates fluid motion.
-        Higher smoothness = more gradual ease, lower = more linear.
-        """
-        power = self._smoothness
-        if t < 0.5:
-            # Ease in (accelerate)
-            return pow(2, power - 1) * pow(t, power)
-        else:
-            # Ease out (decelerate)
-            return 1 - pow(-2 * t + 2, power) / pow(2, power - 1)
-
-    def trigger(self, side):
-        with self._lock:
-            if self._running:
-                return
-            try:
-                data = json.loads(self._presets_path.read_text(encoding="utf-8"))
-                animations = data["animations"]
-                key = random.choice(["bye1", "bye2", "bye3"])
-                frames = animations[key]["frames"]
-                if not frames:
-                    raise ValueError(f"Animation '{key}' has no frames")
-            except FileNotFoundError as exc:
-                print(f"[ByeWaveService] ERROR: presets not found: {exc}", file=sys.stderr)
-                return
-            except (json.JSONDecodeError, KeyError, ValueError) as exc:
-                print(f"[ByeWaveService] ERROR: bad presets data: {exc}", file=sys.stderr)
-                return
-            print(f"[ByeWaveService] Wave by {side} -- playing '{key}' ({len(frames)} frames)")
-            self._running = True
-            self._bb.write(bye_wave_active=True, bye_animation_name=key)
-            self._thread = threading.Thread(
-                target=self._run_animation, args=(frames,), daemon=True, name="ByeAnimation"
-            )
-            self._thread.start()
-
-    def _run_animation(self, frames):
-        """Play animation frames with smooth dual-speed interpolation.
-        
-        Speed values work intuitively:
-        - Higher values (e.g., 2.0) = faster movements
-        - Lower values (e.g., 0.5) = slower movements
-        - 1.0 = normal speed
-        
-        Uses high-frequency updates (100Hz) for continuous smooth motion.
-        """
-        base_frame_duration = 0.3  # Base time to reach each frame (0.3s = continuous smooth motion without long holds)
-        poll_interval = 0.01  # 100 Hz update rate for smoother motion (was 0.02 = 50Hz)
-        
-        # Write animation state to Blackboard
-        self._bb.write(
-            bye_animation_playing=True,
-            bye_animation_total_frames=len(frames),
-            bye_animation_current_frame=0
-        )
-        
-        for frame_idx, f in enumerate(frames):
-            # Update current frame index
-            self._bb.write(bye_animation_current_frame=frame_idx + 1)
-            
-            target_a0, target_a1, target_a2, target_a3 = f["a0"], f["a1"], f["a2"], f["a3"]
-            
-            # Apply safety envelope if available
-            if self._envelope is not None:
-                target_a0, target_a1, target_a2, target_a3 = self._envelope.clamp_arms(
-                    target_a0, target_a1, target_a2, target_a3
-                )
-            
-            # Get current arm positions
-            current = self._bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
-            start_a0 = current["arm_a0"]
-            start_a1 = current["arm_a1"]
-            start_a2 = current["arm_a2"]
-            start_a3 = current["arm_a3"]
-            
-            # Calculate deltas
-            delta_a0 = target_a0 - start_a0
-            delta_a1 = target_a1 - start_a1
-            delta_a2 = target_a2 - start_a2
-            delta_a3 = target_a3 - start_a3
-            
-            # Calculate durations based on speed (INVERSE relationship for intuitive control)
-            # Lower speed = longer duration = slower movement
-            # Higher speed = shorter duration = faster movement
-            vertical_duration = base_frame_duration / max(0.1, self._vertical_speed)
-            horizontal_duration = base_frame_duration / max(0.1, self._horizontal_speed)
-            
-            # Use the longer duration as the frame duration to ensure smooth movement
-            frame_duration = max(vertical_duration, horizontal_duration)
-            
-            # Smooth interpolation with dual speeds and easing
-            start_time = time.time()
-            
-            while True:
-                elapsed = time.time() - start_time
-                if elapsed >= frame_duration:
-                    break
-                
-                # Calculate progress for each motor group based on their respective durations
-                vertical_t = min(1.0, elapsed / vertical_duration)
-                horizontal_t = min(1.0, elapsed / horizontal_duration)
-                
-                # Apply ease-in-out for smoother acceleration/deceleration
-                # This prevents jerky starts and stops
-                vertical_progress = self._ease_in_out(vertical_t)
-                horizontal_progress = self._ease_in_out(horizontal_t)
-                
-                # Interpolate with eased progress
-                new_a0 = start_a0 + delta_a0 * vertical_progress
-                new_a1 = start_a1 + delta_a1 * vertical_progress
-                new_a2 = start_a2 + delta_a2 * horizontal_progress
-                new_a3 = start_a3 + delta_a3 * horizontal_progress
-                
-                self._bb.write(arm_a0=new_a0, arm_a1=new_a1, arm_a2=new_a2, arm_a3=new_a3)
-                time.sleep(poll_interval)
-            
-            # Ensure we reach the target
-            self._bb.write(arm_a0=target_a0, arm_a1=target_a1, arm_a2=target_a2, arm_a3=target_a3)
-        
-        # Clear animation state
-        self._bb.write(
-            bye_animation_playing=False,
-            bye_animation_current_frame=0
-        )
-        
-        if self._on_complete is not None:
-            self._on_complete()
-        self._bb.write(bye_wave_active=False)
-        with self._lock:
-            self._running = False
-
-    def join(self, timeout=2.0):
-        if self._thread is not None:
-            self._thread.join(timeout=timeout)
-
-
-def _draw_gauge(frame, x, y, width, score):
-    h = 8
-    cv2.rectangle(frame, (x, y), (x + width, y + h), (40, 40, 50), -1)
-    fill = int(width * score)
-    if fill > 0:
-        color = (int(255 * score), int(255 * (1.0 - score * 0.2)), int(100 * (1.0 - score)))
-        cv2.rectangle(frame, (x, y), (x + fill, y + h), color, -1)
-    cv2.rectangle(frame, (x, y), (x + width, y + h), (120, 120, 140), 1)
-
-
-def _draw_hud(frame, hand_states, announcement_hand, announcement_end_time,
+def _draw_hud(frame, announcement_hand, announcement_end_time,
               cooldown_until, fps, now, arm_positions=None, animation_state=None):
     fh, fw = frame.shape[:2]
     ov = frame.copy()
     cv2.rectangle(ov, (0, 0), (fw, 26), (15, 15, 20), -1)
     cv2.line(ov, (0, 26), (fw, 26), (255, 106, 0), 1)
     cv2.addWeighted(ov, 0.75, frame, 0.25, 0, frame)
-    cv2.putText(frame, "HAND/BYE DETECTOR", (5, 17),
+    cv2.putText(frame, "BYE WAVE MONITOR", (5, 17),
                 cv2.FONT_HERSHEY_DUPLEX, 0.36, (255, 255, 255), 1, cv2.LINE_AA)
     cv2.putText(frame, f"FPS:{fps:.0f}", (fw - 52, 17),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.33, (0, 255, 120), 1, cv2.LINE_AA)
@@ -615,35 +362,6 @@ def _draw_hud(frame, hand_states, announcement_hand, announcement_end_time,
     if rem > 0:
         cv2.putText(frame, f"COOLDOWN {rem:.1f}s", (fw // 2 - 42, 42),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.33, (255, 106, 0), 1, cv2.LINE_AA)
-    
-    # Draw arm positions overlay (top right area)
-    if arm_positions is not None:
-        arm_x = fw - 130
-        arm_y = 35
-        arm_w, arm_h = 125, 70
-        ov_arm = frame.copy()
-        cv2.rectangle(ov_arm, (arm_x, arm_y), (arm_x + arm_w, arm_y + arm_h), (20, 20, 30), -1)
-        cv2.rectangle(ov_arm, (arm_x, arm_y), (arm_x + arm_w, arm_y + arm_h), (0, 200, 255), 1)
-        cv2.addWeighted(ov_arm, 0.8, frame, 0.2, 0, frame)
-        
-        cv2.putText(frame, "ARM POSITIONS", (arm_x + 3, arm_y + 12),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.28, (0, 200, 255), 1, cv2.LINE_AA)
-        
-        a0 = arm_positions.get("arm_a0", 0.0)
-        a1 = arm_positions.get("arm_a1", 0.0)
-        a2 = arm_positions.get("arm_a2", 0.0)
-        a3 = arm_positions.get("arm_a3", 0.0)
-        
-        cv2.putText(frame, f"a0:{a0:5.1f}  a1:{a1:5.1f}", (arm_x + 3, arm_y + 28),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.26, (200, 200, 200), 1, cv2.LINE_AA)
-        cv2.putText(frame, f"a2:{a2:5.1f}  a3:{a3:5.1f}", (arm_x + 3, arm_y + 43),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.26, (200, 200, 200), 1, cv2.LINE_AA)
-        
-        # Show motor type labels
-        cv2.putText(frame, "vertical(slow)", (arm_x + 3, arm_y + 55),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.22, (150, 150, 150), 1, cv2.LINE_AA)
-        cv2.putText(frame, "horizontal", (arm_x + 3, arm_y + 67),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.22, (150, 150, 150), 1, cv2.LINE_AA)
     
     # Draw animation state overlay (center top)
     if animation_state is not None and animation_state.get("is_playing"):
@@ -666,34 +384,6 @@ def _draw_hud(frame, hand_states, announcement_hand, announcement_end_time,
         cv2.putText(frame, msg, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.35,
                     (255, 200, 0), 1, cv2.LINE_AA)
     
-    for side, bx in (("Left", 5), ("Right", fw - 82)):
-        state = hand_states[side]
-        seen = (now - state["last_seen"]) < 0.4
-        by = fh - 48
-        bw_box, bh_box = 77, 43
-        ov2 = frame.copy()
-        cv2.rectangle(ov2, (bx, by), (bx + bw_box, by + bh_box), (20, 20, 30), -1)
-        cv2.rectangle(ov2, (bx, by), (bx + bw_box, by + bh_box), (255, 106, 0), 1)
-        cv2.addWeighted(ov2, 0.8, frame, 0.2, 0, frame)
-        cv2.putText(frame, f"{side[0]} HAND", (bx + 3, by + 11),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.28, (255, 255, 255), 1, cv2.LINE_AA)
-        if seen:
-            col = (0, 255, 150)
-            lbl = "TRACKING"
-            if now < cooldown_until:
-                lbl, col = "COOLDOWN...", (0, 165, 255)
-            elif state["is_near_face"]:
-                lbl, col = "TRIGGERED!", (255, 255, 0)
-            elif state["distance"] < 180:
-                lbl, col = "NEAR FACE", (0, 255, 255)
-            cv2.putText(frame, lbl, (bx + 3, by + 22),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.26, col, 1, cv2.LINE_AA)
-            cv2.putText(frame, f"dist:{state['distance']:.0f}px",
-                        (bx + 3, by + 32), cv2.FONT_HERSHEY_SIMPLEX, 0.24, (200, 200, 200), 1)
-            _draw_gauge(frame, bx + 3, by + 36, 71, state["intensity"])
-        else:
-            cv2.putText(frame, "NO HAND", (bx + 3, by + 26),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.26, (100, 100, 110), 1, cv2.LINE_AA)
     if now < announcement_end_time:
         msg = f"BYE WAVE! ({announcement_hand})"
         ts = cv2.getTextSize(msg, cv2.FONT_HERSHEY_DUPLEX, 0.5, 2)[0]
@@ -774,8 +464,6 @@ class ByeWaveService:
             local_ip = "localhost"
         print(f"[ByeWaveService] Hand stream -> http://{local_ip}:{self._mjpeg_port}/")
 
-        detector = HandDetector(max_num_hands=self._max_hands)
-
         bye_runner = _ByeSequenceRunner(
             bb=self._bb,
             presets_path=self._presets_path,
@@ -788,8 +476,6 @@ class ByeWaveService:
         # Attach runner to server for API access
         server.bye_runner = bye_runner
         
-        waving_detector = _HandNearFaceDetector(bb=self._bb, trigger_callback=bye_runner.trigger)
-
         def _on_complete() -> None:
             until = time.time() + self._cooldown_sec
             self._bb.write(bye_wave_cooldown_until=until)
@@ -808,8 +494,12 @@ class ByeWaveService:
         prev_time = time.time()
         fps = 0.0
         last_frame_token = -1
+        last_gesture_seq = -1
 
-        print("[ByeWaveService] Running -- bring your hand near your face to trigger a bye animation.")
+        announcement_end_time = 0.0
+        announcement_hand = ""
+
+        print("[ByeWaveService] Running -- waiting for 'bye_wave' hand_gesture from BB.")
         if not self._hand_gesture_enabled:
             print("[ByeWaveService] NOTE: Hand gesture detection is DISABLED (hand_gesture_enabled: false)")
             print("[ByeWaveService]       Only voice commands will trigger bye animations.")
@@ -832,23 +522,19 @@ class ByeWaveService:
                 frame = raw.copy()
 
             now = time.time()
-            detections = detector.process(frame, mirrored=False)
-
             annotated = frame.copy()
-            for hand in detections:
-                is_waving = waving_detector.hand_states[hand.physical_side]["is_near_face"]
-                draw_skeleton(annotated, hand, is_active=is_waving)
-                st = waving_detector.hand_states[hand.physical_side]
-                draw_motion_trail(
-                    annotated, list(st["x_history"]), list(st["y_history"]),
-                    is_active=is_waving,
-                )
 
-            cooldown_until = self._bb.read("bye_wave_cooldown_until")["bye_wave_cooldown_until"]
-            
-            # Only process hand gestures if hand_gesture_enabled is True
-            if self._hand_gesture_enabled:
-                waving_detector.process(detections, now, cooldown_until, frame.shape)
+            # Read blackboard for hand gesture triggers
+            bb_state = self._bb.read("hand_gesture", "hand_gesture_side", "hand_gesture_seq", "bye_wave_cooldown_until")
+            seq = int(bb_state.get("hand_gesture_seq", 0))
+            cooldown_until = float(bb_state.get("bye_wave_cooldown_until", 0.0))
+
+            if self._hand_gesture_enabled and seq != last_gesture_seq and bb_state.get("hand_gesture") == "bye_wave":
+                last_gesture_seq = seq
+                if now > cooldown_until:
+                    announcement_hand = bb_state.get("hand_gesture_side", "")
+                    announcement_end_time = now + 3.0
+                    bye_runner.trigger(announcement_hand)
 
             # Read arm positions and animation state for overlay
             arm_data = self._bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
@@ -874,8 +560,7 @@ class ByeWaveService:
             prev_time = fps_now
 
             _draw_hud(
-                annotated, waving_detector.hand_states,
-                waving_detector.announcement_hand, waving_detector.announcement_end_time,
+                annotated, announcement_hand, announcement_end_time,
                 cooldown_until, fps, now,
                 arm_positions=arm_data,
                 animation_state=animation_state
@@ -885,6 +570,5 @@ class ByeWaveService:
                 _latest_frame = annotated
 
         bye_runner.join(timeout=2.0)
-        detector.close()
         server.shutdown()
         print("[ByeWaveService] Stopped.")

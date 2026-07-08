@@ -11,7 +11,9 @@ DEFAULT_LIMITS_PATH = Path(__file__).resolve().parent / "tests" / "captured_arm_
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, v))
+    true_lo = min(lo, hi)
+    true_hi = max(lo, hi)
+    return max(true_lo, min(true_hi, v))
 
 
 def _lerp(a: float, b: float, t: float) -> float:

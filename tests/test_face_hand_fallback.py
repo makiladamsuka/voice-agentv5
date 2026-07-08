@@ -373,7 +373,38 @@ def main():
                 draw_skeleton(frame, hand, is_active=False)
 
             # Target Logic Selection
-            if faces is not None and len(faces) > 0:
+            target = None
+            target_type = "NONE"
+
+            # ── Skin Blob Lock (prevent false faces during close-up) ────────
+            blob_active_this_frame = False
+            if skin_blob_lock:
+                try:
+                    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                    mask1 = cv2.inRange(hsv, np.array([0, 20, 40], dtype=np.uint8), np.array([25, 255, 255], dtype=np.uint8))
+                    mask2 = cv2.inRange(hsv, np.array([155, 20, 40], dtype=np.uint8), np.array([180, 255, 255], dtype=np.uint8))
+                    mask = cv2.bitwise_or(mask1, mask2)
+                    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    
+                    if contours:
+                        largest_blob = max(contours, key=cv2.contourArea)
+                        area = cv2.contourArea(largest_blob)
+                        if area > (w * h * 0.15):
+                            M = cv2.moments(largest_blob)
+                            if M["m00"] > 0:
+                                cx = int(M["m10"] / M["m00"])
+                                cy = int(M["m01"] / M["m00"])
+                                target = (cx, cy)
+                                target_type = "CLOSE_UP"
+                                blob_active_this_frame = True
+                except Exception:
+                    pass
+                
+                if not blob_active_this_frame:
+                    skin_blob_lock = False
+
+            if not skin_blob_lock and faces is not None and len(faces) > 0:
                 valid_faces = [f for f in faces if float(f[2]) > 4 and float(f[3]) > 4]
                 if valid_faces:
                     # Pick largest face
@@ -421,6 +452,7 @@ def main():
                             cy = int(M["m01"] / M["m00"])
                             target = (cx, cy)
                             target_type = "CLOSE_UP"
+                            skin_blob_lock = True
 
             # 3. Servo Tracking Update — multi-layer smoothing pipeline
             #    (EMA filter → deadzone → velocity-adaptive alpha → smooth + step clamp)

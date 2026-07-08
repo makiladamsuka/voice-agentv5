@@ -485,7 +485,7 @@ class _ByeSequenceRunner:
 
 def _draw_hud(frame, announcement_hand, announcement_end_time,
               cooldown_until, fps, now, arm_positions=None, animation_state=None,
-              talking_active=False, track_kind="none"):
+              talking_active=False, track_kind="none", hand_gesture="", hand_gesture_side=""):
     fh, fw = frame.shape[:2]
     ov = frame.copy()
     cv2.rectangle(ov, (0, 0), (fw, 26), (15, 15, 20), -1)
@@ -499,6 +499,17 @@ def _draw_hud(frame, announcement_hand, announcement_end_time,
     if rem > 0:
         cv2.putText(frame, f"COOLDOWN {rem:.1f}s", (fw // 2 - 42, 42),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.33, (255, 106, 0), 1, cv2.LINE_AA)
+    
+    # Draw gesture detection status (top right corner, below FPS)
+    gesture_y_start = 35
+    if hand_gesture == "hi_wave":
+        msg = f"HI DETECTED ({hand_gesture_side})"
+        cv2.putText(frame, msg, (fw - 200, gesture_y_start),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1, cv2.LINE_AA)
+    elif hand_gesture == "bye_wave":
+        msg = f"BYE DETECTED ({hand_gesture_side})"
+        cv2.putText(frame, msg, (fw - 200, gesture_y_start),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1, cv2.LINE_AA)
     
     # Draw animation state overlay (center top)
     if animation_state is not None and animation_state.get("is_playing"):
@@ -530,34 +541,28 @@ def _draw_hud(frame, announcement_hand, announcement_end_time,
                     (0, 0, 0), 3, cv2.LINE_AA)
         cv2.putText(frame, msg, (tx, ty), cv2.FONT_HERSHEY_DUPLEX, 0.5,
                     (255, 255, 0), 2, cv2.LINE_AA)
-                    
+    
+    # Draw status indicators (bottom left corner)
+    status_y = fh - 60
     if talking_active:
-        msg = "TALKING"
-        ts = cv2.getTextSize(msg, cv2.FONT_HERSHEY_DUPLEX, 0.5, 2)[0]
-        tx = 10
-        ty = fh - 20
-        cv2.putText(frame, msg, (tx + 1, ty + 1), cv2.FONT_HERSHEY_DUPLEX, 0.5,
+        msg = "🎤 TALKING"
+        cv2.putText(frame, msg, (11, status_y + 1), cv2.FONT_HERSHEY_DUPLEX, 0.5,
                     (0, 0, 0), 3, cv2.LINE_AA)
-        cv2.putText(frame, msg, (tx, ty), cv2.FONT_HERSHEY_DUPLEX, 0.5,
+        cv2.putText(frame, msg, (10, status_y), cv2.FONT_HERSHEY_DUPLEX, 0.5,
                     (255, 100, 255), 2, cv2.LINE_AA)
+        status_y += 25
                     
     if track_kind == "hand":
-        msg = "HAND FALLBACK"
-        ts = cv2.getTextSize(msg, cv2.FONT_HERSHEY_DUPLEX, 0.4, 1)[0]
-        tx = fw - ts[0] - 10
-        ty = fh - 20
-        cv2.putText(frame, msg, (tx + 1, ty + 1), cv2.FONT_HERSHEY_DUPLEX, 0.4,
+        msg = "👋 HAND FALLBACK"
+        cv2.putText(frame, msg, (11, status_y + 1), cv2.FONT_HERSHEY_DUPLEX, 0.4,
                     (0, 0, 0), 3, cv2.LINE_AA)
-        cv2.putText(frame, msg, (tx, ty), cv2.FONT_HERSHEY_DUPLEX, 0.4,
+        cv2.putText(frame, msg, (10, status_y), cv2.FONT_HERSHEY_DUPLEX, 0.4,
                     (0, 165, 255), 1, cv2.LINE_AA)
     elif track_kind == "close_up":
-        msg = "SKIN BLOB FALLBACK"
-        ts = cv2.getTextSize(msg, cv2.FONT_HERSHEY_DUPLEX, 0.4, 1)[0]
-        tx = fw - ts[0] - 10
-        ty = fh - 20
-        cv2.putText(frame, msg, (tx + 1, ty + 1), cv2.FONT_HERSHEY_DUPLEX, 0.4,
+        msg = "🔴 SKIN BLOB FALLBACK"
+        cv2.putText(frame, msg, (11, status_y + 1), cv2.FONT_HERSHEY_DUPLEX, 0.4,
                     (0, 0, 0), 3, cv2.LINE_AA)
-        cv2.putText(frame, msg, (tx, ty), cv2.FONT_HERSHEY_DUPLEX, 0.4,
+        cv2.putText(frame, msg, (10, status_y), cv2.FONT_HERSHEY_DUPLEX, 0.4,
                     (0, 0, 255), 1, cv2.LINE_AA)
 
 
@@ -699,6 +704,8 @@ class ByeWaveService:
             cooldown_until = float(bb_state.get("bye_wave_cooldown_until", 0.0))
             talk_active = bool(bb_state.get("talk_gesture_active", False))
             track_kind = str(bb_state.get("track_kind", "none"))
+            current_hand_gesture = str(bb_state.get("hand_gesture", ""))
+            current_hand_gesture_side = str(bb_state.get("hand_gesture_side", ""))
 
             if self._hand_gesture_enabled and seq != last_gesture_seq:
                 last_gesture_seq = seq
@@ -737,7 +744,9 @@ class ByeWaveService:
                 arm_positions=arm_data,
                 animation_state=animation_state,
                 talking_active=talk_active,
-                track_kind=track_kind
+                track_kind=track_kind,
+                hand_gesture=current_hand_gesture,
+                hand_gesture_side=current_hand_gesture_side
             )
 
             with _frame_lock:

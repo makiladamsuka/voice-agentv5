@@ -391,8 +391,6 @@ class FaceGreetingArmService:
         loop_delay = 0.15  # Check every 150ms
         print("[FaceGreetingArm] Monitoring for new faces to greet with arm gestures.")
         
-        last_gesture_seq = -1
-        
         while self.bb.read("running")["running"]:
             now = time.time()
             
@@ -426,15 +424,6 @@ class FaceGreetingArmService:
                 or state["user_speaking"] 
                 or state["bye_wave_active"]
             )
-            
-            # ── Check for explicit Hi wave gesture ────────────────────────────
-            seq = int(state.get("hand_gesture_seq", 0))
-            if seq != last_gesture_seq and state.get("hand_gesture") == "hi_wave":
-                last_gesture_seq = seq
-                if not busy and (self._last_greeting_time is None or now - self._last_greeting_time > 5.0):
-                    print("[FaceGreetingArm] Hi wave gesture detected! Triggering greeting.")
-                    self.trigger_greeting()
-                    self._last_greeting_time = now
             
             if face_visible and not busy:
                 # Face just appeared

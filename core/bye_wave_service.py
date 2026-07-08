@@ -485,7 +485,7 @@ class _ByeSequenceRunner:
 
 def _draw_hud(frame, announcement_hand, announcement_end_time,
               cooldown_until, fps, now, arm_positions=None, animation_state=None,
-              hi_wave_end_time=0.0, talking_active=False, track_kind="none"):
+              talking_active=False, track_kind="none"):
     fh, fw = frame.shape[:2]
     ov = frame.copy()
     cv2.rectangle(ov, (0, 0), (fw, 26), (15, 15, 20), -1)
@@ -530,16 +530,6 @@ def _draw_hud(frame, announcement_hand, announcement_end_time,
                     (0, 0, 0), 3, cv2.LINE_AA)
         cv2.putText(frame, msg, (tx, ty), cv2.FONT_HERSHEY_DUPLEX, 0.5,
                     (255, 255, 0), 2, cv2.LINE_AA)
-                    
-    if now < hi_wave_end_time:
-        msg = "HI WAVE!"
-        ts = cv2.getTextSize(msg, cv2.FONT_HERSHEY_DUPLEX, 0.5, 2)[0]
-        tx = max(0, (fw - ts[0]) // 2)
-        ty = fh // 2 + ts[1] // 2 + 20
-        cv2.putText(frame, msg, (tx + 1, ty + 1), cv2.FONT_HERSHEY_DUPLEX, 0.5,
-                    (0, 0, 0), 3, cv2.LINE_AA)
-        cv2.putText(frame, msg, (tx, ty), cv2.FONT_HERSHEY_DUPLEX, 0.5,
-                    (0, 255, 120), 2, cv2.LINE_AA)
                     
     if talking_active:
         msg = "TALKING"
@@ -674,7 +664,6 @@ class ByeWaveService:
 
         announcement_end_time = 0.0
         announcement_hand = ""
-        hi_wave_end_time = 0.0
 
         print("[ByeWaveService] Running -- waiting for 'bye_wave' hand_gesture from BB.")
         if not self._hand_gesture_enabled:
@@ -718,8 +707,6 @@ class ByeWaveService:
                     announcement_hand = bb_state.get("hand_gesture_side", "")
                     announcement_end_time = now + 3.0
                     bye_runner.trigger(announcement_hand)
-                elif gesture == "hi_wave":
-                    hi_wave_end_time = now + 3.0
 
             # Read arm positions and animation state for overlay
             arm_data = self._bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")

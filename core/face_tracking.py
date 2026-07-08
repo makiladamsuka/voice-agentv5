@@ -178,7 +178,6 @@ class FaceTracker:
         hand_cfg = _cfg(cfg, "hand_fallback", default={}) or {}
         self._hand_fallback_enabled = bool(hand_cfg.get("enabled", True))
         self._hand_max_num = int(hand_cfg.get("max_hands", 1))
-        self._hi_gesture_enabled = bool(hand_cfg.get("hi_gesture", True))
         self._bye_gesture_from_hand = bool(hand_cfg.get("bye_gesture", True))
 
         # Internals
@@ -203,11 +202,9 @@ class FaceTracker:
         self._last_recorded_prox_ts = 0.0
         self._last_scan_complete_ts = 0.0
         self._was_vision_paused = False
-
-        # Hand gesture state
-        self._last_hi_gesture_ts = 0.0
-        self._hand_x_history: list[float] = []
-        self._hand_x_history_max = 15
+        
+        # Skin blob lock (prevents face detection when hand is too close for skeleton detection)
+        self._skin_blob_lock = False
 
     def _vision_audio_busy(self, state: dict) -> bool:
         """True while user or agent audio is active — skip camera + YuNet."""
@@ -488,7 +485,8 @@ class FaceTracker:
             hands = None
 
             # ── Face detection ──────────────────────────────────────────────
-            if faces is not None and len(faces) > 0:
+            # Suppress face detection when skin blob lock is active (hand too close)
+            if not self._skin_blob_lock and faces is not None and len(faces) > 0:
                 valid = [f for f in faces if float(f[2]) > 4 and float(f[3]) > 4]
                 if valid:
                     face_count = len(valid)
@@ -563,35 +561,6 @@ class FaceTracker:
                     px, py = best_hand.palm_center
                     dw, dh = self.detect_res
 
-                    # Hi gesture: raised open palm, frontside, above upper third
-                    if (
-                        self._hi_gesture_enabled
-                        and best_hand.is_frontside
-                        and py < dh * 0.35
-                        and now - self._last_hi_gesture_ts > HI_WAVE_COOLDOWN_SEC
-                    ):
-                        # Track lateral oscillation
-                        self._hand_x_history.append(px)
-                        if len(self._hand_x_history) > self._hand_x_history_max:
-                            self._hand_x_history.pop(0)
-                        if len(self._hand_x_history) >= 6:
-                            # Count direction changes (oscillation)
-                            diffs = [
-                                self._hand_x_history[i + 1] - self._hand_x_history[i]
-                                for i in range(len(self._hand_x_history) - 1)
-                            ]
-                            sign_changes = sum(
-                                1 for i in range(len(diffs) - 1)
-                                if diffs[i] * diffs[i + 1] < 0 and abs(diffs[i]) > 3
-                            )
-                            if sign_changes >= 2:
-                                hand_gesture = "hi_wave"
-                                hand_gesture_side = best_hand.physical_side
-                                self._last_hi_gesture_ts = now
-                                self._hand_x_history.clear()
-                    else:
-                        self._hand_x_history.clear()
-
                     # Bye gesture: hand near detected face, frontside
                     if (
                         self._bye_gesture_from_hand
@@ -651,8 +620,22 @@ class FaceTracker:
                                     skin_blob_norm_y = (cy / dh) * 2.0 - 1.0
                                     skin_blob_detected = True
                                     track_kind = "close_up"
+                                    # Activate skin blob lock to suppress face detection
+                                    self._skin_blob_lock = True
+                            else:
+                                # Blob too small, release lock if it was active
+                                if self._skin_blob_lock:
+                                    self._skin_blob_lock = False
+                        else:
+                            # No contours found, release lock if it was active
+                            if self._skin_blob_lock:
+                                self._skin_blob_lock = False
                     except Exception:
                         pass
+                else:
+                    # Face or hand detected, release skin blob lock
+                    if self._skin_blob_lock:
+                        self._skin_blob_lock = False
 
             # ── Proximity motion + verify ───────────────────────────────────
             self._record_prox_motion(now)

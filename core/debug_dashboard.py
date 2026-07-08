@@ -275,26 +275,45 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                         time.sleep(frame_delay)
                         continue
 
-                    # Draw what is triggering
+                    # Draw what is triggering - enhanced gesture indicators
                     frame = frame.copy()
-                    state = self.bb.read("track_kind", "hand_gesture")
+                    fh, fw = frame.shape[:2]
+                    state = self.bb.read(
+                        "track_kind", "hand_gesture", "hand_gesture_side",
+                        "talk_gesture_active", "bye_wave_active"
+                    )
                     track_kind = state.get("track_kind", "none")
                     hand_gesture = state.get("hand_gesture", "")
+                    hand_gesture_side = state.get("hand_gesture_side", "")
+                    talk_active = state.get("talk_gesture_active", False)
+                    bye_active = state.get("bye_wave_active", False)
                     
-                    text = f"TRACKING: {track_kind}"
-                    if hand_gesture:
-                        text += f" | GESTURE: {hand_gesture}"
-                        
-                    cv2.putText(
-                        frame,
-                        text,
-                        (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        1.0,
-                        (0, 255, 0), # Green in RGB
-                        2,
-                        cv2.LINE_AA,
-                    )
+                    # Top bar: Tracking mode
+                    text = f"TRACKING: {track_kind.upper()}"
+                    cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7, (0, 255, 0), 2, cv2.LINE_AA)
+                    
+                    # Top right: Gesture detection
+                    gesture_y = 30
+                    if hand_gesture == "hi_wave":
+                        msg = f"HI WAVE ({hand_gesture_side})"
+                        cv2.putText(frame, msg, (fw - 280, gesture_y),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+                    elif hand_gesture == "bye_wave":
+                        msg = f"BYE WAVE ({hand_gesture_side})"
+                        cv2.putText(frame, msg, (fw - 280, gesture_y),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2, cv2.LINE_AA)
+                    
+                    # Bottom left: Active states
+                    status_y = fh - 70
+                    if talk_active:
+                        cv2.putText(frame, "TALKING", (10, status_y),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 100, 255), 2, cv2.LINE_AA)
+                        status_y += 30
+                    
+                    if bye_active:
+                        cv2.putText(frame, "BYE ANIMATION", (10, status_y),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
 
                     img = Image.fromarray(frame)
                     buf = io.BytesIO()

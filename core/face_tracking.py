@@ -1,9 +1,12 @@
-"""FaceTracker: camera + YuNet face detection (face-only tracking).
+"""FaceTracker: camera + YuNet face detection + MediaPipe hand fallback.
 
 Writes to BB:
     face_detected, face_norm_x, face_norm_y, face_roll_deg,
     face_area_ratio, face_count, face_candidates,
     body_detected, track_kind,
+    hand_detected, hand_norm_x, hand_norm_y, hand_physical_side,
+    skin_blob_detected, skin_blob_norm_x, skin_blob_norm_y,
+    hand_gesture, hand_gesture_side, hand_gesture_seq,
     stream_frame,
     person_snapshots, last_seen_world_yaw
 
@@ -28,6 +31,7 @@ except ImportError:
     yaml = None
 
 from core.blackboard import Blackboard
+from lib.hand_detector import HandDetector
 from lib.person_memory import PersonMemory, angular_error_deg, wrap_degrees
 from lib.motion_memory import MotionMemory, MotionMemoryItem
 
@@ -47,6 +51,11 @@ FAR_FACE_AREA_RATIO = 0.018
 FAR_SQUINT_CHANCE = 0.08
 FAR_SQUINT_MIN_SEC = 0.22
 FAR_SQUINT_MAX_SEC = 0.55
+
+# ── Hand / gesture constants ─────────────────────────────────────────────────
+SKIN_BLOB_MIN_AREA_RATIO = 0.15   # blob must cover 15% of frame
+HI_WAVE_COOLDOWN_SEC = 5.0
+BYE_WAVE_NEAR_FACE_PX = 110       # hand-near-face trigger distance (pixels)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -165,6 +174,13 @@ class FaceTracker:
         self.prox_zone_yaw_deg = float(inv.get("zone_yaw_deg", float(prox.get("turn_step_deg", 35.0))))
         self.prox_revisit_max_age_sec = float(inv.get("revisit_max_age_sec", 5.0))
 
+        # Hand fallback config
+        hand_cfg = _cfg(cfg, "hand_fallback", default={}) or {}
+        self._hand_fallback_enabled = bool(hand_cfg.get("enabled", True))
+        self._hand_max_num = int(hand_cfg.get("max_hands", 1))
+        self._hi_gesture_enabled = bool(hand_cfg.get("hi_gesture", True))
+        self._bye_gesture_from_hand = bool(hand_cfg.get("bye_gesture", True))
+
         # Internals
         self._attention = MultiFaceAttention()
         self._squint_until = 0.0
@@ -187,6 +203,11 @@ class FaceTracker:
         self._last_recorded_prox_ts = 0.0
         self._last_scan_complete_ts = 0.0
         self._was_vision_paused = False
+
+        # Hand gesture state
+        self._last_hi_gesture_ts = 0.0
+        self._hand_x_history: list[float] = []
+        self._hand_x_history_max = 15
 
     def _vision_audio_busy(self, state: dict) -> bool:
         """True while user or agent audio is active — skip camera + YuNet."""
@@ -517,6 +538,117 @@ class FaceTracker:
                     face_detected = True
                     self._update_memory(face_norm_x, face_norm_y, "face", now, confidence=self.pm_face_conf)
 
+            # ── Hand fallback + gesture detection ───────────────────────────
+            hand_detected = False
+            hand_norm_x = 0.0
+            hand_norm_y = 0.0
+            hand_physical_side = ""
+            skin_blob_detected = False
+            skin_blob_norm_x = 0.0
+            skin_blob_norm_y = 0.0
+            hand_gesture = ""
+            hand_gesture_side = ""
+
+            if self._hand_fallback_enabled and hand_detector is not None:
+                hands = hand_detector.process(frame, mirrored=False)
+
+                # ── Gesture recognition (runs even when face IS detected) ──
+                if hands:
+                    best_hand = max(hands, key=lambda h: h.confidence)
+                    px, py = best_hand.palm_center
+                    dw, dh = self.detect_res
+
+                    # Hi gesture: raised open palm, frontside, above upper third
+                    if (
+                        self._hi_gesture_enabled
+                        and best_hand.is_frontside
+                        and py < dh * 0.35
+                        and now - self._last_hi_gesture_ts > HI_WAVE_COOLDOWN_SEC
+                    ):
+                        # Track lateral oscillation
+                        self._hand_x_history.append(px)
+                        if len(self._hand_x_history) > self._hand_x_history_max:
+                            self._hand_x_history.pop(0)
+                        if len(self._hand_x_history) >= 6:
+                            # Count direction changes (oscillation)
+                            diffs = [
+                                self._hand_x_history[i + 1] - self._hand_x_history[i]
+                                for i in range(len(self._hand_x_history) - 1)
+                            ]
+                            sign_changes = sum(
+                                1 for i in range(len(diffs) - 1)
+                                if diffs[i] * diffs[i + 1] < 0 and abs(diffs[i]) > 3
+                            )
+                            if sign_changes >= 2:
+                                hand_gesture = "hi_wave"
+                                hand_gesture_side = best_hand.physical_side
+                                self._last_hi_gesture_ts = now
+                                self._hand_x_history.clear()
+                    else:
+                        self._hand_x_history.clear()
+
+                    # Bye gesture: hand near detected face, frontside
+                    if (
+                        self._bye_gesture_from_hand
+                        and face_detected
+                        and best_hand.is_frontside
+                        and not hand_gesture
+                    ):
+                        face_px_x = int((face_norm_x + 1.0) * 0.5 * dw)
+                        face_px_y = int((face_norm_y + 1.0) * 0.5 * dh)
+                        dist = ((px - face_px_x) ** 2 + (py - face_px_y) ** 2) ** 0.5
+                        if dist < BYE_WAVE_NEAR_FACE_PX:
+                            hand_gesture = "bye_wave"
+                            hand_gesture_side = best_hand.physical_side
+
+                # ── Hand fallback tracking (only when face NOT detected) ──
+                if not face_detected and hands:
+                    best_hand = max(hands, key=lambda h: h.confidence)
+                    px, py = best_hand.palm_center
+                    dw, dh = self.detect_res
+                    hand_norm_x = (px / dw) * 2.0 - 1.0
+                    hand_norm_y = (py / dh) * 2.0 - 1.0
+                    hand_detected = True
+                    hand_physical_side = best_hand.physical_side
+                    track_kind = "hand"
+
+                # ── Skin blob fallback (when neither face nor hand) ────────
+                if not face_detected and not hand_detected:
+                    try:
+                        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                        mask1 = cv2.inRange(
+                            hsv,
+                            np.array([0, 20, 40], dtype=np.uint8),
+                            np.array([25, 255, 255], dtype=np.uint8),
+                        )
+                        mask2 = cv2.inRange(
+                            hsv,
+                            np.array([155, 20, 40], dtype=np.uint8),
+                            np.array([180, 255, 255], dtype=np.uint8),
+                        )
+                        mask = cv2.bitwise_or(mask1, mask2)
+                        mask = cv2.morphologyEx(
+                            mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8)
+                        )
+                        contours, _ = cv2.findContours(
+                            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                        )
+                        if contours:
+                            largest = max(contours, key=cv2.contourArea)
+                            area = cv2.contourArea(largest)
+                            dw, dh = self.detect_res
+                            if area > dw * dh * SKIN_BLOB_MIN_AREA_RATIO:
+                                M = cv2.moments(largest)
+                                if M["m00"] > 0:
+                                    cx = int(M["m10"] / M["m00"])
+                                    cy = int(M["m01"] / M["m00"])
+                                    skin_blob_norm_x = (cx / dw) * 2.0 - 1.0
+                                    skin_blob_norm_y = (cy / dh) * 2.0 - 1.0
+                                    skin_blob_detected = True
+                                    track_kind = "close_up"
+                    except Exception:
+                        pass
+
             # ── Proximity motion + verify ───────────────────────────────────
             self._record_prox_motion(now)
             verified_yaw = self._handle_prox_verify(
@@ -535,6 +667,12 @@ class FaceTracker:
                 best = self._person_memory.best_for_current_view(current_world_yaw_deg=world_yaw, now=now)
                 if best is not None:
                     last_seen_yaw = best.world_yaw_deg
+
+            # ── Publish hand gesture (increment seq on new gesture) ────────
+            gesture_seq_delta = {}
+            if hand_gesture:
+                prev_seq = int(self.bb.read("hand_gesture_seq")["hand_gesture_seq"])
+                gesture_seq_delta = {"hand_gesture_seq": prev_seq + 1}
 
             # ── Publish to Blackboard ────────────────────────────────────────
             snapshots = self._person_memory.snapshots(now) if self._person_memory else []
@@ -556,10 +694,20 @@ class FaceTracker:
                 face_candidates=face_candidates,
                 body_detected=body_detected,
                 track_kind=track_kind,
+                hand_detected=hand_detected,
+                hand_norm_x=hand_norm_x,
+                hand_norm_y=hand_norm_y,
+                hand_physical_side=hand_physical_side,
+                skin_blob_detected=skin_blob_detected,
+                skin_blob_norm_x=skin_blob_norm_x,
+                skin_blob_norm_y=skin_blob_norm_y,
+                hand_gesture=hand_gesture,
+                hand_gesture_side=hand_gesture_side,
                 person_snapshots=snapshots,
                 motion_snapshots=motion_snapshots,
                 last_seen_world_yaw=last_seen_yaw,
                 prox_verified_priority_yaw=verified_yaw,
+                **gesture_seq_delta,
             )
 
             # ── Publish stream frame (only when a client is watching) ───────

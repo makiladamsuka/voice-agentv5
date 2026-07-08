@@ -34,6 +34,20 @@ class Blackboard:
     stream_frame: Any = None       # latest numpy frame for MJPEG
     stream_viewers: int = 0        # active MJPEG /stream clients (skip encode when 0)
 
+    # ── Hand / skin-blob fallback (written by FaceTracker) ────────────────────
+    hand_detected: bool = False
+    hand_norm_x: float = 0.0       # normalized palm center X [-1, +1]
+    hand_norm_y: float = 0.0       # normalized palm center Y [-1, +1]
+    hand_physical_side: str = ""   # "Left" | "Right"
+    skin_blob_detected: bool = False
+    skin_blob_norm_x: float = 0.0
+    skin_blob_norm_y: float = 0.0
+
+    # ── Hand gestures (written by FaceTracker) ────────────────────────────────
+    hand_gesture: str = ""          # "" | "hi_wave" | "bye_wave"
+    hand_gesture_side: str = ""     # "Left" | "Right"
+    hand_gesture_seq: int = 0       # incremented on each new gesture
+
     # ── Servo targets (written by ServoLoop) ─────────────────────────────────
     servo_pan: float = 80.0        # servo command degrees
     servo_tilt: float = 110.0

@@ -347,6 +347,142 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
         pass
 
 
+class _ByeSequenceRunner:
+    """Plays a random bye animation by writing arm frames to the Blackboard.
+    ServoMixer picks up arm_a0..arm_a3 and sends to ESP32 automatically.
+    bye_wave_active=True on Blackboard pauses ArmController lean updates.
+    Now with dual-speed interpolation for natural movements.
+    """
+    def __init__(self, bb, presets_path, cooldown_sec=10.0, on_complete=None, envelope=None,
+                 vertical_speed=0.8, horizontal_speed=1.5, smoothness=3.0):
+        self._bb = bb
+        self._presets_path = presets_path
+        self._cooldown_sec = cooldown_sec
+        self._on_complete = on_complete
+        self._envelope = envelope
+        self._vertical_speed = vertical_speed  # Speed for a0, a1
+        self._horizontal_speed = horizontal_speed  # Speed for a2, a3
+        self._smoothness = smoothness  # Easing power (1.0=linear, 3.0=cubic, 5.0=quintic)
+        self._lock = threading.Lock()
+        self._thread = None
+        self._running = False
+
+    @property
+    def is_running(self):
+        return self._running
+    
+    def _ease_in_out(self, t):
+        """Smooth ease-in-out function for continuous motion."""
+        power = self._smoothness
+        if t < 0.5:
+            return pow(2, power - 1) * pow(t, power)
+        else:
+            return 1 - pow(-2 * t + 2, power) / pow(2, power - 1)
+
+    def trigger(self, side):
+        with self._lock:
+            if self._running:
+                return
+            try:
+                data = json.loads(self._presets_path.read_text(encoding="utf-8"))
+                animations = data["animations"]
+                key = random.choice(["bye1", "bye2", "bye3"])
+                frames = animations[key]["frames"]
+                if not frames:
+                    raise ValueError(f"Animation '{key}' has no frames")
+            except FileNotFoundError as exc:
+                print(f"[ByeWaveService] ERROR: presets not found: {exc}", file=sys.stderr)
+                return
+            except (json.JSONDecodeError, KeyError, ValueError) as exc:
+                print(f"[ByeWaveService] ERROR: bad presets data: {exc}", file=sys.stderr)
+                return
+            print(f"[ByeWaveService] Wave by {side} -- playing '{key}' ({len(frames)} frames)")
+            self._running = True
+            self._bb.write(bye_wave_active=True, bye_animation_name=key)
+            self._thread = threading.Thread(
+                target=self._run_animation, args=(frames,), daemon=True, name="ByeAnimation"
+            )
+            self._thread.start()
+
+    def _run_animation(self, frames):
+        """Play animation frames with smooth dual-speed interpolation."""
+        base_frame_duration = 0.3
+        poll_interval = 0.01
+        
+        self._bb.write(
+            bye_animation_playing=True,
+            bye_animation_total_frames=len(frames),
+            bye_animation_current_frame=0
+        )
+        
+        for frame_idx, f in enumerate(frames):
+            self._bb.write(bye_animation_current_frame=frame_idx + 1)
+            
+            target_a0, target_a1, target_a2, target_a3 = f["a0"], f["a1"], f["a2"], f["a3"]
+            
+            if self._envelope is not None:
+                target_a0, target_a1, target_a2, target_a3 = self._envelope.clamp_arms(
+                    target_a0, target_a1, target_a2, target_a3
+                )
+            
+            current = self._bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
+            start_a0 = current["arm_a0"]
+            start_a1 = current["arm_a1"]
+            start_a2 = current["arm_a2"]
+            start_a3 = current["arm_a3"]
+            
+            delta_a0 = target_a0 - start_a0
+            delta_a1 = target_a1 - start_a1
+            delta_a2 = target_a2 - start_a2
+            delta_a3 = target_a3 - start_a3
+            
+            vertical_duration = base_frame_duration / max(0.1, self._vertical_speed)
+            horizontal_duration = base_frame_duration / max(0.1, self._horizontal_speed)
+            
+            frame_duration = max(vertical_duration, horizontal_duration)
+            start_time = time.time()
+            
+            while True:
+                elapsed = time.time() - start_time
+                if elapsed >= frame_duration:
+                    break
+                
+                vertical_t = min(1.0, elapsed / vertical_duration) if vertical_duration > 0 else 1.0
+                horizontal_t = min(1.0, elapsed / horizontal_duration) if horizontal_duration > 0 else 1.0
+                
+                vertical_progress = self._ease_in_out(vertical_t)
+                horizontal_progress = self._ease_in_out(horizontal_t)
+                
+                new_a0 = start_a0 + delta_a0 * vertical_progress
+                new_a1 = start_a1 + delta_a1 * vertical_progress
+                new_a2 = start_a2 + delta_a2 * horizontal_progress
+                new_a3 = start_a3 + delta_a3 * horizontal_progress
+                
+                self._bb.write(arm_a0=new_a0, arm_a1=new_a1, arm_a2=new_a2, arm_a3=new_a3)
+                
+                sleep_time = poll_interval - ((time.time() - start_time) % poll_interval)
+                time.sleep(max(0.001, sleep_time))
+            
+            self._bb.write(arm_a0=target_a0, arm_a1=target_a1, arm_a2=target_a2, arm_a3=target_a3)
+        
+        self._bb.write(
+            bye_animation_playing=False,
+            bye_animation_current_frame=0,
+            bye_animation_name="",
+            bye_animation_total_frames=0
+        )
+        
+        if self._on_complete is not None:
+            self._on_complete()
+        self._bb.write(bye_wave_active=False)
+        with self._lock:
+            self._running = False
+
+    def join(self, timeout=2.0):
+        if self._thread is not None:
+            self._thread.join(timeout=timeout)
+
+
 def _draw_hud(frame, announcement_hand, announcement_end_time,
               cooldown_until, fps, now, arm_positions=None, animation_state=None):
     fh, fw = frame.shape[:2]

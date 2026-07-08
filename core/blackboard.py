@@ -68,6 +68,10 @@ class Blackboard:
     bye_wave_cooldown_until: float = 0.0   # epoch time when cooldown expires
     bye_animation_playing: bool = False    # True while animation frames are executing
     bye_animation_name: str = ""           # Current animation name (bye1/bye2/bye3)
+    
+    # ── Talk gesture (written by TalkGestureService) ──────────────────────────
+    talk_gesture_active: bool = False
+
     bye_animation_current_frame: int = 0   # Current frame index in animation
     bye_animation_total_frames: int = 0    # Total frames in current animation
 

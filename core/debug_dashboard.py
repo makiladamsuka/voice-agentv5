@@ -300,7 +300,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                         cv2.putText(frame, msg, (fw - 280, gesture_y),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
                     elif hand_gesture == "bye_wave":
-                        msg = f"BYE WAVE ({hand_gesture_side})"
+                        msg = f"BYE ({hand_gesture_side})"
                         cv2.putText(frame, msg, (fw - 280, gesture_y),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2, cv2.LINE_AA)
                     

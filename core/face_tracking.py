@@ -178,6 +178,7 @@ class FaceTracker:
         hand_cfg = _cfg(cfg, "hand_fallback", default={}) or {}
         self._hand_fallback_enabled = bool(hand_cfg.get("enabled", True))
         self._hand_max_num = int(hand_cfg.get("max_hands", 1))
+        self._hi_gesture_enabled = bool(hand_cfg.get("hi_gesture", True))
         self._bye_gesture_from_hand = bool(hand_cfg.get("bye_gesture", True))
 
         # Internals

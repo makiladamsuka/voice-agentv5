@@ -114,6 +114,11 @@ class ArmController:
             track_gain=float(a.get("arm_greeting_track_gain", 10.0)),
         )
 
+        # Greeting speed multipliers from face_greeting_arm
+        fg = _cfg(cfg, "face_greeting_arm", default={}) or {}
+        self.greeting_vertical_speed = float(fg.get("vertical_speed", 1.0))
+        self.greeting_horizontal_speed = float(fg.get("horizontal_speed", 1.0))
+
         # Greeting state
         self._presets = presets
         self._last_greeting_seq = 0
@@ -274,11 +279,15 @@ class ArmController:
                 # Use envelope-only clamp (not the lean raise-mid limiter) so
                 # hi poses with low a1 values actually reach their target.
                 for i in range(4):
+                    # i=0,1 (a0, a1) are vertical/shoulder; i=2,3 (a2, a3) are horizontal/elbow/wrist
+                    speed_factor = self.greeting_vertical_speed if i < 2 else self.greeting_horizontal_speed
+                    effective_dt = loop_delay * max(0.01, speed_factor)
+
                     self._current[i], self._velocity[i] = tick_toward(
                         self._current[i],
                         self._velocity[i],
                         self._target[i],
-                        loop_delay,
+                        effective_dt,
                         lo=-360.0,
                         hi=360.0,
                         params=self._greeting_arm_params,

@@ -194,6 +194,8 @@ class ArmController:
         if self._greeting_start_time is None:
             return False
 
+        elapsed = now - self._greeting_start_time
+
         # Check if we have arrived at the target pose
         if not self._greeting_arrived and self._greeting_pose is not None:
             diff = sum(abs(c - p) for c, p in zip(self._current, self._greeting_pose))

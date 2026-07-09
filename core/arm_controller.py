@@ -194,8 +194,6 @@ class ArmController:
         if self._greeting_start_time is None:
             return False
 
-        elapsed = now - self._greeting_start_time
-
         # Check if we have arrived at the target pose
         if not self._greeting_arrived and self._greeting_pose is not None:
             max_diff = max(abs(c - p) for c, p in zip(self._current, self._greeting_pose))
@@ -204,7 +202,9 @@ class ArmController:
                 self._greeting_arrived = True
                 self._greeting_start_time = now  # Reset timer to start holding NOW
                 print(f"[ArmController] Greeting pose reached (error={max_diff:.1f}°). Holding for {self._greeting_duration_sec:.1f}s")
-                elapsed = 0.0
+
+        # Calculate elapsed time (will be from arrival time if arrived, or from start if not)
+        elapsed = now - self._greeting_start_time
 
         if not self._greeting_arrived or elapsed < self._greeting_duration_sec:
             # Still greeting — pin target to greeting pose every tick so

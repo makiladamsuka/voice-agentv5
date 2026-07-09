@@ -183,7 +183,7 @@ class ArmController:
         self._greeting_pose = pose
         self._greeting_start_time = time.time()
         self._greeting_phase = 0
-        self._greeting_duration_sec = random.uniform(2.0, 4.0)
+        self._greeting_duration_sec = random.uniform(2.0, 3.0)
 
         print(f"[ArmController] Starting greeting: {pose_name} → {pose} (holding for {self._greeting_duration_sec:.1f}s)")
         self.bb.write(arm_greeting_active=True)

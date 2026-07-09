@@ -207,6 +207,10 @@ class ArmController:
             self._velocity = [0.0, 0.0, 0.0, 0.0]
             self._greeting_start_time = None
             self._greeting_pose = None
+            
+            sleep_time = random.uniform(2.0, 4.0)
+            time.sleep(sleep_time)
+            
             print("[ArmController] Greeting complete, returning to previous pose")
             self.bb.write(arm_greeting_active=False)
             return False

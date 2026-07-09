@@ -123,6 +123,7 @@ class ArmController:
         self._presets = presets
         self._last_greeting_seq = 0
         self._greeting_start_time: float | None = None
+        self._greeting_arrived: bool = False
         self._greeting_pose: tuple[float, float, float, float] | None = None
         self._pre_greeting_target = list(self._home)
         self._greeting_duration_sec: float = 2.0
@@ -182,6 +183,7 @@ class ArmController:
         # Set greeting pose as target
         self._greeting_pose = pose
         self._greeting_start_time = time.time()
+        self._greeting_arrived = False
         self._greeting_duration_sec = random.uniform(2.0, 4.0)
 
         print(f"[ArmController] Starting greeting: {pose_name} → {pose} (holding for {self._greeting_duration_sec:.1f}s)")
@@ -192,9 +194,16 @@ class ArmController:
         if self._greeting_start_time is None:
             return False
 
-        elapsed = now - self._greeting_start_time
+        # Check if we have arrived at the target pose
+        if not self._greeting_arrived and self._greeting_pose is not None:
+            diff = sum(abs(c - p) for c, p in zip(self._current, self._greeting_pose))
+            if diff < 2.0:  # Within 2 degrees total difference
+                self._greeting_arrived = True
+                self._greeting_start_time = now  # Reset timer to start holding NOW
+                print(f"[ArmController] Greeting pose reached. Holding for {self._greeting_duration_sec:.1f}s")
+                elapsed = 0.0
 
-        if elapsed < self._greeting_duration_sec:
+        if not self._greeting_arrived or elapsed < self._greeting_duration_sec:
             # Still greeting — pin target to greeting pose every tick so
             # any external writes to _target don't drift us away
             if self._greeting_pose is not None:
@@ -208,6 +217,7 @@ class ArmController:
             self._current[:] = list(self._pre_greeting_target)
             self._velocity = [0.0, 0.0, 0.0, 0.0]
             self._greeting_start_time = None
+            self._greeting_arrived = False
             self._greeting_pose = None
             print("[ArmController] Greeting complete, returning to previous pose")
             self.bb.write(arm_greeting_active=False)

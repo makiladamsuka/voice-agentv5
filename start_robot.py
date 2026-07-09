@@ -639,25 +639,28 @@ def main():
         )
     
     # Face greeting arm gestures (separate from voice greetings)
-    face_greeting_arm_cfg = cfg.get("face_greeting_arm", {}) or {}
-    if face_greeting_arm_cfg.get("enabled", True) and arm_controller is not None and arm_controller.enabled:
-        from core.face_greeting_arm import FaceGreetingArmService
-
-        threads.append(
-            threading.Thread(
-                target=FaceGreetingArmService(bb, config_path=config_path).run,
-                daemon=True,
-                name="FaceGreetingArm",
-            )
-        )
-        print("[Bootstrap] FaceGreetingArmService enabled — arm gestures for new faces")
+    # DISABLED: Only using ByeWaveService for arm movements
+    # face_greeting_arm_cfg = cfg.get("face_greeting_arm", {}) or {}
+    # if face_greeting_arm_cfg.get("enabled", True) and arm_controller is not None and arm_controller.enabled:
+    #     from core.face_greeting_arm import FaceGreetingArmService
+    #
+    #     threads.append(
+    #         threading.Thread(
+    #             target=FaceGreetingArmService(bb, config_path=config_path).run,
+    #             daemon=True,
+    #             name="FaceGreetingArm",
+    #         )
+    #     )
+    #     print("[Bootstrap] FaceGreetingArmService enabled — arm gestures for new faces")
     
-    # ArmController - base arm movements
-    if arm_controller is not None and arm_controller.enabled:
-        threads.append(
-            threading.Thread(target=arm_controller.run, daemon=True, name="ArmController")
-        )
-        print("[Bootstrap] ArmController enabled — base arm lean/sway movements")
+    # DISABLED: ArmController - only using ByeWaveService for arm control
+    # if arm_controller is not None and arm_controller.enabled:
+    #     threads.append(
+    #         threading.Thread(target=arm_controller.run, daemon=True, name="ArmController")
+    #     )
+    #     print("[Bootstrap] ArmController enabled — base arm lean/sway movements")
+    
+    print("[Bootstrap] ArmController, FaceGreetingArm, and TalkGesture DISABLED — only ByeWaveService controls arms")
 
     bye_wave_cfg = cfg.get("bye_wave", {}) or {}
     if bye_wave_cfg.get("enabled", False):
@@ -716,36 +719,36 @@ def main():
         )
         threads.append(voice_thread)
 
-        # TalkGestureService - arm gestures while speaking
-        talk_cfg = cfg.get("talk_gesture", {}) or {}
-        if arms_cfg.get("enabled", False) and talk_cfg.get("enabled", True):
-            from core.talk_gesture_service import TalkGestureService
-
-            presets_path = Path(arms_cfg.get("presets_path", "tests/arm_pose_presets.json"))
-            if not presets_path.is_absolute():
-                presets_path = APP_DIR / presets_path
-
-            talk_gesture_svc = TalkGestureService(
-                bb=bb,
-                presets_path=presets_path,
-                pose_duration=float(talk_cfg.get("pose_duration", 0.4)),
-                poll_interval=float(talk_cfg.get("poll_interval", 0.02)),
-                vertical_speed=float(talk_cfg.get("vertical_speed", 0.8)),
-                horizontal_speed=float(talk_cfg.get("horizontal_speed", 1.5)),
-            )
-            threads.append(
-                threading.Thread(
-                    target=talk_gesture_svc.run,
-                    daemon=True,
-                    name="TalkGestureService",
-                )
-            )
-            v_speed = talk_cfg.get("vertical_speed", 0.8)
-            h_speed = talk_cfg.get("horizontal_speed", 1.5)
-            print(
-                f"[Bootstrap] TalkGestureService enabled — "
-                f"arms animate while speaking (v={v_speed}x, h={h_speed}x)"
-            )
+        # DISABLED: TalkGestureService - only using ByeWaveService for arm movements
+        # talk_cfg = cfg.get("talk_gesture", {}) or {}
+        # if arms_cfg.get("enabled", False) and talk_cfg.get("enabled", True):
+        #     from core.talk_gesture_service import TalkGestureService
+        #
+        #     presets_path = Path(arms_cfg.get("presets_path", "tests/arm_pose_presets.json"))
+        #     if not presets_path.is_absolute():
+        #         presets_path = APP_DIR / presets_path
+        #
+        #     talk_gesture_svc = TalkGestureService(
+        #         bb=bb,
+        #         presets_path=presets_path,
+        #         pose_duration=float(talk_cfg.get("pose_duration", 0.4)),
+        #         poll_interval=float(talk_cfg.get("poll_interval", 0.02)),
+        #         vertical_speed=float(talk_cfg.get("vertical_speed", 0.8)),
+        #         horizontal_speed=float(talk_cfg.get("horizontal_speed", 1.5)),
+        #     )
+        #     threads.append(
+        #         threading.Thread(
+        #             target=talk_gesture_svc.run,
+        #             daemon=True,
+        #             name="TalkGestureService",
+        #         )
+        #     )
+        #     v_speed = talk_cfg.get("vertical_speed", 0.8)
+        #     h_speed = talk_cfg.get("horizontal_speed", 1.5)
+        #     print(
+        #         f"[Bootstrap] TalkGestureService enabled — "
+        #         f"arms animate while speaking (v={v_speed}x, h={h_speed}x)"
+        #     )
 
     from voice.voice_service import ensure_media_server
 

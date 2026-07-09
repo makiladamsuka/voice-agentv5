@@ -280,13 +280,14 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     fh, fw = frame.shape[:2]
                     state = self.bb.read(
                         "track_kind", "hand_gesture", "hand_gesture_side",
-                        "talk_gesture_active", "bye_wave_active"
+                        "agent_speaking", "user_speaking", "hand_detected"
                     )
                     track_kind = state.get("track_kind", "none")
                     hand_gesture = state.get("hand_gesture", "")
                     hand_gesture_side = state.get("hand_gesture_side", "")
-                    talk_active = state.get("talk_gesture_active", False)
-                    bye_active = state.get("bye_wave_active", False)
+                    agent_speaking = state.get("agent_speaking", False)
+                    user_speaking = state.get("user_speaking", False)
+                    hand_detected = state.get("hand_detected", False)
                     
                     # Top bar: Tracking mode
                     text = f"TRACKING: {track_kind.upper()}"
@@ -305,15 +306,24 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2, cv2.LINE_AA)
                     
                     # Bottom left: Active states
-                    status_y = fh - 70
-                    if talk_active:
-                        cv2.putText(frame, "TALKING", (10, status_y),
+                    status_y = fh - 100
+                    
+                    # Robot talking status
+                    if agent_speaking:
+                        cv2.putText(frame, "ROBOT TALKING", (10, status_y),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 100, 255), 2, cv2.LINE_AA)
                         status_y += 30
                     
-                    if bye_active:
-                        cv2.putText(frame, "BYE ANIMATION", (10, status_y),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
+                    # User speaking status
+                    if user_speaking:
+                        cv2.putText(frame, "USER TALKING", (10, status_y),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (100, 200, 255), 2, cv2.LINE_AA)
+                        status_y += 30
+                    
+                    # Idle hand tracking status
+                    if hand_detected and not hand_gesture:
+                        cv2.putText(frame, "HAND TRACKING (IDLE)", (10, status_y),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 150, 150), 2, cv2.LINE_AA)
 
                     img = Image.fromarray(frame)
                     buf = io.BytesIO()

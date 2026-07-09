@@ -124,6 +124,8 @@ class ArmController:
         self._last_greeting_seq = 0
         self._greeting_start_time: float | None = None
         self._greeting_arrived: bool = False
+        self._greeting_arrived_time: float | None = None
+        self._greeting_settle_sec: float = 0.3
         self._greeting_pose: tuple[float, float, float, float] | None = None
         self._pre_greeting_target = list(self._home)
         self._greeting_duration_sec: float = 2.0
@@ -184,9 +186,11 @@ class ArmController:
         self._greeting_pose = pose
         self._greeting_start_time = time.time()
         self._greeting_arrived = False
+        self._greeting_arrived_time = None  # When pose was reached
+        self._greeting_settle_sec = 0.3  # Time to settle after arrival before starting hold
         self._greeting_duration_sec = random.uniform(2.0, 4.0)
 
-        print(f"[ArmController] Starting greeting: {pose_name} → {pose} (holding for {self._greeting_duration_sec:.1f}s)")
+        print(f"[ArmController] Starting greeting: {pose_name} → {pose} (will hold for {self._greeting_duration_sec:.1f}s after arrival)")
         self.bb.write(arm_greeting_active=True)
 
     def _update_greeting(self, now: float) -> bool:
@@ -200,27 +204,36 @@ class ArmController:
             # Wait for it to arrive (within 3 degrees on all joints)
             if max_diff < 3.0:
                 self._greeting_arrived = True
-                self._greeting_start_time = now  # Reset timer to start holding NOW
-                print(f"[ArmController] Greeting pose reached (error={max_diff:.1f}°). Holding for {self._greeting_duration_sec:.1f}s")
+                self._greeting_arrived_time = now  # Mark when we arrived
+                print(f"[ArmController] Greeting pose reached (error={max_diff:.1f}°). Settling for {self._greeting_settle_sec:.1f}s, then holding for {self._greeting_duration_sec:.1f}s")
 
-        # Calculate elapsed time (will be from arrival time if arrived, or from start if not)
-        elapsed = now - self._greeting_start_time
-
-        if not self._greeting_arrived or elapsed < self._greeting_duration_sec:
-            # Still greeting — pin target to greeting pose every tick so
-            # any external writes to _target don't drift us away
+        # Still moving toward pose
+        if not self._greeting_arrived:
+            if self._greeting_pose is not None:
+                self._target[:] = list(self._greeting_pose)
+            return True
+        
+        # Arrived - check if we're in settle period or hold period
+        time_since_arrival = now - self._greeting_arrived_time
+        
+        if time_since_arrival < self._greeting_settle_sec:
+            # Still settling after arrival
+            if self._greeting_pose is not None:
+                self._target[:] = list(self._greeting_pose)
+            return True
+        elif time_since_arrival < (self._greeting_settle_sec + self._greeting_duration_sec):
+            # Holding the pose
             if self._greeting_pose is not None:
                 self._target[:] = list(self._greeting_pose)
             return True
         else:
-            # Greeting complete — snap _current to the pre-greeting target
-            # immediately so the normal blend path resumes from the right
-            # position rather than from wherever tick_toward left off.
+            # Greeting complete — return to previous pose
             self._target[:] = list(self._pre_greeting_target)
             self._current[:] = list(self._pre_greeting_target)
             self._velocity = [0.0, 0.0, 0.0, 0.0]
             self._greeting_start_time = None
             self._greeting_arrived = False
+            self._greeting_arrived_time = None
             self._greeting_pose = None
             print("[ArmController] Greeting complete, returning to previous pose")
             self.bb.write(arm_greeting_active=False)

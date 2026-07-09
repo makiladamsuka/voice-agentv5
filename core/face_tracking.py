@@ -471,6 +471,34 @@ class FaceTracker:
         )
         return inv_yaw
 
+    def _detect_reversals(self, history: list[float]) -> tuple[int, float]:
+        """Counts direction changes and total amplitude in a 1D positional history."""
+        if len(history) < 2:
+            return 0, 0.0
+
+        reversals = 0
+        min_val = history[0]
+        max_val = history[0]
+        
+        # 1 = moving positive, -1 = moving negative, 0 = unknown
+        direction = 0
+        
+        for i in range(1, len(history)):
+            diff = history[i] - history[i - 1]
+            min_val = min(min_val, history[i])
+            max_val = max(max_val, history[i])
+            
+            if abs(diff) < self._wave_dead_zone_px:
+                continue
+                
+            new_dir = 1 if diff > 0 else -1
+            if direction != 0 and new_dir != direction:
+                reversals += 1
+            direction = new_dir
+            
+        amplitude = float(max_val - min_val)
+        return reversals, amplitude
+
     # ── Main loop ─────────────────────────────────────────────────────────────
 
     def run(self) -> None:

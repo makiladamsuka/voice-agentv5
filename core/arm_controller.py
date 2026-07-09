@@ -123,9 +123,9 @@ class ArmController:
         self._presets = presets
         self._last_greeting_seq = 0
         self._greeting_start_time: float | None = None
+        self._greeting_phase: int = 0  # 0=UP, 1=HOLD, 2=DOWN
         self._greeting_pose: tuple[float, float, float, float] | None = None
         self._pre_greeting_target = list(self._home)
-        self._greeting_duration_sec: float = 2.0
 
         self._publish_pose(self._home)
 
@@ -182,6 +182,7 @@ class ArmController:
         # Set greeting pose as target
         self._greeting_pose = pose
         self._greeting_start_time = time.time()
+        self._greeting_phase = 0
         self._greeting_duration_sec = random.uniform(2.0, 4.0)
 
         print(f"[ArmController] Starting greeting: {pose_name} → {pose} (holding for {self._greeting_duration_sec:.1f}s)")
@@ -194,26 +195,39 @@ class ArmController:
 
         elapsed = now - self._greeting_start_time
 
-        if elapsed < self._greeting_duration_sec:
-            # Still greeting — pin target to greeting pose every tick so
-            # any external writes to _target don't drift us away
-            if self._greeting_pose is not None:
+        if self._greeting_phase == 0:
+            # PHASE 0: Moving UP
+            # Give it a generous fixed time to go up (e.g., 3.0s) to account for slow vertical_speed
+            if elapsed >= 3.0:
+                self._greeting_phase = 1
+                self._greeting_start_time = now
+            elif self._greeting_pose is not None:
                 self._target[:] = list(self._greeting_pose)
             return True
-        else:
-            # Greeting complete — return to previous pose
-            self._target[:] = list(self._pre_greeting_target)
-            self._current[:] = list(self._pre_greeting_target)
-            self._velocity = [0.0, 0.0, 0.0, 0.0]
-            self._greeting_start_time = None
-            self._greeting_pose = None
             
-            sleep_time = random.uniform(2.0, 4.0)
-            time.sleep(sleep_time)
+        elif self._greeting_phase == 1:
+            # PHASE 1: Holding at the top
+            if elapsed >= self._greeting_duration_sec:
+                self._greeting_phase = 2
+                self._greeting_start_time = now
+                # Set target back to home, so tick_toward smoothly brings it down
+                self._target[:] = list(self._pre_greeting_target)
+            elif self._greeting_pose is not None:
+                self._target[:] = list(self._greeting_pose)
+            return True
             
-            print("[ArmController] Greeting complete, returning to previous pose")
-            self.bb.write(arm_greeting_active=False)
-            return False
+        elif self._greeting_phase == 2:
+            # PHASE 2: Moving DOWN (back to home)
+            # Smoothly travel back home. Give it 3.0s to arrive before releasing control
+            if elapsed >= 3.0:
+                self._greeting_start_time = None
+                self._greeting_pose = None
+                print("[ArmController] Greeting complete, returning to normal tracking")
+                self.bb.write(arm_greeting_active=False)
+                return False
+            return True
+
+        return False
 
     def run(self) -> None:
         if not self.enabled:

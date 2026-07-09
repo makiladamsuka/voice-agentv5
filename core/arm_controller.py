@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import random
 from pathlib import Path
 
 try:
@@ -18,7 +19,6 @@ from lib.arm_base_lean import lean_delta_per_spin
 from lib.elastic_head_motion import tick_toward, HeadMotionParams
 
 # Greeting pose parameters
-GREETING_DURATION_SEC = 2.0  # How long to hold greeting pose
 GREETING_SMOOTH_HZ = 8.0     # Faster transition to greeting pose
 
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -125,6 +125,7 @@ class ArmController:
         self._greeting_start_time: float | None = None
         self._greeting_pose: tuple[float, float, float, float] | None = None
         self._pre_greeting_target = list(self._home)
+        self._greeting_duration_sec: float = 2.0
 
         self._publish_pose(self._home)
 
@@ -181,8 +182,9 @@ class ArmController:
         # Set greeting pose as target
         self._greeting_pose = pose
         self._greeting_start_time = time.time()
+        self._greeting_duration_sec = random.uniform(2.0, 4.0)
 
-        print(f"[ArmController] Starting greeting: {pose_name} → {pose}")
+        print(f"[ArmController] Starting greeting: {pose_name} → {pose} (holding for {self._greeting_duration_sec:.1f}s)")
         self.bb.write(arm_greeting_active=True)
 
     def _update_greeting(self, now: float) -> bool:
@@ -192,7 +194,7 @@ class ArmController:
 
         elapsed = now - self._greeting_start_time
 
-        if elapsed < GREETING_DURATION_SEC:
+        if elapsed < self._greeting_duration_sec:
             # Still greeting — pin target to greeting pose every tick so
             # any external writes to _target don't drift us away
             if self._greeting_pose is not None:

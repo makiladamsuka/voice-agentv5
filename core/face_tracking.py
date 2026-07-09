@@ -177,9 +177,9 @@ class FaceTracker:
 
         # Hand fallback config
         hand_cfg = _cfg(cfg, "hand_fallback", default={}) or {}
-        self._hand_fallback_enabled = bool(hand_cfg.get("enabled", True))
+        # self._hand_fallback_enabled = bool(hand_cfg.get("enabled", True))
         self._hand_max_num = int(hand_cfg.get("max_hands", 1))
-        self._hi_gesture_enabled = bool(hand_cfg.get("hi_gesture", True))
+        # self._hi_gesture_enabled = bool(hand_cfg.get("hi_gesture", True))
         self._bye_gesture_from_hand = bool(hand_cfg.get("bye_gesture", True))
         
         # Waving detection config
@@ -231,7 +231,7 @@ class FaceTracker:
         self._was_vision_paused = False
         
         # Skin blob lock (prevents face detection when hand is too close for skeleton detection)
-        self._skin_blob_lock = False
+        # self._skin_blob_lock = False
 
     def _vision_audio_busy(self, state: dict) -> bool:
         """True while user or agent audio is active — skip camera + YuNet."""
@@ -510,7 +510,8 @@ class FaceTracker:
             return
 
         hand_detector = None
-        if self._hand_fallback_enabled or self._hi_gesture_enabled or self._bye_gesture_from_hand:
+        # if self._hand_fallback_enabled or self._hi_gesture_enabled or self._bye_gesture_from_hand:
+        if self._bye_gesture_from_hand:
             hand_detector = HandDetector(max_num_hands=self._hand_max_num)
 
         next_tick = time.perf_counter()
@@ -570,7 +571,8 @@ class FaceTracker:
 
             # ── Face detection ──────────────────────────────────────────────
             # Suppress face detection when skin blob lock is active (hand too close)
-            if not self._skin_blob_lock and faces is not None and len(faces) > 0:
+            # if not self._skin_blob_lock and faces is not None and len(faces) > 0:
+            if faces is not None and len(faces) > 0:
                 valid = [f for f in faces if float(f[2]) > 4 and float(f[3]) > 4]
                 if valid:
                     face_count = len(valid)
@@ -636,7 +638,8 @@ class FaceTracker:
             hand_gesture = ""
             hand_gesture_side = ""
 
-            if self._hand_fallback_enabled and hand_detector is not None:
+            # if self._hand_fallback_enabled and hand_detector is not None:
+            if hand_detector is not None:
                 hands = hand_detector.process(frame, mirrored=False)
 
                 # ── Gesture recognition (runs even when face IS detected) ──
@@ -688,55 +691,58 @@ class FaceTracker:
                         wave_state["amplitude"] = 0.0
 
                 # ── Skin blob fallback (when neither face nor hand) ────────
-                if not face_detected and not hand_detected:
-                    try:
-                        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                        mask1 = cv2.inRange(
-                            hsv,
-                            np.array([0, 20, 40], dtype=np.uint8),
-                            np.array([25, 255, 255], dtype=np.uint8),
-                        )
-                        mask2 = cv2.inRange(
-                            hsv,
-                            np.array([155, 20, 40], dtype=np.uint8),
-                            np.array([180, 255, 255], dtype=np.uint8),
-                        )
-                        mask = cv2.bitwise_or(mask1, mask2)
-                        mask = cv2.morphologyEx(
-                            mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8)
-                        )
-                        contours, _ = cv2.findContours(
-                            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-                        )
-                        if contours:
-                            largest = max(contours, key=cv2.contourArea)
-                            area = cv2.contourArea(largest)
-                            dw, dh = self.detect_res
-                            if area > dw * dh * SKIN_BLOB_MIN_AREA_RATIO:
-                                M = cv2.moments(largest)
-                                if M["m00"] > 0:
-                                    cx = int(M["m10"] / M["m00"])
-                                    cy = int(M["m01"] / M["m00"])
-                                    skin_blob_norm_x = (cx / dw) * 2.0 - 1.0
-                                    skin_blob_norm_y = (cy / dh) * 2.0 - 1.0
-                                    skin_blob_detected = True
-                                    track_kind = "close_up"
-                                    # Activate skin blob lock to suppress face detection
-                                    self._skin_blob_lock = True
-                            else:
-                                # Blob too small, release lock if it was active
-                                if self._skin_blob_lock:
-                                    self._skin_blob_lock = False
-                        else:
-                            # No contours found, release lock if it was active
-                            if self._skin_blob_lock:
-                                self._skin_blob_lock = False
-                    except Exception:
-                        pass
-                else:
-                    # Face or hand detected, release skin blob lock
-                    if self._skin_blob_lock:
-                        self._skin_blob_lock = False
+                # if not face_detected and not hand_detected:
+                #     try:
+                #         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                #         mask1 = cv2.inRange(
+                #             hsv,
+                #             np.array([0, 20, 40], dtype=np.uint8),
+                #             np.array([25, 255, 255], dtype=np.uint8),
+                #         )
+                #         mask2 = cv2.inRange(
+                #             hsv,
+                #             np.array([155, 20, 40], dtype=np.uint8),
+                #             np.array([180, 255, 255], dtype=np.uint8),
+                #         )
+                #         mask = cv2.bitwise_or(mask1, mask2)
+                #         mask = cv2.morphologyEx(
+                #             mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8)
+                #         )
+                #         contours, _ = cv2.findContours(
+                #             mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                #         )
+                #         if contours:
+                #             largest = max(contours, key=cv2.contourArea)
+                #             area = cv2.contourArea(largest)
+                #             dw, dh = self.detect_res
+                #             if area > dw * dh * SKIN_BLOB_MIN_AREA_RATIO:
+                #                 M = cv2.moments(largest)
+                #                 if M["m00"] > 0:
+                #                     cx = int(M["m10"] / M["m00"])
+                #                     cy = int(M["m01"] / M["m00"])
+                #                     skin_blob_norm_x = (cx / dw) * 2.0 - 1.0
+                #                     skin_blob_norm_y = (cy / dh) * 2.0 - 1.0
+                #                     skin_blob_detected = True
+                #                     track_kind = "close_up"
+                #                     # Activate skin blob lock to suppress face detection
+                #                     # self._skin_blob_lock = True
+                #             else:
+                #                 # Blob too small, release lock if it was active
+                #                 # if self._skin_blob_lock:
+                #                 #     self._skin_blob_lock = False
+                #                 pass
+                #         else:
+                #             # No contours found, release lock if it was active
+                #             # if self._skin_blob_lock:
+                #             #     self._skin_blob_lock = False
+                #             pass
+                #     except Exception:
+                #         pass
+                # else:
+                #     # Face or hand detected, release skin blob lock
+                #     # if self._skin_blob_lock:
+                #     #     self._skin_blob_lock = False
+                #     pass
 
             # ── Proximity motion + verify ───────────────────────────────────
             self._record_prox_motion(now)
@@ -783,13 +789,13 @@ class FaceTracker:
                 face_candidates=face_candidates,
                 body_detected=body_detected,
                 track_kind=track_kind,
-                hand_detected=hand_detected,
-                hand_norm_x=hand_norm_x,
-                hand_norm_y=hand_norm_y,
-                hand_physical_side=hand_physical_side,
-                skin_blob_detected=skin_blob_detected,
-                skin_blob_norm_x=skin_blob_norm_x,
-                skin_blob_norm_y=skin_blob_norm_y,
+                # hand_detected=hand_detected,
+                # hand_norm_x=hand_norm_x,
+                # hand_norm_y=hand_norm_y,
+                # hand_physical_side=hand_physical_side,
+                # skin_blob_detected=skin_blob_detected,
+                # skin_blob_norm_x=skin_blob_norm_x,
+                # skin_blob_norm_y=skin_blob_norm_y,
                 hand_gesture=hand_gesture,
                 hand_gesture_side=hand_gesture_side,
                 person_snapshots=snapshots,

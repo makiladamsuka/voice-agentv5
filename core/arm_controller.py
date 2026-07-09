@@ -198,11 +198,12 @@ class ArmController:
 
         # Check if we have arrived at the target pose
         if not self._greeting_arrived and self._greeting_pose is not None:
-            diff = sum(abs(c - p) for c, p in zip(self._current, self._greeting_pose))
-            if diff < 2.0:  # Within 2 degrees total difference
+            max_diff = max(abs(c - p) for c, p in zip(self._current, self._greeting_pose))
+            # Wait for it to arrive (within 3 degrees on all joints)
+            if max_diff < 3.0:
                 self._greeting_arrived = True
                 self._greeting_start_time = now  # Reset timer to start holding NOW
-                print(f"[ArmController] Greeting pose reached. Holding for {self._greeting_duration_sec:.1f}s")
+                print(f"[ArmController] Greeting pose reached (error={max_diff:.1f}°). Holding for {self._greeting_duration_sec:.1f}s")
                 elapsed = 0.0
 
         if not self._greeting_arrived or elapsed < self._greeting_duration_sec:

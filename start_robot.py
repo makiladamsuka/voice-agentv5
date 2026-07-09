@@ -639,28 +639,24 @@ def main():
         )
     
     # Face greeting arm gestures (separate from voice greetings)
-    # DISABLED: Only using ByeWaveService for arm movements
-    # face_greeting_arm_cfg = cfg.get("face_greeting_arm", {}) or {}
-    # if face_greeting_arm_cfg.get("enabled", True) and arm_controller is not None and arm_controller.enabled:
-    #     from core.face_greeting_arm import FaceGreetingArmService
-    #
-    #     threads.append(
-    #         threading.Thread(
-    #             target=FaceGreetingArmService(bb, config_path=config_path).run,
-    #             daemon=True,
-    #             name="FaceGreetingArm",
-    #         )
-    #     )
-    #     print("[Bootstrap] FaceGreetingArmService enabled — arm gestures for new faces")
+    face_greeting_arm_cfg = cfg.get("face_greeting_arm", {}) or {}
+    if face_greeting_arm_cfg.get("enabled", True) and arm_controller is not None and arm_controller.enabled:
+        from core.face_greeting_arm import FaceGreetingArmService
+
+        threads.append(
+            threading.Thread(
+                target=FaceGreetingArmService(bb, config_path=config_path).run,
+                daemon=True,
+                name="FaceGreetingArm",
+            )
+        )
+        print("[Bootstrap] FaceGreetingArmService enabled — arm gestures for new faces")
     
-    # DISABLED: ArmController - only using ByeWaveService for arm control
-    # if arm_controller is not None and arm_controller.enabled:
-    #     threads.append(
-    #         threading.Thread(target=arm_controller.run, daemon=True, name="ArmController")
-    #     )
-    #     print("[Bootstrap] ArmController enabled — base arm lean/sway movements")
-    
-    print("[Bootstrap] ArmController, FaceGreetingArm, and TalkGesture DISABLED — only ByeWaveService controls arms")
+    if arm_controller is not None and arm_controller.enabled:
+        threads.append(
+            threading.Thread(target=arm_controller.run, daemon=True, name="ArmController")
+        )
+        print("[Bootstrap] ArmController enabled — base arm lean/sway movements")
 
     bye_wave_cfg = cfg.get("bye_wave", {}) or {}
     if bye_wave_cfg.get("enabled", False):

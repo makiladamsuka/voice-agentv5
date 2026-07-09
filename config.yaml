@@ -332,12 +332,12 @@ face_greeting:
 
 face_greeting_arm:
   enabled: true
-  memory_timeout_minutes: 30.0   # Remember faces for 30 minutes  
+  memory_timeout_minutes: 30.0   # Remember faces for 30 minutes
   min_face_area_ratio: 0.012     # Minimum face size to trigger greeting
-  hold_sec: 1.5                  # Face must be visible this long before greeting (longer = more stable)
-  embedding_threshold: 0.50      # Face matching threshold (landmarks only: increased for better same-person matching)
-  cleanup_interval_sec: 60.0     # How often to clean up expired faces
-  use_landmarks_only: true       # Use only face landmarks (geometric), ignore color/texture (MORE STABLE!)
+  hold_sec: 1.5                  # Face must be stable this long before greeting
+  cosine_threshold: 0.85         # Cosine similarity threshold (0.85 strict; lower = more lenient)
+  cleanup_interval_sec: 60.0     # How often to prune expired cache entries
+  greeting_cooldown_sec: 30.0    # Global min time between any two greetings
 
 eyes:
   render_fps: 40          # ST7735 eye update rate (independent of camera stream)

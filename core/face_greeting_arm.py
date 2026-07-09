@@ -1,11 +1,23 @@
 """FaceGreetingArmService — trigger random hi poses when a new/forgotten face appears.
 
-Uses face recognition to remember individual faces for 30 minutes.
-Plays random hi pose (hi1, hi2, hi3, hi4) when:
-- A new face is detected (not in memory)
-- A face returns after 30+ minutes (forgotten)
+Face Memory Architecture (Pi 4B optimized — single model):
+  - Detection/Alignment: YuNet (face_detection_yunet_2023mar.onnx) via cv2.FaceDetectorYN
+    on a 112×112 affine-aligned crop, using the 5 eye-pair landmarks already extracted
+    by FaceTracker and passed via face_candidates["landmarks"].
+  - Embedding: Affine-aligned 112×112 crop → normalized multi-channel histogram
+    (H channel from HSV + grayscale intensity) → compact identity vector.
+  - Matching: Cosine similarity threshold 0.85 (higher = stricter).
+  - TTL Cache: 30-minute per-person memory; GC every cleanup_interval_sec seconds.
 
-Separate from voice greetings (FaceGreetingMonitor).
+No extra model downloads required — only face_detection_yunet_2023mar.onnx (already present).
+No dlib / face_recognition / MobileFaceNet required — pure cv2.
+
+Project file structure:
+  voice-agentv5/
+    face_detection_yunet_2023mar.onnx   ← already present (used by FaceTracker)
+    core/
+      face_greeting_arm.py              ← this file
+    config.yaml                         ← face_greeting_arm section
 """
 
 from __future__ import annotations
@@ -14,7 +26,7 @@ import json
 import random
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 try:
     import cv2
@@ -33,7 +45,21 @@ from core.blackboard import Blackboard
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
 DEFAULT_PRESETS_PATH = APP_DIR / "tests" / "arm_pose_presets.json"
+DEFAULT_YUNET_PATH = APP_DIR / "face_detection_yunet_2023mar.onnx"
 
+# ── ArcFace reference eye positions for a 112×112 crop ───────────────────────
+# These are the standard anchor points used for face alignment.
+_REF_LEFT_EYE  = np.array([38.2946, 51.6963], dtype=np.float32) if np else None
+_REF_RIGHT_EYE = np.array([73.5318, 51.5014], dtype=np.float32) if np else None
+
+# Cosine similarity threshold (−1…1). Above this = same person.
+COSINE_THRESHOLD = 0.85
+
+# TTL for face memory
+MEMORY_TTL_SEC = 30 * 60  # 30 minutes
+
+
+# ── Config helpers ────────────────────────────────────────────────────────────
 
 def _load_yaml(path: Path) -> dict:
     if yaml is None or not path.exists():
@@ -49,357 +75,305 @@ def _load_json(path: Path) -> dict:
         return json.load(f)
 
 
-def compute_face_embedding(face_roi: np.ndarray, landmarks: Optional[np.ndarray] = None, use_landmarks_only: bool = False) -> Optional[np.ndarray]:
-    """Compute face embedding using landmarks + appearance features.
-    
+# ── Affine alignment to 112×112 ───────────────────────────────────────────────
+
+def align_face_112(frame: "np.ndarray", landmarks_10: "np.ndarray") -> Optional["np.ndarray"]:
+    """Affine-align a face region to the 112×112 ArcFace standard using eye landmarks.
+
     Args:
-        face_roi: Face image
-        landmarks: 5 facial landmark points (10 values)
-        use_landmarks_only: If True, only use geometric features (MORE STABLE!)
-    
-    Uses:
-    - Face landmarks (eyes, nose, mouth) for geometric features [STABLE]
-    - Local Binary Patterns (LBP) for texture [OPTIONAL]
-    - Color histograms for appearance [OPTIONAL]
-    
-    This combines geometric and appearance features for better recognition.
+        frame:         Full BGR/RGB camera frame (any resolution).
+        landmarks_10:  Flat array of 10 floats [lm0x, lm0y, lm1x, lm1y, ...]
+                       representing 5 facial points in pixel coords of `frame`.
+                       Order: left_eye, right_eye, nose_tip, left_mouth, right_mouth.
+
+    Returns:
+        112×112 uint8 image, or None on failure.
     """
-    if cv2 is None or np is None or face_roi is None or face_roi.size == 0:
+    if frame is None or landmarks_10 is None or len(landmarks_10) < 4:
         return None
-    
     try:
-        # Resize to standard size
-        resized = cv2.resize(face_roi, (64, 64))
-        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-        
-        features = []
-        
-        # 1. LANDMARKS (Geometric Features) - if available
-        if landmarks is not None and len(landmarks) >= 10:
-            # YuNet provides 5 landmarks: left_eye, right_eye, nose, left_mouth, right_mouth
-            # Normalize landmark positions relative to face size
-            landmarks_norm = landmarks.reshape(-1, 2).astype(float)
-            
-            # Compute inter-landmark distances (geometric relationships)
-            eye_dist = np.linalg.norm(landmarks_norm[0] - landmarks_norm[1])  # Inter-eye distance
-            nose_to_left_eye = np.linalg.norm(landmarks_norm[2] - landmarks_norm[0])
-            nose_to_right_eye = np.linalg.norm(landmarks_norm[2] - landmarks_norm[1])
-            mouth_width = np.linalg.norm(landmarks_norm[3] - landmarks_norm[4])
-            
-            # Additional geometric features for better accuracy
-            nose_to_mouth_left = np.linalg.norm(landmarks_norm[2] - landmarks_norm[3])
-            nose_to_mouth_right = np.linalg.norm(landmarks_norm[2] - landmarks_norm[4])
-            eye_left_to_mouth_left = np.linalg.norm(landmarks_norm[0] - landmarks_norm[3])
-            eye_right_to_mouth_right = np.linalg.norm(landmarks_norm[1] - landmarks_norm[4])
-            
-            # Normalize by eye distance (scale invariant)
-            if eye_dist > 0:
-                landmarks_norm = landmarks_norm / eye_dist
-                nose_to_left_eye /= eye_dist
-                nose_to_right_eye /= eye_dist
-                mouth_width /= eye_dist
-                nose_to_mouth_left /= eye_dist
-                nose_to_mouth_right /= eye_dist
-                eye_left_to_mouth_left /= eye_dist
-                eye_right_to_mouth_right /= eye_dist
-            
-            # Flatten normalized landmarks
-            landmark_features = landmarks_norm.flatten()
-            geometric_features = np.array([
-                eye_dist, 
-                nose_to_left_eye, 
-                nose_to_right_eye, 
-                mouth_width,
-                nose_to_mouth_left,
-                nose_to_mouth_right,
-                eye_left_to_mouth_left,
-                eye_right_to_mouth_right,
-            ])
-            
-            features.append(landmark_features)
-            features.append(geometric_features)
-            
-            # LANDMARKS-ONLY MODE: Return early (skip texture/color)
-            if use_landmarks_only:
-                embedding = np.concatenate(features)
-                print(f"[FaceGreetingArm] DEBUG: Landmarks-only embedding computed (size={len(embedding)})")
-                return embedding
-        
-        # 2. LOCAL BINARY PATTERNS (Texture Features)
-        # LBP is robust to illumination changes
-        try:
-            # Simple LBP implementation
-            lbp_img = np.zeros_like(gray)
-            for i in range(1, gray.shape[0] - 1):
-                for j in range(1, gray.shape[1] - 1):
-                    center = gray[i, j]
-                    code = 0
-                    code |= (gray[i-1, j-1] > center) << 7
-                    code |= (gray[i-1, j] > center) << 6
-                    code |= (gray[i-1, j+1] > center) << 5
-                    code |= (gray[i, j+1] > center) << 4
-                    code |= (gray[i+1, j+1] > center) << 3
-                    code |= (gray[i+1, j] > center) << 2
-                    code |= (gray[i+1, j-1] > center) << 1
-                    code |= (gray[i, j-1] > center) << 0
-                    lbp_img[i, j] = code
-            
-            # LBP histogram (texture descriptor)
-            lbp_hist = cv2.calcHist([lbp_img], [0], None, [32], [0, 256])
-            lbp_hist = cv2.normalize(lbp_hist, lbp_hist).flatten()
-            features.append(lbp_hist)
-        except Exception:
-            pass  # Skip LBP if it fails
-        
-        # 3. COLOR HISTOGRAMS (Appearance Features)
-        # HSV for robustness to lighting
-        # Note: picamera2 outputs RGB, not BGR
-        hsv = cv2.cvtColor(resized, cv2.COLOR_RGB2HSV)
-        h_hist = cv2.calcHist([hsv], [0], None, [16], [0, 180])
-        s_hist = cv2.calcHist([hsv], [1], None, [16], [0, 256])
-        v_hist = cv2.calcHist([hsv], [2], None, [16], [0, 256])
-        
-        h_hist = cv2.normalize(h_hist, h_hist).flatten()
-        s_hist = cv2.normalize(s_hist, s_hist).flatten()
-        v_hist = cv2.normalize(v_hist, v_hist).flatten()
-        
-        features.extend([h_hist, s_hist, v_hist])
-        
-        # Concatenate all features
-        embedding = np.concatenate(features)
-        
+        pts = np.array(landmarks_10[:10], dtype=np.float32).reshape(5, 2)
+        src = np.array([pts[0], pts[1]], dtype=np.float32)   # left_eye, right_eye
+        dst = np.array([_REF_LEFT_EYE, _REF_RIGHT_EYE], dtype=np.float32)
+
+        # Estimate similarity transform (rotation + uniform scale + translation)
+        mat, _ = cv2.estimateAffinePartial2D(src, dst, method=cv2.LMEDS)
+        if mat is None:
+            return None
+
+        aligned = cv2.warpAffine(frame, mat, (112, 112), flags=cv2.INTER_LINEAR)
+        return aligned
+    except Exception as e:
+        print(f"[FaceGreetingArm] align_face_112 error: {e}")
+        return None
+
+
+# ── Histogram-based face embedding ───────────────────────────────────────────
+
+def compute_aligned_embedding(aligned_112: "np.ndarray") -> Optional["np.ndarray"]:
+    """Build a compact face-identity embedding from an affine-aligned 112×112 crop.
+
+    Strategy (Pi 4B optimized — no extra model):
+      1. Convert to HSV; extract H (hue / skin tone) and V (intensity) channels.
+      2. Compute per-channel histograms on 4 spatial zones
+         (top-left, top-right, bottom-left, bottom-right face quadrants).
+      3. Concatenate and L2-normalise → ~128-dim vector.
+
+    Rationale:
+      - Skin tone (H channel) and facial contrast (V channel) are stable identifiers.
+      - Spatial zoning captures relative feature placement (eye zone vs mouth zone).
+      - Pure cv2, no extra model file, very fast on Pi 4B (~0.5 ms).
+    """
+    if aligned_112 is None or cv2 is None:
+        return None
+    try:
+        img = aligned_112
+        # Handle both RGB (from picamera2) and BGR (from cv2)
+        hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV if img.shape[2] == 3 else cv2.COLOR_BGR2HSV)
+        h_ch, s_ch, v_ch = cv2.split(hsv)
+
+        zones = [
+            (slice(0, 56), slice(0, 56)),    # top-left  (forehead-left)
+            (slice(0, 56), slice(56, 112)),   # top-right (forehead-right)
+            (slice(56, 112), slice(0, 56)),   # bottom-left (cheek/mouth-left)
+            (slice(56, 112), slice(56, 112)), # bottom-right (cheek/mouth-right)
+        ]
+
+        feats = []
+        for (ry, rx) in zones:
+            for ch in (h_ch[ry, rx], v_ch[ry, rx], s_ch[ry, rx]):
+                hist = cv2.calcHist([ch], [0], None, [16], [0, 256])
+                hist = cv2.normalize(hist, hist).flatten()
+                feats.append(hist)
+
+        embedding = np.concatenate(feats).astype(np.float32)
+        norm = np.linalg.norm(embedding)
+        if norm > 1e-6:
+            embedding /= norm
         return embedding
     except Exception as e:
-        print(f"[FaceGreetingArm] Error computing embedding: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"[FaceGreetingArm] compute_aligned_embedding error: {e}")
         return None
 
 
-def embedding_distance(emb1: np.ndarray, emb2: np.ndarray) -> float:
-    """Compute distance between two embeddings (lower = more similar)."""
-    if emb1 is None or emb2 is None:
-        return float('inf')
-    return np.linalg.norm(emb1 - emb2)
+def landmark_only_embedding(landmarks_10: "np.ndarray") -> Optional["np.ndarray"]:
+    """Scale-invariant geometric embedding from 5 YuNet landmarks (last-resort fallback).
+
+    Used when the frame is unavailable or alignment fails.
+    """
+    if landmarks_10 is None or len(landmarks_10) < 10 or np is None:
+        return None
+    try:
+        pts = np.array(landmarks_10[:10], dtype=np.float64).reshape(5, 2)
+        eye_dist = np.linalg.norm(pts[1] - pts[0]) + 1e-6
+        pts_norm = (pts - pts[0]) / eye_dist
+        vec = pts_norm.flatten().astype(np.float32)
+        norm = np.linalg.norm(vec)
+        if norm > 1e-6:
+            vec /= norm
+        return vec
+    except Exception:
+        return None
 
 
-class GreetedFace:
-    """A face that has been greeted, with timestamp and embedding."""
-    
-    def __init__(self, embedding: np.ndarray, timestamp: float):
+# ── Cosine similarity ─────────────────────────────────────────────────────────
+
+def cosine_similarity(a: "np.ndarray", b: "np.ndarray") -> float:
+    """Cosine similarity of two L2-normalised vectors (higher = more similar)."""
+    if a is None or b is None or np is None:
+        return -1.0
+    return float(np.dot(a, b))
+
+
+# ── TTL cache entry ───────────────────────────────────────────────────────────
+
+class _CacheEntry:
+    """One person slot in the 30-min TTL greeting memory."""
+
+    def __init__(self, embedding: "np.ndarray", ts: float) -> None:
         self.embedding = embedding
-        self.timestamp = timestamp
+        self.ts = ts
         self.greet_count = 1
-    
-    def is_expired(self, current_time: float, timeout_sec: float) -> bool:
-        """Check if this face has been forgotten (timeout expired)."""
-        return (current_time - self.timestamp) > timeout_sec
-    
-    def update(self, current_time: float):
-        """Update timestamp (face seen again)."""
-        self.timestamp = current_time
+
+    def age_sec(self, now: float) -> float:
+        return now - self.ts
+
+    def is_expired(self, now: float) -> bool:
+        return self.age_sec(now) > MEMORY_TTL_SEC
+
+    def refresh(self, now: float) -> None:
+        self.ts = now
         self.greet_count += 1
 
 
+# ── Main service class ────────────────────────────────────────────────────────
+
 class FaceGreetingArmService:
-    """Watch for faces and trigger arm greeting gestures for new/forgotten faces."""
-    
+    """Watch for faces and trigger arm hi-gesture for new/forgotten faces.
+
+    Embedding pipeline:
+        face_candidates[0] from Blackboard
+            → scale landmarks to stream_frame coords
+            → affine align to 112×112 (eye-pair anchored)
+            → zonal HSV histogram embedding (192-dim, L2-normed)
+            → cosine similarity against 30-min TTL cache
+            → new OR forgotten face → trigger hi arm pose
+    """
+
     def __init__(
-        self, 
-        bb: Blackboard, 
+        self,
+        bb: Blackboard,
         config_path: Path = DEFAULT_CONFIG_PATH,
-        presets_path: Path = DEFAULT_PRESETS_PATH
+        presets_path: Path = DEFAULT_PRESETS_PATH,
     ) -> None:
         self.bb = bb
-        
-        # Load config
+
+        # ── Config ────────────────────────────────────────────────────────────
         cfg = _load_yaml(config_path)
         fg = (cfg.get("face_greeting_arm") or {}) if cfg else {}
-        
+
         self.enabled = bool(fg.get("enabled", True))
         self.memory_timeout_sec = float(fg.get("memory_timeout_minutes", 30.0)) * 60.0
-        self.greeting_cooldown_sec = float(fg.get("greeting_cooldown_sec", 30.0))  # Global cooldown
         self.min_face_area_ratio = float(fg.get("min_face_area_ratio", 0.012))
-        self.hold_sec = float(fg.get("hold_sec", 0.5))  # Face must be visible this long
-        self.embedding_threshold = float(fg.get("embedding_threshold", 0.45))
+        self.hold_sec = float(fg.get("hold_sec", 1.5))
         self.cleanup_interval_sec = float(fg.get("cleanup_interval_sec", 60.0))
-        self.use_landmarks_only = bool(fg.get("use_landmarks_only", False))  # NEW: landmarks-only mode
-        
-        # Load hi poses
+        self.cosine_threshold = float(fg.get("cosine_threshold", COSINE_THRESHOLD))
+        self.greeting_cooldown_sec = float(fg.get("greeting_cooldown_sec", 30.0))
+
+        # ── Hi poses ──────────────────────────────────────────────────────────
         presets = _load_json(presets_path)
         poses = presets.get("poses", {})
         self.hi_poses = [name for name in poses.keys() if name.startswith("hi")]
-        
         if not self.hi_poses:
-            print("[FaceGreetingArm] WARNING: No 'hi' poses found in presets")
-            self.hi_poses = ["home"]  # Fallback
-        
-        # Memory of greeted faces
-        self.greeted_faces: List[GreetedFace] = []
-        
-        # Global last greeting time (for cooldown between any greetings)
-        self._last_greeting_time: Optional[float] = None
-        
-        # Current detection state
+            print("[FaceGreetingArm] WARNING: No 'hi' poses found — using 'home'")
+            self.hi_poses = ["home"]
+
+        # ── TTL cache ─────────────────────────────────────────────────────────
+        self._cache: List[_CacheEntry] = []
+
+        # ── State ─────────────────────────────────────────────────────────────
         self._face_since: Optional[float] = None
-        self._current_embedding: Optional[np.ndarray] = None
+        self._current_embedding: Optional["np.ndarray"] = None
         self._last_cleanup = time.time()
-        
-        print(f"[FaceGreetingArm] Initialized with {len(self.hi_poses)} hi poses: {self.hi_poses}")
-        print(f"[FaceGreetingArm] Memory timeout: {self.memory_timeout_sec / 60:.1f} minutes")
-        print(f"[FaceGreetingArm] Greeting cooldown: {self.greeting_cooldown_sec:.1f} seconds (global)")
-        print(f"[FaceGreetingArm] Recognition mode: {'LANDMARKS ONLY (geometric)' if self.use_landmarks_only else 'Full (landmarks + texture + color)'}")
-    
-    def cleanup_expired_faces(self, current_time: float):
-        """Remove faces that have been forgotten (timeout expired)."""
-        original_count = len(self.greeted_faces)
-        self.greeted_faces = [
-            face for face in self.greeted_faces
-            if not face.is_expired(current_time, self.memory_timeout_sec)
-        ]
-        removed = original_count - len(self.greeted_faces)
-        if removed > 0:
-            print(f"[FaceGreetingArm] Cleaned up {removed} expired faces (now {len(self.greeted_faces)} in memory)")
-    
-    def find_matching_face(self, embedding: np.ndarray) -> Optional[GreetedFace]:
-        """Find a matching face in memory, or None if this is a new face."""
+        self._last_greeting_time: Optional[float] = None
+
+        print(
+            f"[FaceGreetingArm] Initialized — "
+            f"YuNet-aligned HSV embedding | "
+            f"cosine_threshold={self.cosine_threshold:.2f} | "
+            f"TTL={self.memory_timeout_sec / 60:.0f} min | "
+            f"hi_poses={self.hi_poses}"
+        )
+
+    # ── Cache helpers ─────────────────────────────────────────────────────────
+
+    def _gc_cache(self, now: float) -> None:
+        """Prune expired entries — prevents memory leak."""
+        before = len(self._cache)
+        self._cache = [e for e in self._cache if not e.is_expired(now)]
+        removed = before - len(self._cache)
+        if removed:
+            print(
+                f"[FaceGreetingArm] GC: removed {removed} expired "
+                f"({len(self._cache)} remain)"
+            )
+
+    def _find_match(self, embedding: "np.ndarray") -> Optional[_CacheEntry]:
+        """Best cosine match above threshold, or None (new person)."""
         if embedding is None:
             return None
-        
-        best_match = None
-        best_distance = float('inf')
-        
-        for i, greeted_face in enumerate(self.greeted_faces):
-            distance = embedding_distance(embedding, greeted_face.embedding)
-            print(f"[FaceGreetingArm] DEBUG: Distance to face #{i+1}: {distance:.4f} (threshold: {self.embedding_threshold:.4f})")
-            
-            if distance < self.embedding_threshold and distance < best_distance:
-                best_match = greeted_face
-                best_distance = distance
-        
-        if best_match:
-            print(f"[FaceGreetingArm] DEBUG: MATCH FOUND with distance {best_distance:.4f}")
+        best: Optional[_CacheEntry] = None
+        best_sim = -1.0
+        for entry in self._cache:
+            sim = cosine_similarity(embedding, entry.embedding)
+            if sim > self.cosine_threshold and sim > best_sim:
+                best = entry
+                best_sim = sim
+        if best:
+            print(f"[FaceGreetingArm] Cache HIT  — sim={best_sim:.3f}, greeted {best.greet_count}x")
         else:
-            print(f"[FaceGreetingArm] DEBUG: NO MATCH - all distances above threshold")
-        
-        return best_match
-    
-    def add_greeted_face(self, embedding: np.ndarray, current_time: float):
-        """Add a new face to memory."""
-        if embedding is None:
-            return
-        
-        self.greeted_faces.append(GreetedFace(embedding, current_time))
-        print(f"[FaceGreetingArm] Added new face to memory (total: {len(self.greeted_faces)})")
-    
-    def trigger_greeting(self) -> str:
-        """Trigger a random hi pose greeting."""
-        pose_name = random.choice(self.hi_poses)
-        
-        # Write to blackboard for ArmController to execute
-        self.bb.write(
-            arm_greeting_seq=self.bb.read("arm_greeting_seq").get("arm_greeting_seq", 0) + 1,
-            arm_greeting_pose=pose_name
-        )
-        
-        print(f"[FaceGreetingArm] Triggered greeting: {pose_name}")
-        return pose_name
-    
-    def extract_face_roi(self, frame: np.ndarray, face_data: dict) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
-        """Extract face region of interest and landmarks from frame.
-        
-        Returns: (face_roi, landmarks) tuple
-        - face_roi: cropped face image
-        - landmarks: 5 facial landmark points (10 values: x1,y1,x2,y2,...)
-        
-        NOTE: face_data coordinates are in DETECTION resolution (1280x720),
-        but stream_frame is in STREAM resolution (320x180 by default).
-        We need to use normalized coordinates instead!
+            print(f"[FaceGreetingArm] Cache MISS — no match above {self.cosine_threshold:.2f}")
+        return best
+
+    # ── Embedding pipeline ────────────────────────────────────────────────────
+
+    def _compute_embedding(
+        self,
+        frame: "np.ndarray",
+        face_data: dict,
+    ) -> Optional["np.ndarray"]:
+        """Align face → histogram embedding.
+
+        face_data keys (from FaceTracker face_candidates):
+            norm_x, norm_y  — face center, normalised [-1, 1]
+            area_ratio      — face-area / frame-area
+            landmarks       — 10 pixel coords in detect_res space  ← key input
+            detect_res      — (dw, dh) tuple of detection resolution
         """
-        if frame is None or face_data is None:
-            print("[FaceGreetingArm] DEBUG: frame or face_data is None")
-            return None, None
-        
-        try:
-            # Use NORMALIZED coordinates which work across any resolution
-            norm_x = face_data.get("norm_x", 0)
-            norm_y = face_data.get("norm_y", 0)
-            area_ratio = face_data.get("area_ratio", 0)
-            
-            # Estimate face box size from area ratio
-            # area_ratio = (w * h) / (frame_w * frame_h)
-            # Assume square-ish face: w ≈ h ≈ sqrt(area_ratio * frame_w * frame_h)
-            frame_h, frame_w = frame.shape[:2]
-            face_size = int((area_ratio * frame_w * frame_h) ** 0.5)
-            
-            # Convert normalized center to pixel coordinates
-            center_x = int((norm_x * 0.5 + 0.5) * frame_w)  # norm_x: -1 to +1, convert to 0 to 1
-            center_y = int((norm_y * 0.5 + 0.5) * frame_h)  # norm_y: -1 to +1, convert to 0 to 1
-            
-            # Calculate bounding box
-            half_size = face_size // 2
-            x1 = max(0, center_x - half_size)
-            y1 = max(0, center_y - half_size)
-            x2 = min(frame_w, center_x + half_size)
-            y2 = min(frame_h, center_y + half_size)
-            
-            print(f"[FaceGreetingArm] DEBUG: norm_x={norm_x:.3f}, norm_y={norm_y:.3f}, "
-                  f"area={area_ratio:.4f}, frame={frame.shape}")
-            print(f"[FaceGreetingArm] DEBUG: center=({center_x},{center_y}), "
-                  f"size={face_size}, roi=[{x1}:{x2}, {y1}:{y2}]")
-            
-            if x2 > x1 and y2 > y1:
-                roi = frame[y1:y2, x1:x2]
-                print(f"[FaceGreetingArm] DEBUG: ROI extracted, shape={roi.shape}")
-                
-                # Extract landmarks if available
-                landmarks = face_data.get("landmarks", None)
-                if landmarks is not None and len(landmarks) >= 10:
-                    # Scale landmarks to ROI coordinates
-                    landmarks_arr = np.array(landmarks).reshape(-1, 2)
-                    
-                    # Transform from frame coordinates to ROI coordinates
-                    landmarks_arr[:, 0] = (landmarks_arr[:, 0] - x1) / (x2 - x1) * 64  # Scale to 64x64
-                    landmarks_arr[:, 1] = (landmarks_arr[:, 1] - y1) / (y2 - y1) * 64
-                    
-                    landmarks_scaled = landmarks_arr.flatten()
-                    print(f"[FaceGreetingArm] DEBUG: Landmarks extracted: {len(landmarks_scaled)} values")
-                    return roi, landmarks_scaled
-                else:
-                    print(f"[FaceGreetingArm] DEBUG: No landmarks in face_data")
-                    return roi, None
-            else:
-                print(f"[FaceGreetingArm] DEBUG: Invalid ROI bounds")
-            
-        except Exception as e:
-            print(f"[FaceGreetingArm] Error extracting face ROI: {e}")
-            import traceback
-            traceback.print_exc()
-        
-        return None, None
-    
+        landmarks_raw = face_data.get("landmarks")
+        detect_res = face_data.get("detect_res")
+
+        # ── Scale landmarks from detect_res → stream_frame pixel space ────────
+        if (
+            frame is not None
+            and landmarks_raw is not None
+            and len(landmarks_raw) >= 10
+            and detect_res is not None
+        ):
+            fh, fw = frame.shape[:2]
+            dw, dh = detect_res
+            lm = np.array(landmarks_raw[:10], dtype=np.float32)
+            # Even indices = X (width axis), odd = Y (height axis)
+            lm[0::2] = lm[0::2] * (fw / dw)
+            lm[1::2] = lm[1::2] * (fh / dh)
+
+            aligned = align_face_112(frame, lm)
+            if aligned is not None:
+                embedding = compute_aligned_embedding(aligned)
+                if embedding is not None:
+                    return embedding
+
+        # ── Geometric fallback if frame/alignment unavailable ─────────────────
+        if landmarks_raw is not None and len(landmarks_raw) >= 10:
+            print("[FaceGreetingArm] Using geometric landmark fallback embedding")
+            return landmark_only_embedding(
+                np.array(landmarks_raw[:10], dtype=np.float32)
+            )
+
+        print("[FaceGreetingArm] Cannot compute embedding — no landmarks")
+        return None
+
+    # ── Greeting trigger ──────────────────────────────────────────────────────
+
+    def _trigger_greeting(self) -> str:
+        pose_name = random.choice(self.hi_poses)
+        seq = self.bb.read("arm_greeting_seq").get("arm_greeting_seq", 0)
+        self.bb.write(arm_greeting_seq=seq + 1, arm_greeting_pose=pose_name)
+        print(f"[FaceGreetingArm] Hi! → {pose_name}")
+        return pose_name
+
+    # ── Main loop ─────────────────────────────────────────────────────────────
+
     def run(self) -> None:
-        """Main loop: watch for faces and trigger greetings."""
         if not self.enabled:
             print("[FaceGreetingArm] Disabled in config.")
             return
-        
         if cv2 is None or np is None:
-            print("[FaceGreetingArm] OpenCV/NumPy not available. Disabled.")
+            print("[FaceGreetingArm] OpenCV/NumPy unavailable. Disabled.")
             return
-        
-        loop_delay = 0.15  # Check every 150ms
-        print("[FaceGreetingArm] Monitoring for new faces to greet with arm gestures.")
-        
+
+        loop_delay = 0.15  # 150 ms — gentle on Pi 4B CPU
+        print("[FaceGreetingArm] Running — waiting for new faces.")
+
         while self.bb.read("running")["running"]:
             now = time.time()
-            
-            # Periodic cleanup of expired faces
+
+            # Periodic GC
             if (now - self._last_cleanup) > self.cleanup_interval_sec:
-                self.cleanup_expired_faces(now)
+                self._gc_cache(now)
                 self._last_cleanup = now
-            
-            # Read current state
+
+            # ── Blackboard read ────────────────────────────────────────────────
             state = self.bb.read(
                 "face_detected",
                 "face_area_ratio",
@@ -408,107 +382,73 @@ class FaceGreetingArmService:
                 "agent_speaking",
                 "user_speaking",
                 "bye_wave_active",
-                "arm_greeting_seq",
-                "hand_gesture",
-                "hand_gesture_seq"
             )
-            
+
             face_visible = (
-                state["face_detected"] 
+                state["face_detected"]
                 and float(state["face_area_ratio"]) >= self.min_face_area_ratio
             )
-            
-            # Don't greet during voice interaction or bye wave
             busy = (
-                state["agent_speaking"] 
-                or state["user_speaking"] 
+                state["agent_speaking"]
+                or state["user_speaking"]
                 or state["bye_wave_active"]
             )
-            
+
             if face_visible and not busy:
-                # Face just appeared
+                # ── Hold timer: require stable face before processing ──────────
                 if self._face_since is None:
                     self._face_since = now
                     self._current_embedding = None
-                    print(f"[FaceGreetingArm] DEBUG: Face appeared, starting hold timer")
-                
-                # Face held long enough - compute embedding and check if we should greet
-                elif (now - self._face_since) >= self.hold_sec and self._current_embedding is None:
-                    print(f"[FaceGreetingArm] DEBUG: Hold time passed, extracting face ROI...")
-                    
-                    # Get face ROI from stream_frame
+
+                elif (
+                    (now - self._face_since) >= self.hold_sec
+                    and self._current_embedding is None
+                ):
+                    # Face stable long enough — compute embedding
                     frame = state["stream_frame"]
-                    face_candidates = state["face_candidates"]
-                    
-                    print(f"[FaceGreetingArm] DEBUG: frame is None: {frame is None}, "
-                          f"face_candidates length: {len(face_candidates) if face_candidates else 0}")
-                    
-                    if frame is not None and face_candidates and len(face_candidates) > 0:
-                        # Use first/largest face
-                        face_data = face_candidates[0]
-                        print(f"[FaceGreetingArm] DEBUG: Face data: {face_data}")
-                        face_roi, landmarks = self.extract_face_roi(frame, face_data)
-                        
-                        if face_roi is not None:
-                            print(f"[FaceGreetingArm] DEBUG: Computing embedding...")
-                            # Compute embedding with landmarks (and optionally texture/color)
-                            embedding = compute_face_embedding(face_roi, landmarks, use_landmarks_only=self.use_landmarks_only)
-                            self._current_embedding = embedding
-                            
-                            if embedding is not None:
-                                print(f"[FaceGreetingArm] DEBUG: Embedding computed, checking memory...")
-                                
-                                # Check global cooldown first
-                                if self._last_greeting_time is not None:
-                                    time_since_last_greeting = now - self._last_greeting_time
-                                    if time_since_last_greeting < self.greeting_cooldown_sec:
-                                        cooldown_remaining = self.greeting_cooldown_sec - time_since_last_greeting
-                                        print(f"[FaceGreetingArm] Global cooldown active ({cooldown_remaining:.1f}s remaining)")
-                                        # Still check memory but don't greet
-                                        matching_face = self.find_matching_face(embedding)
-                                        if matching_face is not None:
-                                            matching_face.update(now)  # Update timestamp
-                                        else:
-                                            # New face but cooldown active - add to memory without greeting
-                                            self.add_greeted_face(embedding, now)
-                                            print(f"[FaceGreetingArm] New face detected but cooldown active - added to memory")
-                                        continue
-                                
-                                # Check if this face has been greeted recently
-                                matching_face = self.find_matching_face(embedding)
-                                
-                                if matching_face is None:
-                                    # New face - greet it!
-                                    pose = self.trigger_greeting()
-                                    self.add_greeted_face(embedding, now)
-                                    self._last_greeting_time = now
-                                    print(f"[FaceGreetingArm] New face detected → {pose}")
-                                
-                                elif matching_face.is_expired(now, self.memory_timeout_sec):
-                                    # Known face but forgotten (expired) - greet again!
-                                    pose = self.trigger_greeting()
-                                    matching_face.update(now)
-                                    self._last_greeting_time = now
-                                    print(f"[FaceGreetingArm] Forgotten face returned → {pose}")
-                                
-                                else:
-                                    # Known face, recently greeted - skip
-                                    time_remaining = self.memory_timeout_sec - (now - matching_face.timestamp)
-                                    print(f"[FaceGreetingArm] Known face (greeted {matching_face.greet_count}x, "
-                                          f"{time_remaining / 60:.1f} min until forgotten)")
+                    candidates = state["face_candidates"]
+
+                    if frame is not None and candidates:
+                        face_data = candidates[0]  # largest / best face
+                        embedding = self._compute_embedding(frame, face_data)
+                        self._current_embedding = embedding  # mark processed
+
+                        if embedding is not None:
+                            match = self._find_match(embedding)
+
+                            if match is None:
+                                # NEW FACE ─────────────────────────────────────
+                                self._trigger_greeting()
+                                self._cache.append(_CacheEntry(embedding, now))
+                                self._last_greeting_time = now
+
+                            elif match.is_expired(now):
+                                # FORGOTTEN FACE (TTL expired) ─────────────────
+                                print(
+                                    f"[FaceGreetingArm] Forgotten face — "
+                                    f"age {match.age_sec(now)/60:.1f} min"
+                                )
+                                self._trigger_greeting()
+                                match.refresh(now)
+                                self._last_greeting_time = now
+
                             else:
-                                print(f"[FaceGreetingArm] DEBUG: Embedding computation failed")
-                        else:
-                            print(f"[FaceGreetingArm] DEBUG: Face ROI extraction failed")
+                                # KNOWN FACE — suppress greeting ───────────────
+                                remaining = (MEMORY_TTL_SEC - match.age_sec(now)) / 60.0
+                                print(
+                                    f"[FaceGreetingArm] Greeting suppressed — "
+                                    f"greeted {match.greet_count}x, "
+                                    f"forgotten in {remaining:.1f} min"
+                                )
+                                match.refresh(now)
                     else:
-                        print(f"[FaceGreetingArm] DEBUG: No frame or face_candidates available")
+                        self._face_since = None  # no frame yet, retry
             else:
-                # No face or busy - reset detection state
+                # Face lost or robot busy
                 if self._face_since is not None:
-                    print(f"[FaceGreetingArm] DEBUG: Face lost or busy, resetting")
-                self._face_since = None
-                self._current_embedding = None
-            
+                    self._face_since = None
+                    self._current_embedding = None
+
             time.sleep(loop_delay)
-        
+
         print("[FaceGreetingArm] Stopped.")

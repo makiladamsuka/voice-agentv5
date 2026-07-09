@@ -558,6 +558,7 @@ class FaceTracker:
                                 "w": fw,
                                 "h": fh,
                                 "landmarks": landmarks if len(landmarks) == 10 else None,
+                                "detect_res": self.detect_res,
                             }
                         )
 

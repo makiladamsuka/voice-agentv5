@@ -1,8 +1,19 @@
 """Main entry point for the modular Voice Agent V5."""
 
+from __future__ import annotations
+
 import os
 import signal
 import sys
+
+import typing
+if not hasattr(typing, 'TypeAlias'):
+    try:
+        from typing_extensions import TypeAlias
+        typing.TypeAlias = TypeAlias
+    except ImportError:
+        typing.TypeAlias = typing.Any
+
 import threading
 import time
 from pathlib import Path

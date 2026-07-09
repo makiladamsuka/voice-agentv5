@@ -334,11 +334,11 @@ face_greeting_arm:
   enabled: true
   memory_timeout_minutes: 30.0   # Remember faces for 30 minutes
   min_face_area_ratio: 0.012     # Minimum face size to trigger greeting
-  hold_sec: 1.5                  # Face must be stable this long before greeting
+  hold_sec: 0.5                  # Face must be stable this long before greeting
   cosine_threshold: 0.85         # Cosine similarity threshold (0.85 strict; lower = more lenient)
   cleanup_interval_sec: 60.0     # How often to prune expired cache entries
   greeting_cooldown_sec: 30.0    # Global min time between any two greetings
-  vertical_speed: 0.6            # Speed multiplier for a0/a1 (shoulder) during greeting poses
+  vertical_speed: 0.9           # Speed multiplier for a0/a1 (shoulder) during greeting poses
   horizontal_speed: 1.2          # Speed multiplier for a2/a3 (elbow/wrist) during greeting poses
 
 eyes:

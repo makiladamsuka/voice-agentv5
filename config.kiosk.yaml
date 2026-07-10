@@ -25,7 +25,7 @@ stream:
   res: [320, 180]
 
 debug_viz:
-  enabled: true
+  enabled: false
   auto_start: false
   host: "0.0.0.0"
   port: 8082

@@ -675,6 +675,36 @@ def main():
             f"hand stream port {bye_wave_cfg.get('port', 8000)}."
         )
 
+    talk_gesture_cfg = cfg.get("talk_gesture", {}) or {}
+    if talk_gesture_cfg.get("enabled", True):
+        from core.talk_gesture_service import TalkGestureService
+        
+        # Need presets path, default to arms presets path if not provided
+        arms_cfg = cfg.get("arms", {}) or {}
+        default_presets = arms_cfg.get("presets_path", "tests/arm_pose_presets.json")
+        presets_str = talk_gesture_cfg.get("presets_path", default_presets)
+        presets_path = Path(presets_str)
+        if not presets_path.is_absolute():
+            presets_path = Path(__file__).parent / presets_path
+            
+        talk_svc = TalkGestureService(
+            bb, 
+            presets_path=presets_path,
+            pose_duration=float(talk_gesture_cfg.get("pose_duration", 0.5)),
+            poll_interval=float(talk_gesture_cfg.get("poll_interval", 0.05)),
+            vertical_speed=float(talk_gesture_cfg.get("vertical_speed", 1.0)),
+            horizontal_speed=float(talk_gesture_cfg.get("horizontal_speed", 1.5)),
+            return_home_delay=float(talk_gesture_cfg.get("return_home_delay", 3.0))
+        )
+        threads.append(
+            threading.Thread(
+                target=talk_svc.run,
+                daemon=True,
+                name="TalkGestureService",
+            )
+        )
+        print("[Bootstrap] TalkGestureService enabled — arm movements while speaking")
+
     if _should_start_debug_viz(debug_viz_cfg):
         stream_cfg = cfg.get("stream", {}) or {}
         threads.append(

@@ -574,11 +574,11 @@ export function KioskView() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0, width: focusedEvent ? "65%" : "20%" }}
               transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="flex flex-col gap-2 h-full min-h-0 flex-shrink-0"
+              className="flex flex-col gap-2 h-full min-h-0 flex-shrink-0 min-w-0"
             >
               {/* Clock & Weather Card */}
               {!focusedEvent && (
-                <div className="bg-[#d3e3fd] text-[#041e49] dark:bg-[#0a0a0a] dark:text-white rounded-[32px] px-8 py-10 pt-12 flex flex-col items-center justify-center relative overflow-hidden flex-shrink-0 transition-transform hover:scale-[1.02]">
+                <div className="kiosk-clock-card bg-[#d3e3fd] text-[#041e49] dark:bg-[#0a0a0a] dark:text-white rounded-[32px] px-4 py-10 pt-12 flex flex-col items-center justify-center relative flex-shrink-0 transition-transform hover:scale-[1.02]">
                 {weather ? (
                   <div className="absolute top-3 right-4 flex items-center opacity-80 text-primary">
                     <span className="material-symbols-outlined text-[24px] fill-current">
@@ -590,10 +590,10 @@ export function KioskView() {
                     light_mode
                   </span>
                 )}
-                <div className="text-[64px] 2xl:text-[80px] leading-none tracking-[-0.04em] font-black whitespace-nowrap">
-                  {time || "10:42"}
+                <div className="w-full px-1">
+                  <div className="kiosk-clock-time">{time || "10:42"}</div>
                 </div>
-                <div className="text-[16px] leading-[20px] mt-1 font-semibold opacity-80">
+                <div className="kiosk-clock-date mt-1 font-semibold opacity-80 w-full px-1">
                   {dateStr || "Thursday, June 4"}
                 </div>
                 </div>

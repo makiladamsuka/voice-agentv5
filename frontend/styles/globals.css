@@ -484,6 +484,28 @@ html.kiosk-mode * {
   filter: blur(48px);
 }
 
+.kiosk-clock-card {
+  container-type: inline-size;
+  width: 100%;
+  min-width: 0;
+}
+
+.kiosk-clock-time {
+  font-size: clamp(1.25rem, calc((100cqw - 2rem) / 7.5), 4rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.kiosk-clock-date {
+  font-size: clamp(0.75rem, calc(100cqw / 16), 1rem);
+  line-height: 1.25;
+  text-align: center;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .kiosk-ambient-blur {
     filter: none;

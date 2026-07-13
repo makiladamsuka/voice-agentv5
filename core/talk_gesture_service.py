@@ -197,7 +197,7 @@ class TalkGestureService:
         
         target = [target_pose["a0"], target_pose["a1"], target_pose["a2"], target_pose["a3"]]
         
-        poll_interval = 0.02  # 50 Hz
+        poll_interval = 0.03  # 50 Hz
         start_time = time.time()
         
         while True:
@@ -278,8 +278,8 @@ class TalkGestureService:
             # Apply the pose with smooth interpolation (different speeds for vertical/horizontal)
             self._apply_pose_smooth(pose, self.pose_duration)
             
-            # Random wait time between poses (1-2 seconds) - hold pose even if speaking stops
-            wait_time = random.uniform(1.0, 2.0)
+            # Random wait time between poses (0.2-1.0 seconds) - hold pose even if speaking stops
+            wait_time = random.uniform(0.5, 1.0)
             wait_start = time.time()
             
             # Hold pose for full duration - don't break early when speaking stops

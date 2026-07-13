@@ -562,7 +562,7 @@ def main():
 
         voice_thread = threading.Thread(
             target=run_offline_voice,
-            daemon=False,
+            daemon=True,
             name="OfflineVoiceService",
         )
         threads.append(voice_thread)

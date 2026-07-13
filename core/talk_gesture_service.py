@@ -78,9 +78,9 @@ class TalkGestureService:
         self._vel = [0.0, 0.0, 0.0, 0.0]
         
         # Velocity-based arm motion params (matching ArmController style)
-        base_vel = 80.0
-        base_accel = 200.0
-        base_decel = 250.0
+        base_vel = 120.0
+        base_accel = 300.0
+        base_decel = 350.0
         
         self._params_vert = HeadMotionParams(
             max_vel_pos=base_vel * self.vertical_speed,
@@ -278,7 +278,8 @@ class TalkGestureService:
             
             # Apply the pose with smooth interpolation — physics ticks continuously
             # for the full duration (movement + hold), so arms never freeze mid-air
-            wait_time = random.uniform(0.5, 1.0)
+            # Random wait time between poses (0.2-0.6 seconds) - hold pose even if speaking stops
+            wait_time = random.uniform(0.2, 0.6)
             total_duration = self.pose_duration + wait_time
             self._apply_pose_smooth(pose, total_duration)
         

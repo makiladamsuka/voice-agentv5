@@ -215,6 +215,8 @@ class FaceTracker:
         
         # Skin blob lock (prevents face detection when hand is too close for skeleton detection)
         # self._skin_blob_lock = False
+        
+        self._last_face_area = 0.0
 
     def _vision_audio_busy(self, state: dict) -> bool:
         """True while user or agent audio is active — skip camera + YuNet."""
@@ -467,8 +469,7 @@ class FaceTracker:
             return
 
         hand_detector = None
-        # if self._hand_fallback_enabled or self._hi_gesture_enabled or self._bye_gesture_from_hand:
-        if self._bye_gesture_from_hand:
+        if self._bye_gesture_from_hand: # Fallback tracking uses the same HandDetector
             hand_detector = HandDetector(max_num_hands=self._hand_max_num)
 
         next_tick = time.perf_counter()
@@ -583,6 +584,7 @@ class FaceTracker:
                         track_kind = kind
 
                     face_detected = True
+                    self._last_face_area = face_area
                     self._update_memory(face_norm_x, face_norm_y, "face", now, confidence=self.pm_face_conf)
 
             # ── Hand fallback + gesture detection ───────────────────────────
@@ -620,6 +622,31 @@ class FaceTracker:
                         if dist < 300:  # Hand near face threshold
                             hand_gesture = "bye_wave"
                             hand_gesture_side = best_hand.physical_side
+                            
+                    # ── Face -> Hand Fallback Logic ──
+                    # Always publish hand coordinates so they can be drawn on stream HUD
+                    hand_detected = True
+                    hand_norm_x = (px / dw) * 2.0 - 1.0
+                    hand_norm_y = (py / dh) * 2.0 - 1.0
+                    hand_physical_side = best_hand.physical_side
+                    
+                    # Calculate hand bounding box area based on landmarks
+                    if best_hand.pixel_landmarks:
+                        xs = [lm[0] for lm in best_hand.pixel_landmarks]
+                        ys = [lm[1] for lm in best_hand.pixel_landmarks]
+                        hand_w = max(xs) - min(xs)
+                        hand_h = max(ys) - min(ys)
+                        
+                        dw, dh = self.detect_res
+                        hand_area_ratio = (hand_w * hand_h) / (dw * dh)
+                        
+                        # Compare against current or last known face area
+                        compare_area = face_area if face_detected else self._last_face_area
+                        
+                        if hand_area_ratio > 2.0 * compare_area:
+                            track_kind = "hand"
+                            # Override face tracking so servo loop follows hand
+                            face_detected = False
 
                 # ── Skin blob fallback (when neither face nor hand) ────────
                 # if not face_detected and not hand_detected:
@@ -720,10 +747,10 @@ class FaceTracker:
                 face_candidates=face_candidates,
                 body_detected=body_detected,
                 track_kind=track_kind,
-                # hand_detected=hand_detected,
-                # hand_norm_x=hand_norm_x,
-                # hand_norm_y=hand_norm_y,
-                # hand_physical_side=hand_physical_side,
+                hand_detected=hand_detected,
+                hand_norm_x=hand_norm_x,
+                hand_norm_y=hand_norm_y,
+                hand_physical_side=hand_physical_side,
                 # skin_blob_detected=skin_blob_detected,
                 # skin_blob_norm_x=skin_blob_norm_x,
                 # skin_blob_norm_y=skin_blob_norm_y,

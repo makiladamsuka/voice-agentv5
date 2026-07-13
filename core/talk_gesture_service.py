@@ -77,11 +77,10 @@ class TalkGestureService:
         self._smoothness = smoothness
         self._vel = [0.0, 0.0, 0.0, 0.0]
         
-        # Base limits for arms (fastest possible movement)
-        base_vel = 50.0
-        accel_factor = 3.0 / max(0.1, self._smoothness)
-        base_accel = 120.0 * accel_factor
-        base_decel = 150.0 * accel_factor
+        # Velocity-based arm motion params (matching ArmController style)
+        base_vel = 80.0
+        base_accel = 200.0
+        base_decel = 250.0
         
         self._params_vert = HeadMotionParams(
             max_vel_pos=base_vel * self.vertical_speed,
@@ -89,7 +88,7 @@ class TalkGestureService:
             accel=base_accel * self.vertical_speed,
             decel=base_decel * self.vertical_speed,
             goal_deadband_deg=0.1,
-            track_gain=6.0,
+            track_gain=10.0,
         )
         self._params_horiz = HeadMotionParams(
             max_vel_pos=base_vel * self.horizontal_speed,
@@ -97,7 +96,7 @@ class TalkGestureService:
             accel=base_accel * self.horizontal_speed,
             decel=base_decel * self.horizontal_speed,
             goal_deadband_deg=0.1,
-            track_gain=6.0,
+            track_gain=10.0,
         )
         
         self._talk_pose_keys: list[str] = []
@@ -159,6 +158,8 @@ class TalkGestureService:
         if "home" in self._poses:
             home_pose = self._poses["home"]
             print("[TalkGesture] Returning to home position")
+            # Reset velocity so leftover momentum doesn't fight the home direction
+            self._vel = [0.0, 0.0, 0.0, 0.0]
             self._apply_pose_smooth(home_pose, self.pose_duration, wait_until_reached=True)
         else:
             print("[TalkGesture] WARNING: Home pose not found in presets")
@@ -197,7 +198,7 @@ class TalkGestureService:
         
         target = [target_pose["a0"], target_pose["a1"], target_pose["a2"], target_pose["a3"]]
         
-        poll_interval = 0.015  # 50 Hz
+        poll_interval = 0.01  # 50 Hz
         start_time = time.time()
         
         while True:

@@ -13,6 +13,7 @@ import time
 
 from core.blackboard import Blackboard
 from voice.speaking_flag import read_speaking_flag
+from lib.elastic_head_motion import HeadMotionParams, tick_toward
 
 # Module-level reference to active service instance
 _active_talk_gesture_service: "TalkGestureService | None" = None
@@ -64,6 +65,7 @@ class TalkGestureService:
         vertical_speed: float = 1.0,
         horizontal_speed: float = 1.5,
         return_home_delay: float = 3.0,  # Delay before returning home after speaking stops
+        smoothness: float = 3.0,  # Easing power (1.0=linear, 3.0=cubic, 5.0=quintic)
     ) -> None:
         self.bb = bb
         self.presets_path = presets_path
@@ -72,6 +74,32 @@ class TalkGestureService:
         self.vertical_speed = vertical_speed  # Speed for a0, a1 (up/down)
         self.horizontal_speed = horizontal_speed  # Speed for a2, a3 (swap)
         self.return_home_delay = return_home_delay  # Wait time before returning home
+        self._smoothness = smoothness
+        self._vel = [0.0, 0.0, 0.0, 0.0]
+        
+        # Base limits for arms (fastest possible movement)
+        base_vel = 50.0
+        accel_factor = 3.0 / max(0.1, self._smoothness)
+        base_accel = 120.0 * accel_factor
+        base_decel = 150.0 * accel_factor
+        
+        self._params_vert = HeadMotionParams(
+            max_vel_pos=base_vel * self.vertical_speed,
+            max_vel_neg=base_vel * self.vertical_speed,
+            accel=base_accel * self.vertical_speed,
+            decel=base_decel * self.vertical_speed,
+            goal_deadband_deg=0.1,
+            track_gain=6.0,
+        )
+        self._params_horiz = HeadMotionParams(
+            max_vel_pos=base_vel * self.horizontal_speed,
+            max_vel_neg=base_vel * self.horizontal_speed,
+            accel=base_accel * self.horizontal_speed,
+            decel=base_decel * self.horizontal_speed,
+            goal_deadband_deg=0.1,
+            track_gain=6.0,
+        )
+        
         self._talk_pose_keys: list[str] = []
         self._poses: dict = {}
         self._last_pose_key: str | None = None  # Track last played pose
@@ -154,88 +182,43 @@ class TalkGestureService:
         )
     
     def _apply_pose_smooth(self, target_pose: dict, duration: float) -> None:
-        """Smoothly interpolate to target pose with different speeds per motor group.
+        """Smoothly interpolate to target pose using elastic physics.
         
-        Uses high-frequency updates (100Hz) and easing for continuous smooth motion.
+        Uses high-frequency updates and velocity ticking for organic motion.
         
         Args:
             target_pose: Target pose dictionary with a0, a1, a2, a3 keys.
-            duration: Total duration for the movement in seconds.
+            duration: Total duration for the movement loop in seconds.
         """
         # Read current arm positions
         current = self.bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
-        start_a0 = current["arm_a0"]
-        start_a1 = current["arm_a1"]
-        start_a2 = current["arm_a2"]
-        start_a3 = current["arm_a3"]
+        pos = [current["arm_a0"], current["arm_a1"], current["arm_a2"], current["arm_a3"]]
         
-        target_a0 = target_pose["a0"]
-        target_a1 = target_pose["a1"]
-        target_a2 = target_pose["a2"]
-        target_a3 = target_pose["a3"]
+        target = [target_pose["a0"], target_pose["a1"], target_pose["a2"], target_pose["a3"]]
         
-        # Calculate deltas
-        delta_a0 = target_a0 - start_a0
-        delta_a1 = target_a1 - start_a1
-        delta_a2 = target_a2 - start_a2
-        delta_a3 = target_a3 - start_a3
-        
-        # Calculate durations based on speed (inverse relationship)
-        vertical_duration = duration / max(0.1, self.vertical_speed)
-        horizontal_duration = duration / max(0.1, self.horizontal_speed)
-        
-        # Use longer duration for frame timing
-        frame_duration = max(vertical_duration, horizontal_duration)
-        
-        poll_interval = 0.02  # 50 Hz - reduced from 100Hz for better performance
+        poll_interval = 0.02  # 50 Hz
         start_time = time.time()
         
         while True:
             elapsed = time.time() - start_time
-            if elapsed >= frame_duration:
+            if elapsed >= duration:
                 break
             
-            # Calculate progress for each motor group
-            vertical_t = min(1.0, elapsed / vertical_duration)
-            horizontal_t = min(1.0, elapsed / horizontal_duration)
-            
-            # Apply easing for smooth motion
-            vertical_progress = self._ease_in_out(vertical_t)
-            horizontal_progress = self._ease_in_out(horizontal_t)
-            
-            # Interpolate with different speeds
-            new_a0 = start_a0 + delta_a0 * vertical_progress
-            new_a1 = start_a1 + delta_a1 * vertical_progress
-            new_a2 = start_a2 + delta_a2 * horizontal_progress
-            new_a3 = start_a3 + delta_a3 * horizontal_progress
+            # Tick each axis using elastic_head_motion physics
+            pos[0], self._vel[0] = tick_toward(pos[0], self._vel[0], target[0], poll_interval, lo=0.0, hi=180.0, params=self._params_vert)
+            pos[1], self._vel[1] = tick_toward(pos[1], self._vel[1], target[1], poll_interval, lo=0.0, hi=180.0, params=self._params_vert)
+            pos[2], self._vel[2] = tick_toward(pos[2], self._vel[2], target[2], poll_interval, lo=0.0, hi=180.0, params=self._params_horiz)
+            pos[3], self._vel[3] = tick_toward(pos[3], self._vel[3], target[3], poll_interval, lo=0.0, hi=180.0, params=self._params_horiz)
             
             # Write interpolated position
             self.bb.write(
-                arm_a0=new_a0,
-                arm_a1=new_a1,
-                arm_a2=new_a2,
-                arm_a3=new_a3,
+                arm_a0=pos[0],
+                arm_a1=pos[1],
+                arm_a2=pos[2],
+                arm_a3=pos[3],
             )
             
             time.sleep(poll_interval)
-        
-        # Ensure we reach the target
-        self.bb.write(
-            arm_a0=target_a0,
-            arm_a1=target_a1,
-            arm_a2=target_a2,
-            arm_a3=target_a3,
-        )
-    
-    def _ease_in_out(self, t):
-        """Smooth ease-in-out function for continuous motion.
-        
-        Uses cubic easing for smooth acceleration and deceleration.
-        """
-        if t < 0.5:
-            return 4 * t * t * t
-        else:
-            return 1 - pow(-2 * t + 2, 3) / 2
 
     def run(self) -> None:
         """Main loop: continuously switch between random talk poses while agent speaks."""

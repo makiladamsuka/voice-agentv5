@@ -694,7 +694,8 @@ def main():
             poll_interval=float(talk_gesture_cfg.get("poll_interval", 0.05)),
             vertical_speed=float(talk_gesture_cfg.get("vertical_speed", 1.0)),
             horizontal_speed=float(talk_gesture_cfg.get("horizontal_speed", 1.5)),
-            return_home_delay=float(talk_gesture_cfg.get("return_home_delay", 3.0))
+            return_home_delay=float(talk_gesture_cfg.get("return_home_delay", 3.0)),
+            smoothness=float(talk_gesture_cfg.get("smoothness", 3.0))
         )
         threads.append(
             threading.Thread(

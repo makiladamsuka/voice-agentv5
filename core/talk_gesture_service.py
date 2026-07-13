@@ -159,7 +159,7 @@ class TalkGestureService:
         if "home" in self._poses:
             home_pose = self._poses["home"]
             print("[TalkGesture] Returning to home position")
-            self._apply_pose_smooth(home_pose, self.pose_duration)
+            self._apply_pose_smooth(home_pose, self.pose_duration, wait_until_reached=True)
         else:
             print("[TalkGesture] WARNING: Home pose not found in presets")
     
@@ -181,7 +181,7 @@ class TalkGestureService:
             arm_a3=pose["a3"],
         )
     
-    def _apply_pose_smooth(self, target_pose: dict, duration: float) -> None:
+    def _apply_pose_smooth(self, target_pose: dict, duration: float, wait_until_reached: bool = False) -> None:
         """Smoothly interpolate to target pose using elastic physics.
         
         Uses high-frequency updates and velocity ticking for organic motion.
@@ -189,6 +189,7 @@ class TalkGestureService:
         Args:
             target_pose: Target pose dictionary with a0, a1, a2, a3 keys.
             duration: Total duration for the movement loop in seconds.
+            wait_until_reached: If True, blocks until target is reached (used for returning home).
         """
         # Read current arm positions
         current = self.bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
@@ -201,8 +202,14 @@ class TalkGestureService:
         
         while True:
             elapsed = time.time() - start_time
-            if elapsed >= duration:
-                break
+            
+            if wait_until_reached:
+                err = sum(abs(pos[i] - target[i]) for i in range(4))
+                if err < 1.0 or elapsed > 5.0:  # Timeout after 5s
+                    break
+            else:
+                if elapsed >= duration:
+                    break
             
             # Tick each axis using elastic_head_motion physics
             pos[0], self._vel[0] = tick_toward(pos[0], self._vel[0], target[0], poll_interval, lo=0.0, hi=180.0, params=self._params_vert)

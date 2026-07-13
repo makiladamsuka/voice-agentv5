@@ -197,7 +197,7 @@ class TalkGestureService:
         
         target = [target_pose["a0"], target_pose["a1"], target_pose["a2"], target_pose["a3"]]
         
-        poll_interval = 0.03  # 50 Hz
+        poll_interval = 0.015  # 50 Hz
         start_time = time.time()
         
         while True:

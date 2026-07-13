@@ -127,6 +127,19 @@ class MediaServer:
                         media_server.upload_categories,
                     )
                     self._json_response(200, status)
+                elif path == "/api/blackboard-state":
+                    if media_server.blackboard:
+                        state = media_server.blackboard.read(
+                            "conv_state", 
+                            "user_text", 
+                            "agent_text", 
+                            "current_action", 
+                            "eye_color",
+                            "emotion"
+                        )
+                        self._json_response(200, state)
+                    else:
+                        self._json_response(503, {"error": "Blackboard not available"})
                 elif path == "/api/facebook":
                     posts = get_facebook_posts(
                         media_server.facebook_cache_path,
@@ -304,3 +317,41 @@ class MediaServer:
 
 # Backward-compatible alias
 ImageServer = MediaServer
+
+_global_media_server = None
+
+def ensure_media_server(bb=None, cfg: dict | None = None) -> None:
+    """Start kiosk media server early with blackboard for HTTP API."""
+    global _global_media_server
+    if _global_media_server is not None:
+        if bb is not None:
+            _global_media_server.set_blackboard(bb)
+        return
+        
+    if cfg is None:
+        import yaml
+        app_dir = Path(__file__).resolve().parent.parent
+        config_path = app_dir / "config.yaml"
+        if config_path.is_file():
+            try:
+                with open(config_path, encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f) or {}
+            except Exception:
+                cfg = {}
+        else:
+            cfg = {}
+            
+    kiosk_cfg = (cfg or {}).get("kiosk", {}) or {}
+    port = int(kiosk_cfg.get("port", 8080))
+    app_dir = Path(__file__).resolve().parent.parent
+    assets_dir = app_dir / "assets"
+    assets_dir.mkdir(exist_ok=True)
+    
+    _global_media_server = MediaServer(
+        assets_dir,
+        app_dir=app_dir,
+        port=port,
+        kiosk_config=kiosk_cfg,
+        blackboard=bb,
+    )
+    _global_media_server.start()

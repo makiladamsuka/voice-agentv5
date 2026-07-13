@@ -141,6 +141,9 @@ class Blackboard:
     amplitude_slow: float = 0.0              # TTS RMS slow signal (emotional momentum)
     user_speaking: bool = False              # True when user VAD triggers
     agent_speaking: bool = False             # True when agent TTS is playing
+    user_text: str = ""                      # latest transcribed text from user
+    agent_text: str = ""                     # latest response text from agent
+    current_action: dict = None              # latest action triggered by agent (e.g. show_event_poster)
 
     # ── Debug manual control (written by viz POST /api/control) ───────────────
     manual_control_enabled: bool = False
@@ -164,6 +167,7 @@ class Blackboard:
         self.person_snapshots = []
         self.motion_snapshots = []
         self.debug_live_tune = {}
+        self.current_action = {}
 
     # ─────────────────────────────────────────────────────────────────────────
 

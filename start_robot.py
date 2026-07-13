@@ -549,17 +549,25 @@ def main():
 
     voice_thread: threading.Thread | None = None
     if voice_cfg.get("enabled", False):
-        from voice.voice_service import run_voice_service
+        from voice.offline_voice.runtime import OfflineVoiceRuntime
+        
+        def run_offline_voice():
+            try:
+                runtime = OfflineVoiceRuntime(bb)
+                runtime.start_hardware_loop()
+            except Exception as e:
+                print(f"[OfflineVoice] Loop crashed (likely Linux ALSA). Falling back to TEXT simulator. Error: {e}")
+                from voice.offline_voice.runtime import start_text_loop
+                start_text_loop(bb)
 
         voice_thread = threading.Thread(
-            target=run_voice_service,
-            kwargs={"bb": bb, "devmode": voice_devmode},
+            target=run_offline_voice,
             daemon=False,
-            name="VoiceService",
+            name="OfflineVoiceService",
         )
         threads.append(voice_thread)
 
-    from voice.voice_service import ensure_media_server
+    from voice.media_server import ensure_media_server
 
     ensure_media_server(bb, cfg)
 

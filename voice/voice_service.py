@@ -14,8 +14,23 @@ import contextlib
 import json
 import logging
 import os
+import socket
 import threading
 from pathlib import Path
+
+# --- DNS MONKEYPATCH (Fix for Python 3.14 / aiohttp DNS bug) ---
+_old_getaddrinfo = socket.getaddrinfo
+def _new_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    try:
+        return _old_getaddrinfo(host, port, family, type, proto, flags)
+    except socket.gaierror as e:
+        if host == "api.deepgram.com":
+            print(f"[DNS Patch] Bypassing flaky DNS for {host}")
+            # Use known good IP for api.deepgram.com
+            return [(_old_getaddrinfo.__self__.AF_INET if hasattr(_old_getaddrinfo, '__self__') else socket.AF_INET, socket.SOCK_STREAM, 6, '', ('38.68.64.131', 443))]
+        raise e
+socket.getaddrinfo = _new_getaddrinfo
+# ---------------------------------------------------------------
 from typing import TYPE_CHECKING
 
 from livekit.agents import AgentServer, WorkerOptions
@@ -36,6 +51,14 @@ from voice.greetings import generate_presence_greeting
 from voice.tools import TimeTools, SearchTools, ContentTools, AppearanceTools
 from core.eye_themes import resolve_eye_color
 
+# Import the new offline matcher
+from voice.offline_voice.runtime import IntentMatcher
+try:
+    import pygame
+    pygame.mixer.init()
+except ImportError:
+    pygame = None
+
 if TYPE_CHECKING:
     from core.blackboard import Blackboard
 
@@ -46,6 +69,7 @@ _bb: Blackboard | None = None
 _global_image_server: MediaServer | None = None
 _global_map_navigator: MapNavigator | None = None
 _global_event_db = None
+_global_matcher: IntentMatcher | None = None
 _active_session: AgentSession | None = None
 
 # ── VADER Sentiment ──────────────────────────────────────────────────────────
@@ -307,6 +331,11 @@ def prewarm(proc: agents.JobProcess) -> None:
     port = int(kiosk_cfg.get("port", 8080))
     _init_image_server(port=port, kiosk_config=kiosk_cfg, blackboard=_bb)
     _build_event_db_sync()
+    
+    global _global_matcher
+    _global_matcher = IntentMatcher(APP_DIR / "voice" / "event_db")
+    _global_matcher.load_cache(APP_DIR / "voice" / "event_db" / "compiled_intents.json")
+    
     proc.userdata["vad"] = silero.VAD.load(
         min_speech_duration=0.1,
         min_silence_duration=0.3,
@@ -314,6 +343,7 @@ def prewarm(proc: agents.JobProcess) -> None:
     )
     proc.userdata["image_server"] = _global_image_server
     proc.userdata["event_db"] = _global_event_db
+    proc.userdata["matcher"] = _global_matcher
     print("[VoiceService] Prewarm complete — ready for instant LiveKit connect")
 
 
@@ -337,18 +367,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     session = AgentSession(
         turn_handling=agents.TurnHandlingOptions(interruption={"mode": "vad"}),
         stt=deepgram.STT(model="nova-3"),
-        tts=AmplitudeTTS(model="aura-2-luna-en", bb=_bb),
         vad=vad,
-        llm=openai.LLM(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=os.getenv("OPENROUTER_API_KEY"),
-            model="openrouter/auto",
-        ),
-        tts_text_transforms=[
-            "filter_markdown",
-            "filter_emoji",
-            filter_leaked_tool_syntax,
-        ],
+        # We disable the LLM and TTS because we are using the zero-latency offline cache now!
     )
 
     agent = CampusAgent(image_server, event_db)
@@ -438,6 +458,37 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             _send_vader_emotion(text, is_agent=False)
         except Exception:
             pass
+            
+        # --- ZERO-LATENCY INTENT MATCHING ---
+        matcher = ctx.proc.userdata.get("matcher") or _global_matcher
+        if matcher:
+            intent = matcher.match(text)
+            if intent:
+                print(f"[Offline Voice] Match Found: {intent['action']}")
+                if _bb:
+                    _bb.write(conv_state="speaking", agent_speaking=True)
+                
+                # Trigger frontend UI actions manually based on the intent
+                action = intent.get("action", {})
+                if action.get("action") == "show_event_poster":
+                    # Manually push data to frontend via LiveKit DataChannel
+                    payload = json.dumps({"type": "show_poster", "description": action.get("kwargs", {}).get("event_description", "")}).encode("utf-8")
+                    if ctx.room.local_participant:
+                        asyncio.create_task(ctx.room.local_participant.publish_data(payload))
+                
+                # Play audio LOCALLY via Pygame zero-latency
+                audio_path = APP_DIR / "assets" / "audio_cache" / intent["audio_file"]
+                if pygame and audio_path.exists():
+                    print(f"[Offline Voice] 🔊 Playing local cached audio: {intent['audio_file']}")
+                    try:
+                        pygame.mixer.music.load(str(audio_path))
+                        pygame.mixer.music.play()
+                    except Exception as e:
+                        print(f"[Offline Voice] Audio error: {e}")
+                else:
+                    print(f"[Offline Voice] Audio not played: pygame={pygame is not None}, path={audio_path.exists()}")
+            else:
+                print("[Offline Voice] No exact intent match found.")
 
     @session.on("agent_state_changed")
     def on_agent_state_changed(ev):
@@ -471,10 +522,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     if _bb is not None:
         _bb.write(voice_session_active=True)
 
-    try:
-        await session.say("Oh hi! I am so happy you are talking to me!")
-    except Exception as e:
-        print(f"[VoiceService] Initial greeting failed: {e}")
+    print("[VoiceService] Session initialized in Offline Mode.")
 
     try:
         while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:

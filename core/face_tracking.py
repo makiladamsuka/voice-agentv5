@@ -643,10 +643,13 @@ class FaceTracker:
                         # Compare against current or last known face area
                         compare_area = face_area if face_detected else self._last_face_area
                         
-                        if hand_area_ratio > 2.0 * compare_area:
+                        if hand_area_ratio > 1.3 * compare_area:
                             track_kind = "hand"
                             # Override face tracking so servo loop follows hand
                             face_detected = False
+                            # Disable hi/bye gestures when fallback tracking is active
+                            hand_gesture = ""
+                            hand_gesture_side = ""
 
                 # ── Skin blob fallback (when neither face nor hand) ────────
                 # if not face_detected and not hand_detected:

@@ -206,11 +206,11 @@ class TalkGestureService:
         while True:
             elapsed = time.time() - start_time
             
-            # Check speaking flag periodically to abort early
-            if check_speaking and ticks % 10 == 0:
-                if not read_speaking_flag():
+            # Check speaking flag every single tick (in-memory, extremely fast)
+            if check_speaking:
+                bb_state = self.bb.read("agent_speaking")
+                if not bb_state.get("agent_speaking", False):
                     break
-            ticks += 1
             
             if wait_until_reached:
                 err = sum(abs(pos[i] - target[i]) for i in range(4))
@@ -258,8 +258,9 @@ class TalkGestureService:
                 time.sleep(self.poll_interval)
                 continue
             
-            # Read current agent_speaking state from file
-            is_speaking = read_speaking_flag()
+            # Read current agent_speaking state instantly from memory
+            bb_state = self.bb.read("agent_speaking")
+            is_speaking = bb_state.get("agent_speaking", False)
             
             # Log state changes and track when speaking stopped
             if is_speaking and not last_speaking:

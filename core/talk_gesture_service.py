@@ -276,16 +276,11 @@ class TalkGestureService:
             # Track this pose as the last played
             self._last_pose_key = pose_key
             
-            # Apply the pose with smooth interpolation (different speeds for vertical/horizontal)
-            self._apply_pose_smooth(pose, self.pose_duration)
-            
-            # Random wait time between poses (0.2-1.0 seconds) - hold pose even if speaking stops
+            # Apply the pose with smooth interpolation — physics ticks continuously
+            # for the full duration (movement + hold), so arms never freeze mid-air
             wait_time = random.uniform(0.5, 1.0)
-            wait_start = time.time()
-            
-            # Hold pose for full duration - don't break early when speaking stops
-            while time.time() - wait_start < wait_time:
-                time.sleep(self.poll_interval)
+            total_duration = self.pose_duration + wait_time
+            self._apply_pose_smooth(pose, total_duration)
         
         _active_talk_gesture_service = None  # Unregister on exit
         self.bb.write(talk_gesture_active=False)

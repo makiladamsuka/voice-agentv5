@@ -182,7 +182,7 @@ class TalkGestureService:
             arm_a3=pose["a3"],
         )
     
-    def _apply_pose_smooth(self, target_pose: dict, duration: float, wait_until_reached: bool = False) -> None:
+    def _apply_pose_smooth(self, target_pose: dict, duration: float, wait_until_reached: bool = False, check_speaking: bool = False) -> None:
         """Smoothly interpolate to target pose using elastic physics.
         
         Uses high-frequency updates and velocity ticking for organic motion.
@@ -191,6 +191,7 @@ class TalkGestureService:
             target_pose: Target pose dictionary with a0, a1, a2, a3 keys.
             duration: Total duration for the movement loop in seconds.
             wait_until_reached: If True, blocks until target is reached (used for returning home).
+            check_speaking: If True, aborts the movement immediately if speaking flag becomes false.
         """
         # Read current arm positions
         current = self.bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
@@ -200,9 +201,16 @@ class TalkGestureService:
         
         poll_interval = 0.01  # 50 Hz
         start_time = time.time()
+        ticks = 0
         
         while True:
             elapsed = time.time() - start_time
+            
+            # Check speaking flag periodically to abort early
+            if check_speaking and ticks % 10 == 0:
+                if not read_speaking_flag():
+                    break
+            ticks += 1
             
             if wait_until_reached:
                 err = sum(abs(pos[i] - target[i]) for i in range(4))
@@ -281,7 +289,7 @@ class TalkGestureService:
             # Random wait time between poses (0.2-0.6 seconds) - hold pose even if speaking stops
             wait_time = random.uniform(0.2, 0.6)
             total_duration = self.pose_duration + wait_time
-            self._apply_pose_smooth(pose, total_duration)
+            self._apply_pose_smooth(pose, total_duration, check_speaking=True)
         
         _active_talk_gesture_service = None  # Unregister on exit
         self.bb.write(talk_gesture_active=False)

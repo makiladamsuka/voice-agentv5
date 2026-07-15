@@ -2,6 +2,11 @@
 
 All inter-module communication flows through this object.
 No business logic lives here — only typed storage and atomic read/write.
+
+Optimization (optimize/cpu2):
+  - Added animation_override / play_animation fields for AnimationEngine.
+  - Added wait_for() blocking helper so threads can block at 0% CPU until
+    a specific field changes, instead of spinning with time.sleep() polls.
 """
 
 from __future__ import annotations
@@ -192,11 +197,21 @@ class Blackboard:
     fusion_stationary: bool = False
     imu_drift_reset_request: bool = False
 
+    # ── Animation Engine (optimize/cpu2) ─────────────────────────────────────
+    # animation_override=True causes reactive AI (FaceTracker, EmotionEngine,
+    # TalkGestureService) to freeze and yield control to AnimationEngine.
+    animation_override: bool = False
+    # Set play_animation to a name string to trigger a timeline animation.
+    # AnimationEngine clears it to "" when playback starts.
+    play_animation: str = ""
+
     # ── Control ──────────────────────────────────────────────────────────────
     running: bool = True
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        # Pub/Sub: maps field name -> Condition for wait_for() callers.
+        self._conditions: dict[str, threading.Condition] = {}
         # Mutable defaults that can't be class-level
         self.face_candidates = []
         self.person_snapshots = []
@@ -206,12 +221,19 @@ class Blackboard:
     # ─────────────────────────────────────────────────────────────────────────
 
     def write(self, **kwargs: Any) -> None:
-        """Atomically set one or more fields."""
+        """Atomically set one or more fields, then notify any wait_for() callers."""
+        notified: list[threading.Condition] = []
         with self._lock:
             for key, value in kwargs.items():
                 if not hasattr(self, key):
                     raise AttributeError(f"Blackboard has no field '{key}'")
                 setattr(self, key, value)
+                if key in self._conditions:
+                    notified.append(self._conditions[key])
+        # Notify outside _lock to avoid priority inversion.
+        for cond in notified:
+            with cond:
+                cond.notify_all()
 
     def read(self, *fields: str) -> dict[str, Any]:
         """Atomically read one or more fields. Returns a plain dict."""
@@ -226,3 +248,30 @@ class Blackboard:
                 for k in vars(self.__class__)
                 if not k.startswith("_") and not callable(getattr(self.__class__, k))
             }
+
+    def wait_for(self, field: str, timeout: float = 5.0) -> Any:
+        """Block at 0% CPU until *field* changes, then return its new value.
+
+        Replaces tight time.sleep() polling loops.  The caller is unblocked
+        by the next bb.write(field=...) call from any thread.
+
+        Example::
+
+            # Instead of: while bb.read('x')['x'] == old: time.sleep(0.05)
+            new_val = bb.wait_for('x', timeout=10.0)
+
+        Parameters
+        ----------
+        field:
+            Blackboard field name to watch.
+        timeout:
+            Maximum seconds to wait before returning the current value anyway.
+        """
+        with self._lock:
+            if field not in self._conditions:
+                self._conditions[field] = threading.Condition(threading.Lock())
+            cond = self._conditions[field]
+        with cond:
+            cond.wait(timeout=timeout)
+        with self._lock:
+            return getattr(self, field)

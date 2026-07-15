@@ -379,7 +379,10 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         or os.getenv("OPENROUTER_MAX_TOKENS", "256")
     )
     endpointing_ms = int(os.getenv("VOICE_ENDPOINTING_MS", "250"))
-    use_local_vad = os.getenv("VOICE_USE_LOCAL_VAD", "").strip().lower() in ("1", "true", "yes")
+    # optimize/cpu2: Silero VAD OFF by default on Pi (15-20% ARM CPU per audio chunk).
+    # Deepgram server-side STT turn-detection is used instead (0% local CPU).
+    # Set VOICE_USE_LOCAL_VAD=1 only for fully offline/LAN-only deployments.
+    use_local_vad = os.getenv("VOICE_USE_LOCAL_VAD", "0").strip().lower() in ("1", "true", "yes")
     use_preemptive = os.getenv("VOICE_PREEMPTIVE", "1").strip().lower() in (
         "1",
         "true",
@@ -389,7 +392,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     print(
         f"[VoiceService] LLM: {llm_provider}/{llm_model} "
         f"(max_tokens={max_tokens}); "
-        f"turn_detection={'vad' if use_local_vad else 'stt'}; "
+        f"turn_detection={'vad (Silero)' if use_local_vad else 'stt (Deepgram, 0% local CPU)'}; "
         f"endpointing_ms={endpointing_ms}"
     )
 
@@ -397,13 +400,19 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     if use_local_vad:
         vad = ctx.proc.userdata.get("vad")
         if vad is None:
-            print("[VoiceService] Loading local Silero VAD (CPU-heavy on Pi)")
-            vad = silero.VAD.load(
-                min_speech_duration=0.15,
-                min_silence_duration=0.4,
-                prefix_padding_duration=0.2,
-                sample_rate=8000,
-            )
+            print("[VoiceService] WARNING: Loading Silero VAD — CPU-heavy on Pi. "
+                  "Unset VOICE_USE_LOCAL_VAD to use Deepgram STT instead.")
+            try:
+                from livekit.plugins import silero as _silero_lazy
+                vad = _silero_lazy.VAD.load(
+                    min_speech_duration=0.15,
+                    min_silence_duration=0.4,
+                    prefix_padding_duration=0.2,
+                    sample_rate=8000,
+                )
+            except ImportError:
+                print("[VoiceService] Silero plugin not installed — falling back to STT turn-detection.")
+                vad = None
 
     image_server = ctx.proc.userdata.get("image_server") or _global_image_server
     event_db = ctx.proc.userdata.get("event_db")

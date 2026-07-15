@@ -497,7 +497,14 @@ class FaceTracker:
                 "user_speaking",
                 "agent_speaking",
                 "conv_state",
+                "animation_override",
             )
+
+            # optimize/cpu2: yield to AnimationEngine — skip camera capture
+            if voice_state.get("animation_override", False):
+                next_tick = time.perf_counter() + 0.1
+                continue
+
             paused = self._vision_audio_busy(voice_state)
             if paused != self._was_vision_paused:
                 label = "paused (voice audio — CPU saved)" if paused else "resumed"
@@ -509,7 +516,9 @@ class FaceTracker:
                 next_tick = time.perf_counter() + (1.0 / poll_hz)
                 continue
 
-            fps = self._effective_vision_fps(voice_state)
+            # optimize/cpu2: hard-cap at 12 FPS max on Pi to free CPU for
+            # hardware control and voice processing.
+            fps = min(12, self._effective_vision_fps(voice_state))
             next_tick = time.perf_counter() + (1.0 / max(1.0, fps))
 
             now = time.time()

@@ -258,6 +258,11 @@ class TalkGestureService:
             if bye_wave_active:
                 time.sleep(self.poll_interval)
                 continue
+
+            # optimize/cpu2: yield to AnimationEngine when active
+            if self.bb.read("animation_override")["animation_override"]:
+                time.sleep(self.poll_interval)
+                continue
             
             # Read current agent_speaking state instantly from memory
             bb_state = self.bb.read("agent_speaking")

@@ -122,6 +122,11 @@ class EmotionEngine:
                 "track_kind",
                 "servo_mode",
             )
+            # ── optimize/cpu2: yield to AnimationEngine when active ──────────
+            if state.get("animation_override", False):
+                time.sleep(loop_delay)
+                continue
+
             manual = state["manual_emotion"]
             if manual is not None:
                 self._set(manual)

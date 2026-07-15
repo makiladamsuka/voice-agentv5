@@ -29,6 +29,7 @@ from core.arm_controller import ArmController
 from core.emotion_engine import EmotionEngine
 from core.eye_renderer import EyeRenderer
 from core.debug_dashboard import DebugDashboard
+from core.animation_engine import AnimationEngine  # optimize/cpu2
 from core.tof_state import STATE as TOF_STATE
 from core.tof_stream import TofStreamHandler
 from core.yaw_pose import (
@@ -426,6 +427,9 @@ def main():
         debug_live_tune=load_tune_defaults_from_config(cfg),
         debug_tune_seq=0,
         stream_viewers=0,
+        # optimize/cpu2: AnimationEngine fields
+        animation_override=False,
+        play_animation="",
     )
 
     port_label = port if port else "auto"
@@ -628,6 +632,12 @@ def main():
             target=EyeRenderer(bb, config_path=config_path).run,
             daemon=True,
             name="EyeRenderer",
+        ),
+        # optimize/cpu2: AnimationEngine for Pepper-like synchronized hardware timelines
+        threading.Thread(
+            target=AnimationEngine(bb).run,
+            daemon=True,
+            name="AnimationEngine",
         ),
     ]
     face_greeting_cfg = cfg.get("face_greeting", {}) or {}

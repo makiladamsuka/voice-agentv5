@@ -217,6 +217,11 @@ class FaceTracker:
         # self._skin_blob_lock = False
         
         self._last_face_area = 0.0
+        
+        # Relative hand tracking
+        self._hand_offset_x = 0.0
+        self._hand_offset_y = 0.0
+        self._was_hand_tracking = False
 
     def _vision_audio_busy(self, state: dict) -> bool:
         """True while user or agent audio is active — skip camera + YuNet."""
@@ -634,24 +639,45 @@ class FaceTracker:
                         dw, dh = self.detect_res
                         hand_area_ratio = (hand_w * hand_h) / (dw * dh)
                         
-                        raw_hand_norm_x = (px / dw) * 2.0 - 1.0
-                        raw_hand_norm_y = (py / dh) * 2.0 - 1.0
+                        hand_cx = (max(xs) + min(xs)) / 2.0
+                        hand_cy = (max(ys) + min(ys)) / 2.0
+                        
+                        raw_hand_norm_x = (hand_cx / dw) * 2.0 - 1.0
+                        raw_hand_norm_y = (hand_cy / dh) * 2.0 - 1.0
                         
                         # Compare against current or last known face area
                         compare_area = face_area if face_detected else self._last_face_area
                         
                         if hand_area_ratio > 1.3 * compare_area:
+                            if not self._was_hand_tracking:
+                                # First frame of hand tracking: compute offset to prevent jerking
+                                current_aim_x = face_norm_x if face_detected else 0.0
+                                current_aim_y = face_norm_y if face_detected else 0.0
+                                self._hand_offset_x = raw_hand_norm_x - current_aim_x
+                                self._hand_offset_y = raw_hand_norm_y - current_aim_y
+                                self._was_hand_tracking = True
+                            else:
+                                # Smoothly decay the offset so it glides to the middle of the hand
+                                self._hand_offset_x *= 0.92
+                                self._hand_offset_y *= 0.92
+                                
                             track_kind = "hand"
                             # Override face tracking so servo loop follows hand
                             face_detected = False
                             # Disable hi/bye gestures when fallback tracking is active
                             hand_gesture = ""
                             hand_gesture_side = ""
+                        else:
+                            self._was_hand_tracking = False
                             
                         # Always publish hand coordinates so they can be drawn on stream HUD
                         hand_detected = True
-                        hand_norm_x = raw_hand_norm_x
-                        hand_norm_y = raw_hand_norm_y
+                        if self._was_hand_tracking:
+                            hand_norm_x = raw_hand_norm_x - self._hand_offset_x
+                            hand_norm_y = raw_hand_norm_y - self._hand_offset_y
+                        else:
+                            hand_norm_x = raw_hand_norm_x
+                            hand_norm_y = raw_hand_norm_y
                             
                         hand_physical_side = best_hand.physical_side
 

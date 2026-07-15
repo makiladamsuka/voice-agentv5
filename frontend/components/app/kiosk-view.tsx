@@ -192,6 +192,9 @@ export function KioskView() {
   const handleMicClick = useCallback(async () => {
     if (isConnected) {
       end();
+      // Brief settle so the backend can release the previous job before a
+      // quick re-press races the old room's cleanup.
+      await new Promise((r) => setTimeout(r, 400));
       return;
     }
     setIsConnecting(true);

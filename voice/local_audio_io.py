@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import os
 import struct
+import threading
 from pathlib import Path
 
 from livekit import rtc
@@ -32,6 +33,14 @@ _pump_task: asyncio.Task | None = None
 # Soft echo gate while agent speaks (peak level ~0..1)
 _echo_gate_rms = 0.035
 _agent_speaking = False  # set from VoiceService — never read Blackboard per-frame
+# Jobs run on separate threads; red-mic reconnect can overlap teardown.
+# Generation ownership stops an old session from closing the new mic.
+_audio_lock = threading.Lock()
+_audio_owner_gen = 0
+
+
+def current_audio_generation() -> int:
+    return _audio_owner_gen
 
 
 class LocalMicAudioInput(io.AudioInput):
@@ -202,67 +211,77 @@ async def _pump_mic_stream(
 async def setup_local_audio(
     loop: asyncio.AbstractEventLoop,
     config_path: Path | None = None,
-) -> tuple[LocalMicAudioInput | None, bool, bool]:
-    """Open Pi mic/speaker with AEC. Returns (mic_input, use_local_mic, use_aec_speaker)."""
+) -> tuple[LocalMicAudioInput | None, bool, bool, int]:
+    """Open Pi mic. Returns (mic_input, use_local_mic, use_aec_speaker, audio_gen)."""
     global _enabled_mic, _aec_speaker, _devices, _input_capture
-    global _output_player, _mic_input, _pump_task
+    global _output_player, _mic_input, _pump_task, _audio_owner_gen
 
     use_mic = resolve_local_mic(config_path)
 
     if not use_mic:
-        return None, False, False
+        return None, False, False, _audio_owner_gen
+
+    # Previous session must be fully torn down — otherwise APM "handle not found"
+    # and QueueFull spam on reconnect.
+    if _enabled_mic or _input_capture is not None or _pump_task is not None:
+        print("[LocalAudioIO] Cleaning up leftover mic capture before reopen")
+        await shutdown_local_audio()
+        await asyncio.sleep(0.15)
+
+    # Read aec/echo gate config before open_input so we can skip AEC APM when unused.
+    aec_reverse = True
+    echo_gate = _echo_gate_rms
+    try:
+        import yaml
+
+        with open(config_path, encoding="utf-8") as f:
+            voice_cfg = (yaml.safe_load(f) or {}).get("voice") or {}
+        if "aec_reverse" in voice_cfg:
+            aec_reverse = bool(voice_cfg["aec_reverse"])
+        if "echo_gate_rms" in voice_cfg:
+            echo_gate = float(voice_cfg["echo_gate_rms"])
+    except Exception:
+        pass
+    env_aec = _env_flag("VOICE_AEC_REVERSE")
+    if env_aec is not None:
+        aec_reverse = env_aec
+    env_gate = os.getenv("VOICE_ECHO_GATE_RMS", "").strip()
+    if env_gate:
+        with contextlib.suppress(ValueError):
+            echo_gate = float(env_gate)
+    set_echo_gate(rms_threshold=echo_gate)
 
     try:
-        _devices = rtc.MediaDevices(loop=loop)
-        _input_capture = _devices.open_input(
-            enable_aec=True,
+        devices = rtc.MediaDevices(loop=loop)
+        # When reverse AEC is off, don't open WebRTC AEC — stale ApmProcessStream
+        # handles cause "handle not found" floods after session end/reconnect.
+        input_capture = devices.open_input(
+            enable_aec=aec_reverse,
             noise_suppression=True,
             high_pass_filter=True,
             auto_gain_control=True,
             queue_capacity=400,
         )
-        _mic_input = LocalMicAudioInput()
+        mic_input = LocalMicAudioInput()
         track = rtc.LocalAudioTrack.create_audio_track(
             "local_mic",
-            _input_capture.source,
+            input_capture.source,
         )
         stream = rtc.AudioStream(
             track,
             sample_rate=_DEVICE_SAMPLE_RATE,
             num_channels=1,
         )
-        _pump_task = asyncio.create_task(_pump_mic_stream(stream, _mic_input))
-
-        # Speaker plays via local_speaker.py; optionally feed DAC into APM reverse.
-        aec_reverse = True
-        echo_gate = _echo_gate_rms
-        try:
-            import yaml
-            with open(config_path, encoding="utf-8") as f:
-                voice_cfg = (yaml.safe_load(f) or {}).get("voice") or {}
-            if "aec_reverse" in voice_cfg:
-                aec_reverse = bool(voice_cfg["aec_reverse"])
-            if "echo_gate_rms" in voice_cfg:
-                echo_gate = float(voice_cfg["echo_gate_rms"])
-        except Exception:
-            pass
-        env_aec = _env_flag("VOICE_AEC_REVERSE")
-        if env_aec is not None:
-            aec_reverse = env_aec
-        env_gate = os.getenv("VOICE_ECHO_GATE_RMS", "").strip()
-        if env_gate:
-            with contextlib.suppress(ValueError):
-                echo_gate = float(env_gate)
-        set_echo_gate(rms_threshold=echo_gate)
+        pump_task = asyncio.create_task(_pump_mic_stream(stream, mic_input))
 
         if (
             aec_reverse
             and resolve_local_speaker(config_path)
-            and _input_capture.apm is not None
+            and input_capture.apm is not None
         ):
             from voice.local_speaker import attach_aec
 
-            attach_aec(_input_capture.apm, _input_capture.delay_estimator)
+            attach_aec(input_capture.apm, input_capture.delay_estimator)
             print(
                 f"[LocalAudioIO] Backend mic + AEC reverse @ {_DEVICE_SAMPLE_RATE} Hz "
                 f"(speaker via local_speaker.py; echo_gate_rms={echo_gate})"
@@ -275,12 +294,22 @@ async def setup_local_audio(
                 "speaker via local_speaker.py — mute browser mic/audio)"
             )
 
-        _enabled_mic = True
-        return _mic_input, True, False
+        with _audio_lock:
+            _devices = devices
+            _input_capture = input_capture
+            _mic_input = mic_input
+            _pump_task = pump_task
+            _enabled_mic = True
+            _aec_speaker = False
+            _audio_owner_gen += 1
+            gen = _audio_owner_gen
+
+        return mic_input, True, False, gen
     except Exception as exc:
         print(f"[LocalAudioIO] Setup failed, falling back to browser mic: {exc}")
         await shutdown_local_audio()
-        return None, False, False
+        return None, False, False, _audio_owner_gen
+
 
 def write_speaker_pcm(data: bytes) -> None:
     """Queue 16-bit mono PCM at 24 kHz for AEC output player."""
@@ -295,31 +324,55 @@ def drain_speaker() -> None:
         _output_player._buffer.clear()
 
 
-async def shutdown_local_audio() -> None:
+async def shutdown_local_audio(*, owner_gen: int | None = None) -> None:
+    """Tear down mic capture.
+
+    Pass ``owner_gen`` from ``setup_local_audio`` so a stale disconnect
+    cannot close a newer reconnect's devices (cross-thread job race).
+    ``owner_gen=None`` forces shutdown (used before reopen).
+    """
     global _enabled_mic, _aec_speaker, _devices, _input_capture
-    global _output_player, _mic_input, _pump_task
+    global _output_player, _mic_input, _pump_task, _agent_speaking
 
     from voice.local_speaker import detach_aec
 
+    with _audio_lock:
+        if owner_gen is not None and owner_gen != _audio_owner_gen:
+            print(
+                f"[LocalAudioIO] Skip stale shutdown "
+                f"(owner={owner_gen} current={_audio_owner_gen})"
+            )
+            return
+
+        pump = _pump_task
+        capture = _input_capture
+        player = _output_player
+        mic = _mic_input
+
+        _agent_speaking = False
+        _pump_task = None
+        _input_capture = None
+        _output_player = None
+        _mic_input = None
+        _devices = None
+        _enabled_mic = False
+        _aec_speaker = False
+
     detach_aec()
 
-    if _pump_task is not None and not _pump_task.done():
-        _pump_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await _pump_task
-    _pump_task = None
-
-    if _input_capture is not None:
+    if mic is not None:
         with contextlib.suppress(Exception):
-            await _input_capture.aclose()
-    _input_capture = None
+            mic.on_detached()
 
-    if _output_player is not None:
+    if pump is not None and not pump.done():
+        pump.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await pump
+
+    if capture is not None:
         with contextlib.suppress(Exception):
-            await _output_player.aclose()
-    _output_player = None
+            await capture.aclose()
 
-    _mic_input = None
-    _devices = None
-    _enabled_mic = False
-    _aec_speaker = False
+    if player is not None:
+        with contextlib.suppress(Exception):
+            await player.aclose()

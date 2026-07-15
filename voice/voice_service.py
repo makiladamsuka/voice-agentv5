@@ -51,6 +51,8 @@ _global_map_navigator: MapNavigator | None = None
 _global_wayfinder: Wayfinder | None = None
 _global_event_db = None
 _active_session: AgentSession | None = None
+_session_generation = 0  # stale disconnect must not clear a newer reconnect
+_session_hello_done = False  # only auto-greet once per worker (not every mic reconnect)
 
 # ── VADER Sentiment ──────────────────────────────────────────────────────────
 try:
@@ -337,6 +339,7 @@ def prewarm(proc: agents.JobProcess) -> None:
 
 async def entrypoint(ctx: agents.JobContext) -> None:
     global _thinking_task, _awkward_timer_task, _smart_wait_task, _session_live, _active_session
+    global _session_generation
 
     print(f"[VoiceService] Job received: room={ctx.room.name}")
 
@@ -628,9 +631,10 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     mic_input = None
     use_local_mic = False
     use_aec_speaker = False
+    audio_gen = 0
     use_local_speaker = resolve_local_speaker(config_path)
     try:
-        mic_input, use_local_mic, use_aec_speaker = await setup_local_audio(
+        mic_input, use_local_mic, use_aec_speaker, audio_gen = await setup_local_audio(
             asyncio.get_running_loop(),
             config_path,
         )
@@ -646,7 +650,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 _bb.write(local_speaker_active=True)
             print("[VoiceService] Local speaker output attached — TTS will play on Pi")
 
-        room_opts: dict = {}
+        # delete_room_on_close: red-mic hangup frees the worker immediately instead of
+        # leaving an orphan room (~20s) whose late cleanup kills the next session's mic.
+        room_opts: dict = {"delete_room_on_close": True}
         if use_local_mic:
             room_opts["audio_input"] = False
         if (
@@ -656,24 +662,35 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         ):
             room_opts["audio_output"] = False
 
-        room_options = (
-            room_io.RoomOptions(**room_opts) if room_opts else NOT_GIVEN
-        )
+        room_options = room_io.RoomOptions(**room_opts)
         await session.start(room=ctx.room, agent=agent, room_options=room_options)
     except Exception:
-        await shutdown_local_audio()
+        await shutdown_local_audio(owner_gen=audio_gen or None)
         if _bb is not None:
             _bb.write(local_mic_active=False)
         raise
 
+    _session_generation += 1
+    my_session_gen = _session_generation
     _session_live = True
     if _bb is not None:
         _bb.write(voice_session_active=True)
 
-    try:
-        await session.say("Oh hi! I am so happy you are talking to me!")
-    except Exception as e:
-        print(f"[VoiceService] Initial greeting failed: {e}")
+    # One-shot welcome only — reconnecting the mic should not re-say "Oh hi!".
+    global _session_hello_done
+    greet_on_connect = os.getenv("VOICE_GREET_ON_CONNECT", "once").strip().lower()
+    should_greet = greet_on_connect in ("1", "true", "yes", "always") or (
+        greet_on_connect == "once" and not _session_hello_done
+    )
+    if should_greet:
+        try:
+            await session.say("Hi! I'm listening.")
+            _session_hello_done = True
+        except Exception as e:
+            print(f"[VoiceService] Initial greeting failed: {e}")
+    else:
+        print("[VoiceService] Skipping auto-greeting (reconnect / disabled)")
+        _set_conv_state("listening")
 
     async def monitor_face_greetings() -> None:
         """Speak queued hellos when FaceGreetingMonitor sees a new person."""
@@ -702,39 +719,71 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     greet_task = asyncio.create_task(monitor_face_greetings())
 
+    # Exit as soon as the browser hangs up — don't wait for empty-room timeout.
+    session_done = asyncio.Event()
+
+    @session.on("close")
+    def _on_session_close(_ev=None) -> None:
+        session_done.set()
+
     try:
-        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-            await asyncio.sleep(1)
+        while (
+            ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED
+            and not session_done.is_set()
+        ):
+            await asyncio.sleep(0.2)
     finally:
         greet_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await greet_task
-        _session_live = False
-        _active_session = None
-        write_speaking_flag(False)
-        
-        # Return arms to home position at end of voice session
-        try:
-            from core.talk_gesture_service import return_to_home_position
-            return_to_home_position()
-        except Exception as e:
-            print(f"[VoiceService] Failed to return arms to home: {e}")
-        
-        if _bb is not None:
-            _bb.write(
-                voice_session_active=False,
-                conv_state="idle",
-                conv_emotion=None,
-                amplitude_fast=0.0,
-                amplitude_slow=0.0,
-                user_speaking=False,
-                agent_speaking=False,
-            )
-        from voice.local_audio_io import shutdown_local_audio
 
-        await shutdown_local_audio()
-        if _bb is not None:
-            _bb.write(local_mic_active=False)
+        # Force room leave so the job runner frees capacity for the next mic press.
+        if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+            with contextlib.suppress(Exception):
+                await ctx.room.disconnect()
+
+        # Only the current owner may clear globals / mic — a late old-job finally
+        # used to kill the next reconnect's devices and crash the whole backend.
+        is_owner = my_session_gen == _session_generation
+        if is_owner:
+            _session_live = False
+            if _active_session is session:
+                _active_session = None
+            write_speaking_flag(False)
+
+            try:
+                from core.talk_gesture_service import return_to_home_position
+
+                return_to_home_position()
+            except Exception as e:
+                print(f"[VoiceService] Failed to return arms to home: {e}")
+
+            if _bb is not None:
+                _bb.write(
+                    voice_session_active=False,
+                    conv_state="idle",
+                    conv_emotion=None,
+                    amplitude_fast=0.0,
+                    amplitude_slow=0.0,
+                    user_speaking=False,
+                    agent_speaking=False,
+                )
+            from voice.local_audio_io import set_agent_speaking, shutdown_local_audio
+
+            set_agent_speaking(False)
+            await shutdown_local_audio(owner_gen=audio_gen or None)
+            if _bb is not None:
+                _bb.write(local_mic_active=False, agent_speaking=False)
+        else:
+            print(
+                f"[VoiceService] Skipping stale session cleanup "
+                f"(gen {my_session_gen} != {_session_generation})"
+            )
+            # Still release only *this* generation's mic if we owned one.
+            if audio_gen:
+                from voice.local_audio_io import shutdown_local_audio
+
+                await shutdown_local_audio(owner_gen=audio_gen)
 
 
 # ── Public entry point (called from start_robot.py thread) ───────────────────

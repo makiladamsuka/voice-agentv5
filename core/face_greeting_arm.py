@@ -191,9 +191,17 @@ class _CacheEntry:
     """One person slot in the 30-min TTL greeting memory."""
 
     def __init__(self, embedding: "np.ndarray", ts: float) -> None:
-        self.embedding = embedding
+        self.embeddings = [embedding]
         self.ts = ts
         self.greet_count = 1
+        self.learning_until = ts + 30.0
+
+    def add_embedding(self, embedding: "np.ndarray"):
+        if len(self.embeddings) < 50:
+            self.embeddings.append(embedding)
+
+    def is_learning(self, now: float) -> bool:
+        return now < self.learning_until
 
     def age_sec(self, now: float) -> float:
         return now - self.ts
@@ -202,8 +210,13 @@ class _CacheEntry:
         return self.age_sec(now) > MEMORY_TTL_SEC
 
     def refresh(self, now: float) -> None:
+        # Do not update self.ts here so the 30-min TTL is a strict deadline from first detection
+        self.greet_count += 1
+
+    def re_encounter(self, now: float) -> None:
         self.ts = now
         self.greet_count += 1
+        self.learning_until = now + 30.0
 
 
 # ── Main service class ────────────────────────────────────────────────────────
@@ -254,6 +267,8 @@ class FaceGreetingArmService:
         # ── State ─────────────────────────────────────────────────────────────
         self._face_since: Optional[float] = None
         self._current_embedding: Optional["np.ndarray"] = None
+        self._current_match: Optional[_CacheEntry] = None
+        self._last_capture_time = 0.0
         self._last_cleanup = time.time()
         self._last_greeting_time: Optional[float] = None
 
@@ -285,10 +300,11 @@ class FaceGreetingArmService:
         best: Optional[_CacheEntry] = None
         best_sim = -1.0
         for entry in self._cache:
-            sim = cosine_similarity(embedding, entry.embedding)
-            if sim > self.cosine_threshold and sim > best_sim:
-                best = entry
-                best_sim = sim
+            for saved_emb in entry.embeddings:
+                sim = cosine_similarity(embedding, saved_emb)
+                if sim > self.cosine_threshold and sim > best_sim:
+                    best = entry
+                    best_sim = sim
         if best:
             print(f"[FaceGreetingArm] Cache HIT  — sim={best_sim:.3f}, greeted {best.greet_count}x")
         else:
@@ -400,47 +416,60 @@ class FaceGreetingArmService:
                     self._face_since = now
                     self._current_embedding = None
 
-                elif (
-                    (now - self._face_since) >= self.hold_sec
-                    and self._current_embedding is None
-                ):
-                    # Face stable long enough — compute embedding
+                elif (now - self._face_since) >= self.hold_sec:
+                    # Face stable long enough — handle initial computation or learning
                     frame = state["stream_frame"]
                     candidates = state["face_candidates"]
 
                     if frame is not None and candidates:
                         face_data = candidates[0]  # largest / best face
-                        embedding = self._compute_embedding(frame, face_data)
-                        self._current_embedding = embedding  # mark processed
+                        
+                        # Initial detection
+                        if self._current_embedding is None:
+                            embedding = self._compute_embedding(frame, face_data)
+                            self._current_embedding = embedding  # mark processed
 
-                        if embedding is not None:
-                            match = self._find_match(embedding)
+                            if embedding is not None:
+                                match = self._find_match(embedding)
 
-                            if match is None:
-                                # NEW FACE ─────────────────────────────────────
-                                self._trigger_greeting()
-                                self._cache.append(_CacheEntry(embedding, now))
-                                self._last_greeting_time = now
+                                if match is None:
+                                    # NEW FACE ─────────────────────────────────────
+                                    self._trigger_greeting()
+                                    match = _CacheEntry(embedding, now)
+                                    self._cache.append(match)
+                                    self._last_greeting_time = now
 
-                            elif match.is_expired(now):
-                                # FORGOTTEN FACE (TTL expired) ─────────────────
-                                print(
-                                    f"[FaceGreetingArm] Forgotten face — "
-                                    f"age {match.age_sec(now)/60:.1f} min"
-                                )
-                                self._trigger_greeting()
-                                match.refresh(now)
-                                self._last_greeting_time = now
+                                elif match.is_expired(now):
+                                    # FORGOTTEN FACE (TTL expired) ─────────────────
+                                    print(
+                                        f"[FaceGreetingArm] Forgotten face — "
+                                        f"age {match.age_sec(now)/60:.1f} min"
+                                    )
+                                    self._trigger_greeting()
+                                    match.re_encounter(now)
+                                    self._last_greeting_time = now
 
-                            else:
-                                # KNOWN FACE — suppress greeting ───────────────
-                                remaining = (MEMORY_TTL_SEC - match.age_sec(now)) / 60.0
-                                print(
-                                    f"[FaceGreetingArm] Greeting suppressed — "
-                                    f"greeted {match.greet_count}x, "
-                                    f"forgotten in {remaining:.1f} min"
-                                )
-                                match.refresh(now)
+                                else:
+                                    # KNOWN FACE — suppress greeting ───────────────
+                                    remaining = (MEMORY_TTL_SEC - match.age_sec(now)) / 60.0
+                                    print(
+                                        f"[FaceGreetingArm] Greeting suppressed — "
+                                        f"greeted {match.greet_count}x, "
+                                        f"forgotten in {remaining:.1f} min"
+                                    )
+                                    match.refresh(now)
+
+                                self._current_match = match
+                                self._last_capture_time = now
+
+                        # Continuous learning phase (max 2 FPS)
+                        elif self._current_match is not None and self._current_match.is_learning(now):
+                            if (now - self._last_capture_time) >= 0.5:
+                                embedding = self._compute_embedding(frame, face_data)
+                                if embedding is not None:
+                                    self._current_match.add_embedding(embedding)
+                                self._last_capture_time = now
+
                     else:
                         self._face_since = None  # no frame yet, retry
             else:
@@ -448,6 +477,7 @@ class FaceGreetingArmService:
                 if self._face_since is not None:
                     self._face_since = None
                     self._current_embedding = None
+                    self._current_match = None
 
             time.sleep(loop_delay)
 

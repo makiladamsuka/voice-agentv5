@@ -390,6 +390,11 @@ class _ByeSequenceRunner:
                 frames = animations[key]["frames"]
                 if not frames:
                     raise ValueError(f"Animation '{key}' has no frames")
+                
+                # Ensure the animation ends by returning to the home position
+                home_pose = data.get("poses", {}).get("home")
+                if home_pose:
+                    frames.append(home_pose)
             except FileNotFoundError as exc:
                 print(f"[ByeWaveService] ERROR: presets not found: {exc}", file=sys.stderr)
                 return

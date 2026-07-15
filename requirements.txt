@@ -5,6 +5,8 @@ livekit==1.1.5
 livekit-agents==1.5.2
 livekit-plugins-openai==1.5.2
 livekit-plugins-deepgram==1.5.2
+# optimize/cpu2: Silero VAD is now optional. It uses 15-20% CPU on Pi.
+# If you don't use VOICE_USE_LOCAL_VAD=1, you can safely remove this package.
 livekit-plugins-silero==1.5.1
 
 # OpenCV YuNet faces (YOLO body detection removed for Pi CPU savings)

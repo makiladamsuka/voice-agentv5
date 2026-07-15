@@ -333,6 +333,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     print(f"[VoiceService] Job received: room={ctx.room.name}")
 
+    # Connect immediately — heavy init (event DB, local audio) delayed this before
+    # and tripped LiveKit's 10s room-connect watchdog on the Pi.
+    try:
+        await ctx.connect()
+        print(f"[VoiceService] Room connected: {ctx.room.name}")
+    except Exception as exc:
+        print(f"[VoiceService] Early room connect failed (session.start will retry): {exc}")
+
     llm_model = os.getenv("OPENROUTER_MODEL", "openrouter/auto").strip() or "openrouter/auto"
     max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS", "1024"))
     endpointing_ms = int(os.getenv("VOICE_ENDPOINTING_MS", "400"))
@@ -356,7 +364,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             )
 
     image_server = ctx.proc.userdata.get("image_server") or _global_image_server
-    event_db = ctx.proc.userdata.get("event_db") or _get_event_db()
+    event_db = ctx.proc.userdata.get("event_db")
+    if event_db is None:
+        try:
+            event_db = await asyncio.to_thread(_get_event_db)
+            ctx.proc.userdata["event_db"] = event_db
+        except Exception as exc:
+            print(f"[VoiceService] Event DB load failed: {exc}")
+            event_db = None
 
     turn_handling = agents.TurnHandlingOptions(
         turn_detection="vad" if use_local_vad else "stt",
@@ -749,7 +764,8 @@ def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:
 
     # Pi runs face/servo/camera alongside voice. Production default load_threshold
     # (0.7) rejects dispatch when CPU is busy — frontend connects but agent never joins.
-    load_threshold = float(os.getenv("LIVEKIT_LOAD_THRESHOLD", "0.95"))
+    # Pi load often exceeds 1.0 during camera+voice; 0.7/0.95 rejects jobs mid-call.
+    load_threshold = float(os.getenv("LIVEKIT_LOAD_THRESHOLD", "3.0"))
     worker_port = int(os.getenv("LIVEKIT_WORKER_HTTP_PORT", "0"))
     print(
         f"[VoiceService] worker load_threshold={load_threshold}, "

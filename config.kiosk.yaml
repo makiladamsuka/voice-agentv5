@@ -25,8 +25,8 @@ stream:
   res: [320, 180]
 
 debug_viz:
-  enabled: false
-  auto_start: false
+  enabled: true
+  auto_start: true
   host: "0.0.0.0"
   port: 8082
   manual_control_enabled: false  # true = browser WASD/Z/R work alongside face tracking

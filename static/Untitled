@@ -1,0 +1,12 @@
+ Error: tried to access session context outside of SessionProvider component
+    at KioskView (components/app/kiosk-view.tsx:121:36)
+  119 | export function KioskView() {
+  120 |   const [glowingSection, setGlowingSection] = useState<'where-to' | 'chat' | 'mic' | 'news' | null>(null);
+> 121 |   const session = useSessionContext();
+      |                                    ^
+  122 |   const { isConnected, start, end } = session;
+  123 |   const { messages } = useSessionMessages(session);
+  124 |   const room = useRoomContext(); {
+  digest: '4051326490'
+}
+ GET / 500 in 12128ms

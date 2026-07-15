@@ -448,14 +448,20 @@ class ServoLoop:
         )
         return "wander"
 
-    def _enter_wander_from_current_pose(self, now: float) -> None:
+    def _enter_wander_from_current_pose(self, now: float, last_face_x: float = 0.0) -> None:
         """Switch to wander without snapping — hold track pose, then glance from here."""
+        edge_threshold = 0.35
+        edge_loss = abs(last_face_x) >= edge_threshold
+        edge_direction = 1.0 if last_face_x > 0 else -1.0
+
         self._wander.seed_from_pose(
             self._pan,
             self._tilt,
             now,
             hold_min_sec=self.wander_track_loss_hold_min,
             hold_max_sec=self.wander_track_loss_hold_max,
+            edge_loss=edge_loss,
+            edge_direction=edge_direction,
         )
 
     def _wander_tilt_ref(self, effective_tilt_center: float) -> float:
@@ -639,7 +645,7 @@ class ServoLoop:
             self._prev_face_raw_y = 0.0
             self._pan_in_center_band = True
         if new_mode == "wander" and old_mode in ("track", "last_seen"):
-            self._enter_wander_from_current_pose(time.time())
+            self._enter_wander_from_current_pose(time.time(), self._prev_face_x)
         elif new_mode == "wander":
             self._wander.tilt_goal = self._tilt
             self._wander.pan_goal = self._pan

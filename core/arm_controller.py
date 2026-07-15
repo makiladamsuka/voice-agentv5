@@ -126,6 +126,9 @@ class ArmController:
         self._greeting_phase: int = 0  # 0=UP, 1=HOLD, 2=DOWN
         self._greeting_pose: tuple[float, float, float, float] | None = None
         self._pre_greeting_target = list(self._home)
+        
+        # Wander arm state
+        self.pan_center = float(_cfg(cfg, "servo", "pan_center", default=100.0))
 
         self._publish_pose(self._home)
 
@@ -320,23 +323,40 @@ class ArmController:
                 "base_motion_busy",
                 "base_step_deg",
                 "base_last_spin_moved_deg",
+                "servo_pan",
+                "servo_mode",
             )
-            busy = bool(state["base_motion_busy"])
-            step_deg = float(state["base_step_deg"])
+            busy = bool(state.get("base_motion_busy", False))
+            step_deg = float(state.get("base_step_deg", 0.0))
+            servo_pan = float(state.get("servo_pan", self.pan_center))
+            servo_mode = str(state.get("servo_mode", ""))
 
             if busy and not self._was_busy:
                 self._pending_step_deg = step_deg
 
             if self._was_busy and not busy:
-                moved = abs(float(state["base_last_spin_moved_deg"]))
+                moved = abs(float(state.get("base_last_spin_moved_deg", 0.0)))
                 if moved >= self.min_spin_moved_deg:
                     self._accumulate_spin(self._pending_step_deg)
+
+            effective_target = list(self._target)
+
+            # Apply wander arm gesture offset
+            if servo_mode == "wander" and not greeting_active and not bye_wave_active and not talk_active:
+                pan_offset = servo_pan - self.pan_center
+                max_raise = 15.0
+                raise_amount = min(abs(pan_offset) * 0.5, max_raise)
+                
+                if pan_offset > 0:
+                    effective_target[0] += raise_amount
+                elif pan_offset < 0:
+                    effective_target[1] -= raise_amount
 
             for i in range(4):
                 self._current[i], self._velocity[i] = tick_toward(
                     self._current[i],
                     self._velocity[i],
-                    self._target[i],
+                    effective_target[i],
                     loop_delay,
                     lo=-360.0,
                     hi=360.0,

@@ -145,7 +145,7 @@ class OrganicWanderSearch:
         self._last_step_deg = 0.0
         self._next_hold_sec = 3.0
 
-    def seed_from_pose(self, pan: float, tilt: float, now: float, *, hold_min_sec: float = 1.2, hold_max_sec: float = 2.8) -> None:
+    def seed_from_pose(self, pan: float, tilt: float, now: float, *, hold_min_sec: float = 1.2, hold_max_sec: float = 2.8, edge_loss: bool = False, edge_direction: float = 0.0) -> None:
         """Hold current head pose, then pick wander targets stepping from here (e.g. after track loss)."""
         self.pan_goal = pan
         self.tilt_goal = tilt
@@ -158,6 +158,15 @@ class OrganicWanderSearch:
         self.hold_emotion_hint = "attentive"
         self._last_step_deg = 0.0
         self._next_hold_sec = random.uniform(1.0, 2.5)
+
+        if edge_loss:
+            self._search_mode = "edge"
+            self._edge_direction = edge_direction
+        else:
+            self._search_mode = "circle"
+            self._search_ring_steps_left = 8
+            self._search_ring_center_pan = pan
+            self._search_ring_center_tilt = tilt
 
     def tick(
         self,
@@ -254,6 +263,32 @@ class OrganicWanderSearch:
         tilt_step_max_deg: float,
         world_yaw_deg: float = 0.0,
     ) -> None:
+        if getattr(self, "_search_mode", "") == "circle" and getattr(self, "_search_ring_steps_left", 0) > 0:
+            idx = 8 - self._search_ring_steps_left
+            angle_deg = idx * (360.0 / 8.0)
+            angle_rad = math.radians(angle_deg)
+            self.pan_goal = clamp(self._search_ring_center_pan + 5.0 * math.cos(angle_rad), pan_min, pan_max)
+            self.tilt_goal = clamp(self._search_ring_center_tilt + 5.0 * math.sin(angle_rad), tilt_min, tilt_max)
+            
+            self._search_ring_steps_left -= 1
+            if self._search_ring_steps_left == 0:
+                self._search_mode = "none"
+                
+            self.move_speed_scale = 0.3
+            self.arrival_deg = arrival_deg
+            self._last_step_deg = 5.0
+            return
+            
+        if getattr(self, "_search_mode", "") == "edge":
+            step = 15.0
+            self.pan_goal = clamp(pan_current + self._edge_direction * step, pan_min, pan_max)
+            self.tilt_goal = tilt_current
+            self._search_mode = "none"
+            self.move_speed_scale = 0.5
+            self.arrival_deg = arrival_deg
+            self._last_step_deg = abs(self.pan_goal - pan_current)
+            return
+
         step, speed_scale = self._dynamic_step_and_speed(
             step_min_deg, step_max_deg, amp_deg, jump_chance
         )

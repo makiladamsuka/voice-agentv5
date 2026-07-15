@@ -72,10 +72,16 @@ export function KioskView() {
     : 0;
 
   const isThinking = agentState === "thinking";
-  const isAgentInitializing =
-    isConnected &&
-    messages.filter((m) => !m.from?.isLocal).length === 0 &&
-    transcriptions.length === 0;
+  // Ready when the agent is in the voice loop — do NOT wait for chat/transcript
+  // messages. With local mic/speaker the Pi can answer before the UI sees text,
+  // so a message-based check left the kiosk stuck in "connecting" forever.
+  const agentReady =
+    agentState === "listening" ||
+    agentState === "thinking" ||
+    agentState === "speaking" ||
+    agentState === "idle" ||
+    agentState === "pre-connect-buffering";
+  const isAgentInitializing = isConnected && !agentReady;
   // Dramatically amplify the scaling and opacity for the visual pulse effect
   const pulseScale = isThinking
     ? 1.05
@@ -190,8 +196,14 @@ export function KioskView() {
     }
     setIsConnecting(true);
     try {
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Connection timeout")), 30000)
+      // start() resolves once the room connects; agent join can take longer.
+      // Generous ceiling so slow token/room join on the Pi does not fake-fail
+      // while the session is still coming up.
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Connection timeout")),
+          90_000,
+        ),
       );
       await Promise.race([startSession(), timeoutPromise]);
     } catch (e) {
@@ -200,12 +212,19 @@ export function KioskView() {
     }
   }, [isConnected, startSession, end]);
 
-  // Auto-dismiss morphing button once agent is fully ready
+  // Auto-dismiss morphing button once room is up and agent is usable
   useEffect(() => {
     if (isConnected && !isAgentInitializing && isConnecting) {
       setIsConnecting(false);
     }
   }, [isConnected, isAgentInitializing, isConnecting]);
+
+  // Clear connecting UI if the session ends (failed / idle disconnect)
+  useEffect(() => {
+    if (!isConnected && isConnecting) {
+      setIsConnecting(false);
+    }
+  }, [isConnected, isConnecting]);
 
   const latestTranscription = transcriptions[transcriptions.length - 1];
   const [stagingText, setStagingText] = useState("");

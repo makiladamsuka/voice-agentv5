@@ -624,7 +624,11 @@ def main():
             daemon=True,
             name="EmotionEngine",
         ),
-        threading.Thread(target=EyeRenderer(bb).run, daemon=True, name="EyeRenderer"),
+        threading.Thread(
+            target=EyeRenderer(bb, config_path=config_path).run,
+            daemon=True,
+            name="EyeRenderer",
+        ),
     ]
     face_greeting_cfg = cfg.get("face_greeting", {}) or {}
     if face_greeting_cfg.get("enabled", True):
@@ -741,7 +745,7 @@ def main():
         voice_thread = threading.Thread(
             target=run_voice_service,
             kwargs={"bb": bb, "devmode": voice_devmode},
-            daemon=False,
+            daemon=True,  # allow process exit if LiveKit aclose hangs on Ctrl+C
             name="VoiceService",
         )
         threads.append(voice_thread)
@@ -794,7 +798,13 @@ def main():
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         print("\nShutting down...")
-        bb.write(base_step_ready=False, running=False)
+        bb.write(
+            base_step_ready=False,
+            running=False,
+            voice_session_active=False,
+            agent_speaking=False,
+            user_speaking=False,
+        )
         if link is not None and link.connected:
             _shutdown_home_base(
                 link,
@@ -804,9 +814,13 @@ def main():
                 base_cfg=base_cfg,
             )
         if voice_thread is not None and voice_thread.is_alive():
-            voice_thread.join(timeout=10.0)
+            print("[Bootstrap] Waiting for LiveKit VoiceService to stop...")
+            voice_thread.join(timeout=8.0)
             if voice_thread.is_alive():
-                print("[Bootstrap] WARNING: VoiceService shutdown timed out.")
+                print(
+                    "[Bootstrap] WARNING: VoiceService still stopping "
+                    "(daemon — will exit with process)."
+                )
         for t in worker_threads:
             if t is voice_thread:
                 continue

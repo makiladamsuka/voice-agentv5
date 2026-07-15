@@ -184,19 +184,37 @@ async def setup_local_audio(
         )
         _pump_task = asyncio.create_task(_pump_mic_stream(stream, _mic_input))
 
-        # Speaker plays via local_speaker.py; feed its DAC output into APM reverse stream.
-        if resolve_local_speaker(config_path) and _input_capture.apm is not None:
+        # Speaker plays via local_speaker.py; optionally feed DAC into APM reverse.
+        aec_reverse = True
+        try:
+            import yaml
+            with open(config_path, encoding="utf-8") as f:
+                voice_cfg = (yaml.safe_load(f) or {}).get("voice") or {}
+            if "aec_reverse" in voice_cfg:
+                aec_reverse = bool(voice_cfg["aec_reverse"])
+        except Exception:
+            pass
+        env_aec = _env_flag("VOICE_AEC_REVERSE")
+        if env_aec is not None:
+            aec_reverse = env_aec
+
+        if (
+            aec_reverse
+            and resolve_local_speaker(config_path)
+            and _input_capture.apm is not None
+        ):
             from voice.local_speaker import attach_aec
 
             attach_aec(_input_capture.apm, _input_capture.delay_estimator)
             print(
-                f"[LocalAudioIO] Backend mic + AEC @ {_DEVICE_SAMPLE_RATE} Hz "
-                "(speaker via local_speaker.py — mute browser mic and agent audio)"
+                f"[LocalAudioIO] Backend mic + AEC reverse @ {_DEVICE_SAMPLE_RATE} Hz "
+                "(speaker via local_speaker.py)"
             )
         else:
             print(
-                f"[LocalAudioIO] Backend mic active @ {_DEVICE_SAMPLE_RATE} Hz "
-                "(speaker via local_speaker.py — mute browser mic and agent audio)"
+                f"[LocalAudioIO] Backend mic @ {_DEVICE_SAMPLE_RATE} Hz "
+                f"(aec_reverse={'on' if aec_reverse else 'off'}; "
+                "speaker via local_speaker.py — mute browser mic/audio)"
             )
 
         _enabled_mic = True

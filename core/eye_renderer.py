@@ -286,11 +286,13 @@ class EyeRenderer:
         right_eye.happy_phase = left_eye.happy_phase
 
         next_blink = time.time() + random.uniform(3, 6)
-        delay = 1.0 / max(1, self.render_fps)
+        base_delay = 1.0 / max(1, self.render_fps)
+        speak_fps = max(4, min(self.render_fps, 6))
+        speak_delay = 1.0 / speak_fps
         current_emotion = "idle"
         amp_prev_fast = 0.0
         amp_smoothed = 0.0
-        print(f"[EyeRenderer] Target refresh: {self.render_fps} fps")
+        print(f"[EyeRenderer] Target refresh: {self.render_fps} fps (speak={speak_fps} fps)")
 
         while self.bb.read("running")["running"]:
             frame_start = time.perf_counter()
@@ -319,6 +321,8 @@ class EyeRenderer:
                 or state.get("conv_state") in ("speaking", "nodding")
                 or amp_smoothed > 0.06
             )
+            # While speaking: barely spin this thread (SPI already skipped)
+            delay = 0.20 if talk_active else base_delay
 
             if emotion != current_emotion:
                 left_eye.set_emotion(emotion, intensity)
@@ -373,12 +377,15 @@ class EyeRenderer:
 
             if disp_l is not None or disp_r is not None:
                 try:
-                    bg_l = Image.new("RGBA", (SCREEN_WIDTH, SCREEN_HEIGHT), (*BG_COLOR, 255))
-                    bg_r = Image.new("RGBA", (SCREEN_WIDTH, SCREEN_HEIGHT), (*BG_COLOR, 255))
-                    left_eye.draw(bg_l, eye_color)
-                    right_eye.draw(bg_r, eye_color)
-                    if disp_l: disp_l.image(bg_l.convert("RGB"))
-                    if disp_r: disp_r.image(bg_r.convert("RGB"))
+                    # Skip ST7735 SPI while TTS plays — PipeWire/ALSA underruns often
+                    # tracked to concurrent 24 Mbaud eye blits, not CPU%.
+                    if not talk_active:
+                        bg_l = Image.new("RGBA", (SCREEN_WIDTH, SCREEN_HEIGHT), (*BG_COLOR, 255))
+                        bg_r = Image.new("RGBA", (SCREEN_WIDTH, SCREEN_HEIGHT), (*BG_COLOR, 255))
+                        left_eye.draw(bg_l, eye_color)
+                        right_eye.draw(bg_r, eye_color)
+                        if disp_l: disp_l.image(bg_l.convert("RGB"))
+                        if disp_r: disp_r.image(bg_r.convert("RGB"))
                 except Exception as e:
                     print(f"[EyeRenderer] Display error: {e}")
 

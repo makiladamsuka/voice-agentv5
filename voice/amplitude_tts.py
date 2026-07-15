@@ -139,11 +139,16 @@ def _ensure_pacer() -> None:
             pass
 
 
-def drain_to_zero() -> None:
-    """Called when speech ends — clear buffer and decay signals."""
+def drain_to_zero(*, interrupt: bool = False) -> None:
+    """Decay amplitude signals when speech ends.
+
+    Do NOT wipe LocalSpeaker on normal listen/idle — that chops the last
+    syllables after a synthetic playback-finished timer. Only hard-drain
+    the speaker on interrupt.
+    """
     global _ampl_fast, _ampl_slow, _audio_buffer
     _audio_buffer.clear()
-    if local_speaker_enabled():
+    if interrupt and local_speaker_enabled():
         drain_local_speaker()
     _ampl_fast = 0.0
     _ampl_slow = 0.0

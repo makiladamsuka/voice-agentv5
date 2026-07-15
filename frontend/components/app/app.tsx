@@ -44,10 +44,12 @@ export function App({ appConfig }: AppProps) {
       : TokenSource.endpoint("/api/connection-details");
   }, [appConfig]);
 
-  const session = useSession(
-    tokenSource,
-    appConfig.agentName ? { agentName: appConfig.agentName } : undefined,
-  );
+  // Pi kiosk agent can take well over the LiveKit default (20s) to join +
+  // finish initializing while CPU is busy — avoid marking failed too early.
+  const session = useSession(tokenSource, {
+    ...(appConfig.agentName ? { agentName: appConfig.agentName } : {}),
+    agentConnectTimeoutMilliseconds: 90_000,
+  });
 
   return (
     <SessionProvider session={session}>

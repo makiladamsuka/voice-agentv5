@@ -342,8 +342,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         print(f"[VoiceService] Early room connect failed (session.start will retry): {exc}")
 
     llm_model = os.getenv("OPENROUTER_MODEL", "openrouter/auto").strip() or "openrouter/auto"
-    max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS", "1024"))
-    endpointing_ms = int(os.getenv("VOICE_ENDPOINTING_MS", "400"))
+    max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS", "256"))
+    endpointing_ms = int(os.getenv("VOICE_ENDPOINTING_MS", "250"))
     use_local_vad = os.getenv("VOICE_USE_LOCAL_VAD", "").strip().lower() in ("1", "true", "yes")
     print(
         f"[VoiceService] LLM: {llm_model} (max_tokens={max_tokens}); "
@@ -373,9 +373,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             print(f"[VoiceService] Event DB load failed: {exc}")
             event_db = None
 
+    # Tighter defaults on Pi: less dead-air before the agent starts answering
+    endpoint_min = float(os.getenv("VOICE_ENDPOINT_MIN_DELAY", "0.25"))
+    endpoint_max = float(os.getenv("VOICE_ENDPOINT_MAX_DELAY", "1.5"))
     turn_handling = agents.TurnHandlingOptions(
         turn_detection="vad" if use_local_vad else "stt",
-        endpointing={"min_delay": 0.4, "max_delay": 2.5},
+        endpointing={"min_delay": endpoint_min, "max_delay": endpoint_max},
         interruption={"enabled": True},
     )
 
@@ -501,7 +504,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             if _bb is not None:
                 _bb.write(agent_speaking=True)
         elif ev.new_state in ("listening", "idle"):
-            drain_to_zero()
+            # Decay eye amplitude only — do not drain LocalSpeaker (chops TTS tail)
+            drain_to_zero(interrupt=False)
             _set_conv_state("waiting")
             write_speaking_flag(False)
             if _bb is not None:
@@ -653,11 +657,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 logger = logging.getLogger(__name__)
 
 
-async def _graceful_voice_shutdown(server: AgentServer, bb: "Blackboard") -> None:
-    """Drain active voice session and worker before closing the asyncio loop."""
+async def _force_voice_shutdown(server: AgentServer, bb: "Blackboard") -> None:
+    """Tear down LiveKit fast on Ctrl+C — skip long drain/reconnect loops."""
     global _active_session
 
-    print("[VoiceService] Shutting down...")
+    print("[VoiceService] Shutting down LiveKit...")
     if _bb is not None:
         _bb.write(
             voice_session_active=False,
@@ -670,17 +674,23 @@ async def _graceful_voice_shutdown(server: AgentServer, bb: "Blackboard") -> Non
         )
 
     session = _active_session
+    _active_session = None
     if session is not None:
+        # Skip session.drain() — it waits on network while signal is already dying
         with contextlib.suppress(Exception):
-            await asyncio.wait_for(session.drain(), timeout=4.0)
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(session.aclose(), timeout=4.0)
-        _active_session = None
+            await asyncio.wait_for(session.aclose(), timeout=2.0)
 
-    with contextlib.suppress(asyncio.TimeoutError):
-        await asyncio.wait_for(server.drain(timeout=15), timeout=8.0)
+    # server.drain() waits for jobs (and reconnect attempts) — too slow for Ctrl+C
     with contextlib.suppress(Exception):
-        await server.aclose()
+        await asyncio.wait_for(server.aclose(), timeout=5.0)
+
+    from voice.local_audio_io import shutdown_local_audio
+
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(shutdown_local_audio(), timeout=2.0)
+    if _bb is not None:
+        with contextlib.suppress(Exception):
+            _bb.write(local_mic_active=False)
 
 
 async def _run_voice_worker(
@@ -692,17 +702,18 @@ async def _run_voice_worker(
     run_task = asyncio.create_task(server.run(devmode=devmode))
     try:
         while bb.read("running")["running"] and not run_task.done():
-            await asyncio.sleep(0.2)
-
+            await asyncio.sleep(0.1)
+    finally:
+        # Always force-close LiveKit when running flag clears or run crashes
+        with contextlib.suppress(Exception):
+            await _force_voice_shutdown(server, bb)
         if not run_task.done():
-            await _graceful_voice_shutdown(server, bb)
-            await asyncio.wait_for(run_task, timeout=10.0)
-        else:
-            run_task.result()
-    except asyncio.TimeoutError:
-        logger.warning("[VoiceService] worker shutdown timed out")
-    except Exception:
-        logger.exception("[VoiceService] worker failed")
+            run_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(run_task, timeout=3.0)
+        elif not run_task.cancelled():
+            with contextlib.suppress(Exception):
+                run_task.result()
 
 
 def run_voice_service(bb: "Blackboard", *, devmode: bool = True) -> None:

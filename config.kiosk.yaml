@@ -383,7 +383,11 @@ surroundings_emotion:
 voice:
   enabled: true
   local_speaker: true        # play TTS on Pi speakers (set NEXT_PUBLIC_LOCAL_SPEAKER=true in frontend)
-  local_mic: true            # capture mic on Pi with AEC (frontend disables browser mic)
+  local_mic: true            # capture mic on Pi (frontend disables browser mic)
+  aec_reverse: false         # reverse-stream AEC fought speaker timing; keep mic NS/AGC
+  speaker_device: headphones # ALSA jack — avoid PipeWire "default" resampling
+  speaker_blocksize: 2048
+  speaker_latency: high
 
 # Lower loop rates while LiveKit mic session is active (reduces audio jitter on Pi)
 voice_profile:
@@ -399,12 +403,12 @@ voice_profile:
   viz_pose_voice_hz: 0
 
 talk_gesture:
-  enabled: true              # arm motion during TTS competes with audio on Pi
-  pose_duration: 0.4         # Seconds to transition between poses
-  poll_interval: 0.08        # 12.5 Hz arm updates (was 50 Hz — reduces jitter during TTS)
-  vertical_speed: 0.5        # Speed multiplier for a0, a1 (shoulder/elbow up/down) - SLOWER for more graceful talking gestures
-  horizontal_speed: 0.5      # Speed multiplier for a2, a3 (wrist/hand swap side-to-side) - reduced from 1.5 to prevent frame skipping in bye animations
-  smoothness: 5.0         
+  enabled: false             # OFF during TTS isolation — primary serial/GIL jitter source
+  pose_duration: 0.4
+  poll_interval: 0.08
+  vertical_speed: 0.5
+  horizontal_speed: 0.5
+  smoothness: 5.0
   
 proximity:
   enabled: true

@@ -199,19 +199,20 @@ class TalkGestureService:
         
         target = [target_pose["a0"], target_pose["a1"], target_pose["a2"], target_pose["a3"]]
         
-        poll_interval = 0.01  # 50 Hz
+        # Honor configured poll_interval (kiosk: ~0.08s). Hardcoding 0.01 caused
+        # 50 Hz Blackboard + serial storms during TTS and competed with LocalSpeaker.
+        poll_interval = max(0.02, float(self.poll_interval))
         start_time = time.time()
-        ticks = 0
-        
+
         while True:
             elapsed = time.time() - start_time
-            
-            # Check speaking flag every single tick (in-memory, extremely fast)
+
+            # Check speaking flag every tick (in-memory)
             if check_speaking:
                 bb_state = self.bb.read("agent_speaking")
                 if not bb_state.get("agent_speaking", False):
                     break
-            
+
             if wait_until_reached:
                 err = sum(abs(pos[i] - target[i]) for i in range(4))
                 if err < 1.0 or elapsed > 5.0:  # Timeout after 5s
@@ -219,13 +220,13 @@ class TalkGestureService:
             else:
                 if elapsed >= duration:
                     break
-            
+
             # Tick each axis using elastic_head_motion physics
             pos[0], self._vel[0] = tick_toward(pos[0], self._vel[0], target[0], poll_interval, lo=0.0, hi=180.0, params=self._params_vert)
             pos[1], self._vel[1] = tick_toward(pos[1], self._vel[1], target[1], poll_interval, lo=0.0, hi=180.0, params=self._params_vert)
             pos[2], self._vel[2] = tick_toward(pos[2], self._vel[2], target[2], poll_interval, lo=0.0, hi=180.0, params=self._params_horiz)
             pos[3], self._vel[3] = tick_toward(pos[3], self._vel[3], target[3], poll_interval, lo=0.0, hi=180.0, params=self._params_horiz)
-            
+
             # Write interpolated position
             self.bb.write(
                 arm_a0=pos[0],
@@ -233,7 +234,7 @@ class TalkGestureService:
                 arm_a2=pos[2],
                 arm_a3=pos[3],
             )
-            
+
             time.sleep(poll_interval)
 
     def run(self) -> None:

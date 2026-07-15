@@ -272,6 +272,8 @@ class FaceTracker:
 
     def _init_camera(self):
         try:
+            import logging
+            logging.getLogger("picamera2").setLevel(logging.WARNING)
             from picamera2 import Picamera2
             cam = Picamera2()
             if self.full_sensor_fov:

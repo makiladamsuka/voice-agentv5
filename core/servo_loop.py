@@ -1054,9 +1054,9 @@ class ServoLoop:
             return "wander"
 
         # Aim pan toward last-seen world yaw
-        world_yaw = state["base_world_yaw_deg"]
-        yaw_err = angular_error_deg(last_yaw, world_yaw)
-        pan_step = clamp(yaw_err * self.lss_track_gain, -self.lss_max_step, self.lss_max_step)
+        camera_yaw = state["base_world_yaw_deg"] + self._pan_mech_offset()
+        yaw_err = angular_error_deg(last_yaw, camera_yaw)
+        pan_step = clamp(yaw_err * self.lss_track_gain * -self.pan_sign, -self.lss_max_step, self.lss_max_step)
         pan_target = clamp(self._pan + pan_step, self.pan_min, self.pan_max)
         self._pan = smooth_toward(self._pan, pan_target, dt, smooth_hz=self.pan_smooth_hz, lo=self.pan_min, hi=self.pan_max)
 

@@ -70,7 +70,7 @@ person_memory:
 
 last_seen_search:
   enabled: true
-  edge_norm: 0.40              # face/body near frame edge → remember exit direction
+  edge_norm: 0.0               # 0.0 = ALWAYS remember exit direction (not just at edge)
   timeout_sec: 5.0             # search last-seen bearing until this (then memory/wander)
   track_gain: 0.65
   max_pan_step_deg: 8.0

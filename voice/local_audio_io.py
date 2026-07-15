@@ -29,6 +29,9 @@ _input_capture = None
 _output_player = None
 _mic_input: LocalMicAudioInput | None = None
 _pump_task: asyncio.Task | None = None
+# Soft echo gate while agent speaks (peak level ~0..1)
+_echo_gate_rms = 0.035
+_agent_speaking = False  # set from VoiceService — never read Blackboard per-frame
 
 
 class LocalMicAudioInput(io.AudioInput):
@@ -36,14 +39,24 @@ class LocalMicAudioInput(io.AudioInput):
 
     def __init__(self) -> None:
         super().__init__(label="LocalMic")
-        self._audio_ch: aio.Chan[rtc.AudioFrame] = aio.Chan()
+        # Bounded channel — drop oldest on overflow instead of crashing the capture path.
+        self._audio_ch: aio.Chan[rtc.AudioFrame] = aio.Chan(maxsize=128)
         self._attached = True
 
     def push_frame(self, frame: rtc.AudioFrame) -> None:
         if not self._attached:
             return
-        with contextlib.suppress(Exception):
+        # Soft gate: while agent TTS plays, drop quiet frames (speaker bleed)
+        # but keep loud frames so the user can still interrupt — no mic mute.
+        if _should_drop_echo_frame(frame):
+            return
+        try:
             self._audio_ch.send_nowait(frame)
+        except Exception:
+            with contextlib.suppress(Exception):
+                self._audio_ch.recv_nowait()
+            with contextlib.suppress(Exception):
+                self._audio_ch.send_nowait(frame)
 
     async def __anext__(self) -> rtc.AudioFrame:
         return await self._audio_ch.__anext__()
@@ -53,6 +66,42 @@ class LocalMicAudioInput(io.AudioInput):
 
     def on_detached(self) -> None:
         self._attached = False
+
+
+def _frame_peak_norm(frame: rtc.AudioFrame) -> float:
+    """Cheap peak level (subsampled) — safe to run on every mic frame."""
+    try:
+        data = memoryview(frame.data).cast("h")
+    except Exception:
+        return 0.0
+    if not data:
+        return 0.0
+    peak = 0
+    for i in range(0, len(data), 8):
+        v = abs(int(data[i]))
+        if v > peak:
+            peak = v
+    return peak / 32768.0
+
+
+def _should_drop_echo_frame(frame: rtc.AudioFrame) -> bool:
+    """True when agent is speaking and mic energy looks like TTS bleed."""
+    if _echo_gate_rms <= 0 or not _agent_speaking:
+        return False
+    return _frame_peak_norm(frame) < _echo_gate_rms
+
+
+def set_agent_speaking(speaking: bool) -> None:
+    """Called from VoiceService on agent_state_changed — O(1), no I/O."""
+    global _agent_speaking
+    _agent_speaking = bool(speaking)
+
+
+def set_echo_gate(*, bb=None, rms_threshold: float | None = None) -> None:
+    global _echo_gate_rms
+    # bb kept for API compat; we no longer read Blackboard per mic frame.
+    if rms_threshold is not None:
+        _echo_gate_rms = max(0.0, float(rms_threshold))
 
 
 def _env_flag(name: str) -> bool | None:
@@ -186,17 +235,25 @@ async def setup_local_audio(
 
         # Speaker plays via local_speaker.py; optionally feed DAC into APM reverse.
         aec_reverse = True
+        echo_gate = _echo_gate_rms
         try:
             import yaml
             with open(config_path, encoding="utf-8") as f:
                 voice_cfg = (yaml.safe_load(f) or {}).get("voice") or {}
             if "aec_reverse" in voice_cfg:
                 aec_reverse = bool(voice_cfg["aec_reverse"])
+            if "echo_gate_rms" in voice_cfg:
+                echo_gate = float(voice_cfg["echo_gate_rms"])
         except Exception:
             pass
         env_aec = _env_flag("VOICE_AEC_REVERSE")
         if env_aec is not None:
             aec_reverse = env_aec
+        env_gate = os.getenv("VOICE_ECHO_GATE_RMS", "").strip()
+        if env_gate:
+            with contextlib.suppress(ValueError):
+                echo_gate = float(env_gate)
+        set_echo_gate(rms_threshold=echo_gate)
 
         if (
             aec_reverse
@@ -208,12 +265,13 @@ async def setup_local_audio(
             attach_aec(_input_capture.apm, _input_capture.delay_estimator)
             print(
                 f"[LocalAudioIO] Backend mic + AEC reverse @ {_DEVICE_SAMPLE_RATE} Hz "
-                "(speaker via local_speaker.py)"
+                f"(speaker via local_speaker.py; echo_gate_rms={echo_gate})"
             )
         else:
             print(
                 f"[LocalAudioIO] Backend mic @ {_DEVICE_SAMPLE_RATE} Hz "
                 f"(aec_reverse={'on' if aec_reverse else 'off'}; "
+                f"echo_gate_rms={echo_gate}; "
                 "speaker via local_speaker.py — mute browser mic/audio)"
             )
 

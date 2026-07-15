@@ -148,6 +148,7 @@ def _set_conv_state(state: str) -> None:
 class CampusAgent(Agent, TimeTools, SearchTools, AppearanceTools):
     def __init__(self, image_server: MediaServer | None, event_db=None):
         from voice.prompt import SYSTEM_INSTRUCTIONS
+        import datetime as _dt
 
         assets_dir = APP_DIR / "assets"
         self.image_manager = ImageManager(assets_dir)
@@ -165,7 +166,13 @@ class CampusAgent(Agent, TimeTools, SearchTools, AppearanceTools):
             map_navigator=self.map_navigator,
             wayfinder=self.wayfinder,
         )
-        super().__init__(instructions=SYSTEM_INSTRUCTIONS)
+        now = _dt.datetime.now().strftime("%I:%M %p on %A, %B %d")
+        instructions = (
+            f"{SYSTEM_INSTRUCTIONS}\n\n"
+            f"## CURRENT LOCAL TIME\n"
+            f"* Right now it is {now}. Answer time questions from this without calling get_time."
+        )
+        super().__init__(instructions=instructions)
 
     @function_tool
     async def list_available_events(
@@ -341,12 +348,44 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     except Exception as exc:
         print(f"[VoiceService] Early room connect failed (session.start will retry): {exc}")
 
-    llm_model = os.getenv("OPENROUTER_MODEL", "openrouter/auto").strip() or "openrouter/auto"
-    max_tokens = int(os.getenv("OPENROUTER_MAX_TOKENS", "256"))
+    # Prefer Groq when configured — free OpenRouter routers are often 10–30s.
+    llm_provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not llm_provider:
+        llm_provider = "groq" if groq_key else "openrouter"
+    if llm_provider == "groq":
+        llm_base_url = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1").strip()
+        llm_api_key = groq_key or os.getenv("LLM_API_KEY", "")
+        llm_model = (
+            os.getenv("GROQ_MODEL")
+            or os.getenv("LLM_MODEL")
+            or "llama-3.1-8b-instant"
+        ).strip()
+    else:
+        llm_base_url = os.getenv(
+            "LLM_BASE_URL", "https://openrouter.ai/api/v1"
+        ).strip()
+        llm_api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
+        llm_model = (
+            os.getenv("LLM_MODEL")
+            or os.getenv("OPENROUTER_MODEL")
+            or "openrouter/free"
+        ).strip()
+    max_tokens = int(
+        os.getenv("LLM_MAX_TOKENS")
+        or os.getenv("OPENROUTER_MAX_TOKENS", "256")
+    )
     endpointing_ms = int(os.getenv("VOICE_ENDPOINTING_MS", "250"))
     use_local_vad = os.getenv("VOICE_USE_LOCAL_VAD", "").strip().lower() in ("1", "true", "yes")
+    use_preemptive = os.getenv("VOICE_PREEMPTIVE", "1").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    speech_gap = float(os.getenv("VOICE_MIN_SPEECH_DELAY", "0.25"))
     print(
-        f"[VoiceService] LLM: {llm_model} (max_tokens={max_tokens}); "
+        f"[VoiceService] LLM: {llm_provider}/{llm_model} "
+        f"(max_tokens={max_tokens}); "
         f"turn_detection={'vad' if use_local_vad else 'stt'}; "
         f"endpointing_ms={endpointing_ms}"
     )
@@ -374,8 +413,29 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             event_db = None
 
     # Tighter defaults on Pi: less dead-air before the agent starts answering
-    endpoint_min = float(os.getenv("VOICE_ENDPOINT_MIN_DELAY", "0.25"))
-    endpoint_max = float(os.getenv("VOICE_ENDPOINT_MAX_DELAY", "1.5"))
+    endpoint_min = float(os.getenv("VOICE_ENDPOINT_MIN_DELAY", "0.15"))
+    endpoint_max = float(os.getenv("VOICE_ENDPOINT_MAX_DELAY", "0.8"))
+    interrupt_min_dur = float(os.getenv("VOICE_INTERRUPT_MIN_DURATION", "0.75"))
+    interrupt_min_words = int(os.getenv("VOICE_INTERRUPT_MIN_WORDS", "3"))
+    aec_warmup = float(os.getenv("VOICE_AEC_WARMUP_SEC", "2.0"))
+    try:
+        import yaml as _yaml
+        _cfg_path = Path(os.environ.get("CONFIG_PATH", "") or APP_DIR / "config.yaml")
+        if not _cfg_path.is_absolute():
+            _cfg_path = APP_DIR / _cfg_path
+        if _cfg_path.is_file():
+            _voice = (_yaml.safe_load(_cfg_path.read_text(encoding="utf-8")) or {}).get(
+                "voice"
+            ) or {}
+            if "interrupt_min_duration" in _voice:
+                interrupt_min_dur = float(_voice["interrupt_min_duration"])
+            if "interrupt_min_words" in _voice:
+                interrupt_min_words = int(_voice["interrupt_min_words"])
+            if "aec_warmup_sec" in _voice:
+                aec_warmup = float(_voice["aec_warmup_sec"])
+    except Exception:
+        pass
+
     turn_handling = agents.TurnHandlingOptions(
         turn_detection="vad" if use_local_vad else "stt",
         endpointing={"min_delay": endpoint_min, "max_delay": endpoint_max},
@@ -384,6 +444,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             # LocalSpeaker cannot pause/resume — disable resume to avoid overlap
             "resume_false_interruption": False,
             "discard_audio_if_uninterruptible": True,
+            # Real barge-in only: ignore short TTS echo that STT hears back
+            "min_duration": interrupt_min_dur,
+            "min_words": interrupt_min_words,
         },
     )
 
@@ -393,8 +456,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         tts=AmplitudeTTS(model="aura-2-luna-en", bb=_bb),
         vad=vad,
         llm=openai.LLM(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=os.getenv("OPENROUTER_API_KEY"),
+            base_url=llm_base_url,
+            api_key=llm_api_key,
             model=llm_model,
             max_completion_tokens=max_tokens,
         ),
@@ -403,9 +466,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             "filter_emoji",
             filter_leaked_tool_syntax,
         ],
-        preemptive_generation=False,
-        min_consecutive_speech_delay=0.7,
-        aec_warmup_duration=0.0,
+        # Overlap STT end-of-turn with LLM/TTS when enabled (big latency win).
+        preemptive_generation=use_preemptive,
+        min_consecutive_speech_delay=speech_gap,
+        # Ignore echo barges right after agent starts speaking (Gemini/Live-like).
+        aec_warmup_duration=aec_warmup if aec_warmup > 0 else None,
     )
 
     agent = CampusAgent(image_server, event_db)
@@ -461,7 +526,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
             async def _handle_event_focus() -> None:
                 session.interrupt(force=True)
-                await session.generate_reply(user_input=intro)
+                session.generate_reply(user_input=intro)
 
             asyncio.create_task(_handle_event_focus())
         except Exception as exc:
@@ -511,9 +576,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     @session.on("agent_state_changed")
     def on_agent_state_changed(ev):
+        from voice.local_audio_io import set_agent_speaking
+
         if ev.new_state == "speaking":
             _set_conv_state("speaking")
             write_speaking_flag(True)
+            set_agent_speaking(True)
             if _bb is not None:
                 _bb.write(agent_speaking=True)
         elif ev.new_state in ("listening", "idle"):
@@ -521,6 +589,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             drain_to_zero(interrupt=False)
             _set_conv_state("waiting")
             write_speaking_flag(False)
+            set_agent_speaking(False)
             if _bb is not None:
                 _bb.write(agent_speaking=False)
 
@@ -550,8 +619,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         resolve_local_speaker,
         setup_local_audio,
         shutdown_local_audio,
+        set_echo_gate,
     )
     from voice.local_speaker import create_audio_output
+
+    set_echo_gate(bb=_bb)
 
     mic_input = None
     use_local_mic = False

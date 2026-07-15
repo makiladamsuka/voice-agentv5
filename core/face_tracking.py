@@ -136,6 +136,10 @@ class FaceTracker:
         prox = _cfg(cfg, "proximity", default={}) or {}
         inv = _cfg(prox, "investigate", default={}) or {}
 
+        servo = _cfg(cfg, "servo", default={}) or {}
+        self.servo_pan_center = float(servo.get("pan_center", 100.0))
+        self.servo_pan_sign = float(servo.get("pan_sign", -1.0))
+
         self.face_model = str(APP_DIR / _cfg(cam, "face_model_path", default="face_detection_yunet_2023mar.onnx"))
         self.main_res = tuple(_cfg(cam, "main_res", default=[1920, 1080]))
         self.detect_res = tuple(_cfg(cam, "detect_res", default=[1280, 720]))
@@ -367,8 +371,8 @@ class FaceTracker:
         state = self.bb.read("base_world_yaw_deg", "servo_pan")
         world_yaw = state["base_world_yaw_deg"]
         pan = state["servo_pan"]
-        # Approximate mechanical pan offset: centre of servo range ≈ 0°
-        pan_mech = pan - 80.0  # rough estimate; servo_loop publishes exact value
+        # Calculate mechanical pan offset properly using servo config
+        pan_mech = (pan - self.servo_pan_center) * self.servo_pan_sign
         self._person_memory.observe(
             norm_x=norm_x,
             norm_y=norm_y,
@@ -450,7 +454,7 @@ class FaceTracker:
             norm_x=face_norm_x,
             norm_y=face_norm_y,
             base_world_yaw_deg=float(state["base_world_yaw_deg"]),
-            pan_mech_deg=float(state["servo_pan"]) - 80.0,
+            pan_mech_deg=(float(state["servo_pan"]) - self.servo_pan_center) * self.servo_pan_sign,
             kind="face",
             confidence=self.pm_face_conf,
             source="prox_verify",

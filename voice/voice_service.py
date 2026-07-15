@@ -379,7 +379,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     turn_handling = agents.TurnHandlingOptions(
         turn_detection="vad" if use_local_vad else "stt",
         endpointing={"min_delay": endpoint_min, "max_delay": endpoint_max},
-        interruption={"enabled": True},
+        interruption={
+            "enabled": True,
+            # LocalSpeaker cannot pause/resume — disable resume to avoid overlap
+            "resume_false_interruption": False,
+            "discard_audio_if_uninterruptible": True,
+        },
     )
 
     session = AgentSession(
@@ -398,6 +403,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             "filter_emoji",
             filter_leaked_tool_syntax,
         ],
+        preemptive_generation=False,
+        min_consecutive_speech_delay=0.7,
+        aec_warmup_duration=0.0,
     )
 
     agent = CampusAgent(image_server, event_db)
@@ -450,7 +458,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 intro += f" It is {detail_str}."
             intro += f"{desc_str} Then invite them to ask follow-up questions."
             print(f"[VoiceService] Event focus received: {title} ({category})")
-            asyncio.create_task(session.generate_reply(user_input=intro))
+
+            async def _handle_event_focus() -> None:
+                session.interrupt(force=True)
+                await session.generate_reply(user_input=intro)
+
+            asyncio.create_task(_handle_event_focus())
         except Exception as exc:
             print(f"[VoiceService] event_focus handler error: {exc}")
 
@@ -607,7 +620,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                     if seq > last_seq:
                         text = str(state.get("face_greeting_text", "") or "").strip()
                         last_seq = seq
-                        if text:
+                        if text and session.agent_state != "speaking":
                             print(f"[VoiceService] Face greeting: {text!r}")
                             _bb.write(conv_emotion="happy")
                             await session.say(text, allow_interruptions=True)

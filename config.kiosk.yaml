@@ -385,8 +385,8 @@ voice:
   local_speaker: true        # play TTS on Pi speakers (set NEXT_PUBLIC_LOCAL_SPEAKER=true in frontend)
   local_mic: true            # capture mic on Pi (frontend disables browser mic)
   aec_reverse: false         # reverse-stream AEC fought speaker timing; keep mic NS/AGC
-  speaker_device: headphones # ALSA jack — avoid PipeWire "default" resampling
-  speaker_blocksize: 2048
+  speaker_device: hdmi       # routes via Pulse/default (same path as browser HDMI)
+  speaker_blocksize: 4096    # larger blocks reduce ALSA underruns on Pi
   speaker_latency: high
 
 # Lower loop rates while LiveKit mic session is active (reduces audio jitter on Pi)

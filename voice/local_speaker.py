@@ -36,8 +36,10 @@ _BLOCK_FRAMES = 2048
 _LATENCY = "high"
 _AEC_SAMPLE_RATE = 48000
 _AEC_FRAME_SAMPLES = 480  # 10 ms @ 48 kHz
-# Soft cap on DAC staging buffer (~300 ms of int16 mono @ 24 kHz)
-_MAX_PLAY_BYTES = int(_SAMPLE_RATE * 2 * 0.30)
+# Soft cap on DAC staging buffer (~1.5 s of int16 mono @ 24 kHz — no drop-oldest)
+_MAX_PLAY_BYTES = int(_SAMPLE_RATE * 2 * 1.5)
+# Hold ~150 ms before first samples hit DAC (avoids clipped first words)
+_PREFILL_BYTES = int(_SAMPLE_RATE * 2 * 0.15)
 _PORTAUDIO_LATENCY_FUDGE_SEC = 0.12
 _OUTPUT_DEVICE = None  # sounddevice device index or None=default
 _OUTPUT_DEVICE_NAME = ""
@@ -49,12 +51,13 @@ _running = False
 _stream = None
 _writer: Optional[threading.Thread] = None
 _aec_worker: Optional[threading.Thread] = None
-_pcm_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=256)
+_pcm_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=0)
 _aec_queue: queue.Queue[tuple[bytes, float] | None] = queue.Queue(maxsize=64)
 _play_buffer = bytearray()
 _buf_lock = threading.Lock()
 _lock = threading.Lock()
 _drop_newest_count = 0
+_prefill_armed = False
 
 
 def is_enabled() -> bool:
@@ -157,13 +160,25 @@ def _load_speaker_settings() -> None:
 
 
 def _pick_output_device(prefer: str) -> tuple[int | None, str]:
-    """Prefer jack headphones over PipeWire 'default' (resampling jitter)."""
+    """Prefer jack headphones over PipeWire 'default' (resampling jitter).
+
+    When ``prefer`` is ``hdmi``, route via Pulse/default (same path as browser)
+    instead of raw ALSA hw — direct HDMI hw underruns on Pi under CPU load.
+    """
     try:
         import sounddevice as sd
     except ImportError:
         return None, "default"
     devices = sd.query_devices()
     prefer = (prefer or "headphones").lower()
+    if prefer == "hdmi":
+        for i, d in enumerate(devices):
+            if int(d.get("max_output_channels") or 0) <= 0:
+                continue
+            name = str(d.get("name") or "")
+            low = name.lower()
+            if low in ("default", "pulse") or "pipewire" in low:
+                return i, name
     scored: list[tuple[int, int, str]] = []
     for i, d in enumerate(devices):
         if int(d.get("max_output_channels") or 0) <= 0:
@@ -171,15 +186,18 @@ def _pick_output_device(prefer: str) -> tuple[int | None, str]:
         name = str(d.get("name") or "")
         low = name.lower()
         score = 0
-        if prefer in low or (prefer == "headphones" and "headphone" in low):
+        if prefer == "hdmi" or "hdmi" in prefer:
+            if "hdmi" in low:
+                score += 100
+        elif prefer in low or (prefer == "headphones" and "headphone" in low):
             score += 100
         if "bcm2835 headphones" in low:
             score += 50
-        if "headphones" in low:
+        if "headphones" in low and prefer != "hdmi" and "hdmi" not in prefer:
             score += 40
         if low in ("default", "pulse") or "pipewire" in low:
             score -= 50
-        if "hdmi" in low:
+        if "hdmi" in low and prefer != "hdmi" and "hdmi" not in prefer:
             score -= 20
         scored.append((score, i, name))
     if not scored:
@@ -220,23 +238,24 @@ def configure(*, enabled: bool, sample_rate: int = _SAMPLE_RATE) -> bool:
 
 
 def write_pcm(data: bytes) -> None:
-    """Queue 16-bit mono PCM (e.g. 24 kHz from Deepgram TTS). Non-blocking."""
+    """Queue 16-bit mono PCM (e.g. 24 kHz from Deepgram TTS)."""
     global _drop_newest_count
     if not _enabled or not data:
         return
     try:
-        _pcm_queue.put_nowait(data)
+        _pcm_queue.put(data, timeout=0.1)
     except queue.Full:
-        # Drop newest (keep older continuity) — count for diagnostics
         _drop_newest_count += 1
         if _drop_newest_count % 25 == 1:
-            print(f"[LocalSpeaker] PCM queue full — dropped newest ({_drop_newest_count})")
+            print(f"[LocalSpeaker] PCM queue full — blocked ({_drop_newest_count})")
 
 
 def drain() -> None:
     """Hard-flush queued speaker audio (interrupt / clear only)."""
+    global _prefill_armed
     if not _enabled:
         return
+    _prefill_armed = False
     while True:
         try:
             _pcm_queue.get_nowait()
@@ -278,6 +297,19 @@ class LocalSpeakerAudioOutput(AudioOutput):
         self._pushed_duration += frame.duration
         if not self._started_playback:
             self._started_playback = True
+            loop = asyncio.get_event_loop()
+            loop.create_task(self._notify_playback_started())
+
+    async def _notify_playback_started(self) -> None:
+        """Wait for prefill before telling LiveKit playback started."""
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            if self._interrupted:
+                return
+            if buffered_seconds() >= (_PREFILL_BYTES / float(_SAMPLE_RATE * _CHANNELS * 2)):
+                break
+            await asyncio.sleep(0.01)
+        if not self._interrupted:
             self.on_playback_started(created_at=time.time())
 
     def flush(self) -> None:
@@ -356,15 +388,22 @@ def _process_aec_pcm(pcm_24k: bytes, output_delay: float) -> None:
 
 def _audio_callback(outdata, frames, time_info, _status) -> None:
     """Realtime callback: memcpy only. AEC is queued for the worker."""
+    global _prefill_armed
     bytes_needed = frames * _CHANNELS * 2
     with _buf_lock:
-        if len(_play_buffer) >= bytes_needed:
+        if not _prefill_armed and len(_play_buffer) < _PREFILL_BYTES:
+            chunk = b"\x00" * bytes_needed
+        elif len(_play_buffer) >= bytes_needed:
             chunk = bytes(_play_buffer[:bytes_needed])
             del _play_buffer[:bytes_needed]
+            if len(_play_buffer) >= _PREFILL_BYTES:
+                _prefill_armed = True
         elif _play_buffer:
             avail = len(_play_buffer)
             chunk = bytes(_play_buffer) + (b"\x00" * (bytes_needed - avail))
             _play_buffer.clear()
+            if avail >= _PREFILL_BYTES:
+                _prefill_armed = True
         else:
             chunk = b"\x00" * bytes_needed
     outdata[:bytes_needed] = chunk
@@ -398,7 +437,7 @@ def _aec_loop() -> None:
 
 
 def _start(sample_rate: int) -> None:
-    global _running, _stream, _writer, _aec_worker, _SAMPLE_RATE, _drop_newest_count
+    global _running, _stream, _writer, _aec_worker, _SAMPLE_RATE, _drop_newest_count, _prefill_armed
     if _running:
         return
     try:
@@ -412,6 +451,7 @@ def _start(sample_rate: int) -> None:
 
     _SAMPLE_RATE = sample_rate
     _drop_newest_count = 0
+    _prefill_armed = False
     device = _OUTPUT_DEVICE
     label = _OUTPUT_DEVICE_NAME or "default"
     print(
@@ -479,12 +519,4 @@ def _writer_loop() -> None:
         if chunk is None:
             break
         with _buf_lock:
-            room = _MAX_PLAY_BYTES - len(_play_buffer)
-            if room <= 0:
-                # Cap staging delay — drop oldest buffered audio to make room
-                drop = min(len(chunk), len(_play_buffer))
-                if drop > 0:
-                    del _play_buffer[:drop]
-                room = _MAX_PLAY_BYTES - len(_play_buffer)
-            if room > 0:
-                _play_buffer.extend(chunk[:room])
+            _play_buffer.extend(chunk)

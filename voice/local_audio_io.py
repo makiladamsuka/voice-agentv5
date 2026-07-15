@@ -170,7 +170,7 @@ async def setup_local_audio(
             noise_suppression=True,
             high_pass_filter=True,
             auto_gain_control=True,
-            queue_capacity=200,
+            queue_capacity=400,
         )
         _mic_input = LocalMicAudioInput()
         track = rtc.LocalAudioTrack.create_audio_track(

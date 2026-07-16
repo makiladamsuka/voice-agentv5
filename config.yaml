@@ -376,6 +376,11 @@ surroundings_emotion:
 
 voice:
   enabled: true
+  # NLU mode: set to true to use the Browser VAD + FastAPI NLU pipeline
+  # instead of LiveKit. The Python backend will listen on nlu_port for
+  # WebSocket connections from the Next.js frontend.
+  nlu_mode: false     # ← set to true to activate
+  nlu_port: 8765
 
 talk_gesture:
   enabled: true              # Auto-enabled when voice + arms are both enabled

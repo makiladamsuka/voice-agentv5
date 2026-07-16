@@ -740,7 +740,7 @@ def main():
             )
         )
 
-    # ── Phase 3: Voice / LiveKit Agent (Optional) ───────────────────────────
+    # ── Phase 3: Voice Backend (LiveKit OR NLU Server) ───────────────────────
     voice_cfg = cfg.get("voice", {}) or {}
     voice_devmode = voice_cfg.get("devmode", True)
     if len(sys.argv) > 1 and sys.argv[1] == "start":
@@ -748,17 +748,38 @@ def main():
     elif len(sys.argv) > 1 and sys.argv[1] == "dev":
         voice_devmode = True
 
+    # NLU mode: replaces LiveKit with a lightweight FastAPI WebSocket server.
+    # Enable in config.yaml under voice: { enabled: true, nlu_mode: true }
+    nlu_mode = voice_cfg.get("nlu_mode", False)
+    nlu_port = int(voice_cfg.get("nlu_port", 8765))
+
     voice_thread: threading.Thread | None = None
     if voice_cfg.get("enabled", False):
-        from voice.voice_service import run_voice_service
+        if nlu_mode:
+            from voice.nlu_server import run_nlu_server
 
-        voice_thread = threading.Thread(
-            target=run_voice_service,
-            kwargs={"bb": bb, "devmode": voice_devmode},
-            daemon=True,  # allow process exit if LiveKit aclose hangs on Ctrl+C
-            name="VoiceService",
-        )
-        threads.append(voice_thread)
+            voice_thread = threading.Thread(
+                target=run_nlu_server,
+                kwargs={"bb": bb, "port": nlu_port},
+                daemon=True,
+                name="NluServer",
+            )
+            threads.append(voice_thread)
+            print(
+                f"[Bootstrap] NLU voice mode enabled — "
+                f"WebSocket server on port {nlu_port} "
+                f"(no LiveKit, browser VAD + Deepgram STT)."
+            )
+        else:
+            from voice.voice_service import run_voice_service
+
+            voice_thread = threading.Thread(
+                target=run_voice_service,
+                kwargs={"bb": bb, "devmode": voice_devmode},
+                daemon=True,  # allow process exit if LiveKit aclose hangs on Ctrl+C
+                name="VoiceService",
+            )
+            threads.append(voice_thread)
 
         # DISABLED: TalkGestureService - only using ByeWaveService for arm movements
         # talk_cfg = cfg.get("talk_gesture", {}) or {}

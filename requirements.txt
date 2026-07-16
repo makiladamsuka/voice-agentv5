@@ -45,3 +45,8 @@ openai>=1.0.0
 
 # Local TTS speaker on Pi (apt: libportaudio2)
 sounddevice>=0.5.0
+
+# NLU Server mode (replaces LiveKit for Browser VAD pipeline)
+# pip install fastapi "uvicorn[standard]"
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0

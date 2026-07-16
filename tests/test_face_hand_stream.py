@@ -50,6 +50,7 @@ except ImportError:
     Image = None
 
 from lib.hand_detector import HandDetector, draw_skeleton
+from hardware.arduino_servo import ArduinoServoLink
 
 # ── Config loading ───────────────────────────────────────────────────────────
 
@@ -100,8 +101,19 @@ class TuneState:
         # Servo deadzones
         self.deadzone_x = float(servo.get("deadzone_x", 0.05))
         self.deadzone_y = float(servo.get("deadzone_y", 0.06))
-        self.pan_center_norm_x = float(servo.get("pan_center_norm_x", 0.05))
-        self.tilt_center_norm_y = float(servo.get("tilt_center_norm_y", 0.08))
+        self.pan_center = float(servo.get("pan_center", 100.0))
+        self.tilt_center = float(servo.get("tilt_center", 110.0))
+        self.pan_sign = float(servo.get("pan_sign", -1.0))
+        self.tilt_sign = float(servo.get("tilt_sign", 1.0))
+        self.pan_min = float(servo.get("pan_min", 20.0))
+        self.pan_max = float(servo.get("pan_max", 160.0))
+        self.tilt_min = float(servo.get("tilt_min", 40.0))
+        self.tilt_max = float(servo.get("tilt_max", 150.0))
+
+        # Servo tuning parameters
+        self.servo_enabled = False
+        self.pan_p_gain = 4.0
+        self.tilt_p_gain = 3.0
 
         # Detection toggles
         self.face_detection_enabled = True
@@ -119,6 +131,10 @@ class TuneState:
         self.track_kind = "none"
         self.fps_actual = 0.0
         self.detect_ms = 0.0
+        
+        # Read-only from servo thread
+        self.current_pan = self.pan_center
+        self.current_tilt = self.tilt_center
 
     def get(self, key: str):
         with self._lock:
@@ -397,6 +413,78 @@ class DetectionThread(threading.Thread):
             return None
 
 
+# ── Servo thread ─────────────────────────────────────────────────────────────
+
+class ServoThread(threading.Thread):
+    """Drives the Arduino servo link based on current track coordinates."""
+    
+    daemon = True
+    
+    def __init__(self, tune: TuneState, link: ArduinoServoLink | None):
+        super().__init__(name="ServoThread")
+        self.tune = tune
+        self.link = link
+        self.pan = self.tune.get("pan_center")
+        self.tilt = self.tune.get("tilt_center")
+        
+    def run(self):
+        if self.link is None or not self.link.connected:
+            print("[ServoThread] No servo link. Simulation mode only.")
+            
+        print(f"[ServoThread] Started. Initial center: pan={self.pan:.1f}, tilt={self.tilt:.1f}")
+        
+        while True:
+            time.sleep(0.04)  # ~25 Hz update rate
+            
+            if not self.tune.get("servo_enabled"):
+                continue
+                
+            track_kind = self.tune.get("track_kind")
+            if track_kind == "none":
+                continue
+                
+            if track_kind == "face":
+                norm_x = self.tune.get("face_norm_x")
+                norm_y = self.tune.get("face_norm_y")
+            elif track_kind == "hand":
+                norm_x = self.tune.get("hand_norm_x")
+                norm_y = self.tune.get("hand_norm_y")
+            else:
+                continue
+                
+            dz_x = self.tune.get("deadzone_x")
+            dz_y = self.tune.get("deadzone_y")
+            
+            error_x = 0.0
+            error_y = 0.0
+            
+            if abs(norm_x) > dz_x:
+                error_x = norm_x - (dz_x if norm_x > 0 else -dz_x)
+            if abs(norm_y) > dz_y:
+                error_y = norm_y - (dz_y if norm_y > 0 else -dz_y)
+                
+            # Basic P controller
+            p_gain = self.tune.get("pan_p_gain")
+            t_gain = self.tune.get("tilt_p_gain")
+            
+            delta_pan = error_x * p_gain * self.tune.get("pan_sign")
+            delta_tilt = error_y * t_gain * self.tune.get("tilt_sign")
+            
+            self.pan += delta_pan
+            self.tilt += delta_tilt
+            
+            # Clamp limits
+            self.pan = max(self.tune.get("pan_min"), min(self.tune.get("pan_max"), self.pan))
+            self.tilt = max(self.tune.get("tilt_min"), min(self.tune.get("tilt_max"), self.tilt))
+            
+            self.tune.set("current_pan", self.pan)
+            self.tune.set("current_tilt", self.tilt)
+            
+            if self.link is not None and self.link.connected:
+                # Use force=False so it only sends if it changed significantly
+                self.link.write_angles(self.pan, self.tilt, force=False)
+
+
 # ── Web dashboard HTML ───────────────────────────────────────────────────────
 
 DASHBOARD_HTML = """<!DOCTYPE html>
@@ -570,6 +658,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <div class="card">
       <h3>Detection</h3>
       <div class="toggle-row">
+        <input type="checkbox" id="servo_enabled">
+        <label for="servo_enabled">Enable Hardware Servos (Warning: Moves Robot)</label>
+      </div>
+      <div class="toggle-row">
         <input type="checkbox" id="face_detection_enabled" checked>
         <label for="face_detection_enabled">Face Detection (YuNet)</label>
       </div>
@@ -633,14 +725,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <span class="val" id="v_deadzone_y"></span>
       </div>
       <div class="slider-row">
-        <label>Pan Center Norm</label>
-        <input type="range" id="pan_center_norm_x" min="0" max="0.2" step="0.005">
-        <span class="val" id="v_pan_center_norm_x"></span>
+        <label>Pan Gain (Speed)</label>
+        <input type="range" id="pan_p_gain" min="0.1" max="10.0" step="0.1">
+        <span class="val" id="v_pan_p_gain"></span>
       </div>
       <div class="slider-row">
-        <label>Tilt Center Norm</label>
-        <input type="range" id="tilt_center_norm_y" min="0" max="0.2" step="0.005">
-        <span class="val" id="v_tilt_center_norm_y"></span>
+        <label>Tilt Gain (Speed)</label>
+        <input type="range" id="tilt_p_gain" min="0.1" max="10.0" step="0.1">
+        <span class="val" id="v_tilt_p_gain"></span>
       </div>
     </div>
 
@@ -654,6 +746,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <div class="stat"><span class="label">Track:</span> <span class="value" id="s_track">--</span></div>
         <div class="stat"><span class="label">Hand:</span> <span class="value" id="s_hand">--</span></div>
         <div class="stat"><span class="label">Detect ms:</span> <span class="value" id="s_detect">--</span></div>
+        <div class="stat" style="grid-column: span 2"><span class="label">Servo Cmd:</span> <span class="value" id="s_servo">--</span></div>
       </div>
     </div>
   </div>
@@ -663,9 +756,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 const SLIDERS = [
   'detect_res_w', 'detect_res_h', 'jpeg_quality', 'vision_fps',
   'stream_res_w', 'stream_res_h', 'confidence_threshold',
-  'deadzone_x', 'deadzone_y', 'pan_center_norm_x', 'tilt_center_norm_y'
+  'deadzone_x', 'deadzone_y', 'pan_p_gain', 'tilt_p_gain'
 ];
-const TOGGLES = ['face_detection_enabled', 'hand_detection_enabled'];
+const TOGGLES = ['face_detection_enabled', 'hand_detection_enabled', 'servo_enabled'];
 
 // Init: fetch state and populate UI
 async function init() {
@@ -723,6 +816,14 @@ setInterval(async () => {
     document.getElementById('s_track').textContent = s.track_kind;
     document.getElementById('s_hand').textContent = s.hand_detected ? s.hand_side : 'No';
     document.getElementById('s_detect').textContent = s.detect_ms.toFixed(1);
+    
+    if (s.servo_enabled) {
+      document.getElementById('s_servo').textContent = `Pan ${s.current_pan.toFixed(1)} / Tilt ${s.current_tilt.toFixed(1)}`;
+      document.getElementById('s_servo').style.color = '#ff6b6b';
+    } else {
+      document.getElementById('s_servo').textContent = 'DISABLED';
+      document.getElementById('s_servo').style.color = '#666';
+    }
 
     const pf = document.getElementById('pill-face');
     pf.className = 'pill ' + (s.face_detected ? 'face-on' : 'face-off');
@@ -834,20 +935,39 @@ def main():
                         help="Web server port (default: 9090)")
     parser.add_argument("--host", type=str, default="0.0.0.0",
                         help="Bind host (default: 0.0.0.0 = all interfaces)")
+    parser.add_argument("--serial-port", type=str, default=None,
+                        help="ESP32 serial port (default: auto)")
+    parser.add_argument("--baud", type=int, default=None,
+                        help="ESP32 baud rate (default: from config)")
     args = parser.parse_args()
 
     config_path = Path(args.config) if args.config else APP_DIR / "config.yaml"
     if not config_path.is_absolute():
         config_path = APP_DIR / config_path
     cfg = _load_yaml(config_path)
+    
+    servo_cfg = cfg.get("servo", {}) or {}
+    baud = args.baud if args.baud is not None else int(servo_cfg.get("baud", 115200))
+    serial_port = args.serial_port or servo_cfg.get("port") or ""
 
     print(f"[Main] Config: {config_path}")
     print(f"[Main] Server: http://0.0.0.0:{args.port}/")
     print(f"[Main] Access from any device on your network at http://<pi-ip>:{args.port}/")
+    
+    print(f"[Main] Connecting to Arduino on {serial_port or 'auto'} @ {baud}...")
+    link = ArduinoServoLink(port=serial_port, baud=baud)
+    if not link.connect():
+        print("[Main] WARNING: Arduino connect failed. Servos will NOT move.")
+        link = None
+    else:
+        print("[Main] Arduino connected!")
 
     tune = TuneState(cfg)
     det = DetectionThread(tune, cfg)
     det.start()
+    
+    servo_thread = ServoThread(tune, link)
+    servo_thread.start()
 
     handler = type("BoundStreamHandler", (StreamHandler,), {
         "tune": tune,

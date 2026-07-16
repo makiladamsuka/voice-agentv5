@@ -29,48 +29,87 @@ class IntentMatcher:
             embedding_function=embedding_functions.DefaultEmbeddingFunction(),
         )
         self.intents_map = {}
-        
+
+    def _load_intent_lists(self, compiled_json_path: Path) -> list[dict]:
+        intents: list[dict] = []
+        if compiled_json_path.exists():
+            intents.extend(
+                json.loads(compiled_json_path.read_text(encoding="utf-8"))
+            )
+        smalltalk_path = compiled_json_path.parent / "smalltalk_intents.json"
+        if smalltalk_path.exists():
+            intents.extend(
+                json.loads(smalltalk_path.read_text(encoding="utf-8"))
+            )
+        return intents
+
     def load_cache(self, compiled_json_path: Path):
-        if not compiled_json_path.exists():
+        intents = self._load_intent_lists(compiled_json_path)
+        if not intents:
             print("No compiled intents found. Run intent_compiler.py first.")
             return
-            
-        intents = json.loads(compiled_json_path.read_text(encoding="utf-8"))
+
         for intent in intents:
             self.intents_map[intent["id"]] = intent
-            
-        if self.collection.count() > 0:
-            print(f"Loaded {len(self.intents_map)} intents from ChromaDB cache.")
+
+        expected_docs = sum(len(i.get("utterances") or []) for i in intents)
+
+        # Rebuild Chroma when empty OR when utterance count drifted (e.g. new smalltalk)
+        if self.collection.count() == expected_docs and expected_docs > 0:
+            print(
+                f"Loaded {len(self.intents_map)} intents "
+                f"({expected_docs} utterances) from ChromaDB cache."
+            )
             return
-            
-        print("Indexing intents into ChromaDB for the first time. This only happens once...")
+
+        print(
+            f"Indexing {len(intents)} intents into ChromaDB "
+            f"({expected_docs} utterances)..."
+        )
+        try:
+            self.client.delete_collection("compiled_intents")
+        except Exception:
+            pass
+        self.collection = self.client.get_or_create_collection(
+            name="compiled_intents",
+            embedding_function=embedding_functions.DefaultEmbeddingFunction(),
+        )
+
         ids = []
         documents = []
         metadatas = []
-        
         for intent in intents:
-            for i, utt in enumerate(intent["utterances"]):
+            for i, utt in enumerate(intent.get("utterances") or []):
                 ids.append(f"{intent['id']}_{i}")
                 documents.append(utt)
                 metadatas.append({"intent_id": intent["id"]})
-                
-        self.collection.add(ids=ids, documents=documents, metadatas=metadatas)
+
+        if ids:
+            # Chroma has a batch size limit; chunk if needed
+            batch = 200
+            for start in range(0, len(ids), batch):
+                end = start + batch
+                self.collection.add(
+                    ids=ids[start:end],
+                    documents=documents[start:end],
+                    metadatas=metadatas[start:end],
+                )
         print(f"Successfully indexed {len(ids)} utterances.")
 
     def match(self, text: str) -> dict | None:
         if not text.strip():
             return None
-            
+
         results = self.collection.query(query_texts=[text], n_results=1)
         if not results["metadatas"] or not results["metadatas"][0]:
             return None
-            
+
         distance = results["distances"][0][0]
         print(f"  [Matcher] Top match distance: {distance:.2f}")
-        
-        # In ChromaDB (L2 distance), lower is better. 
-        # A threshold of ~1.4 is usually safe for general matching.
-        if distance < 1.4:
+
+        # L2 distance — lower is better. Slightly looser for short smalltalk.
+        threshold = 1.55 if len(text.split()) <= 4 else 1.4
+        if distance < threshold:
             intent_id = results["metadatas"][0][0]["intent_id"]
             return self.intents_map.get(intent_id)
         return None

@@ -124,5 +124,35 @@ def build_cache():
     print(f"\nCompilation complete! Successfully built {len(compiled_data)} cached intents.")
     print(f"Cache saved to {compiled_db_path}")
 
+    # Keep curated smalltalk intents in sync (TTS for any missing audio files)
+    ensure_smalltalk_audio()
+
+
+def ensure_smalltalk_audio():
+    """Generate Deepgram TTS for smalltalk_intents.json entries missing audio files."""
+    smalltalk_path = APP_DIR / "voice" / "event_db" / "smalltalk_intents.json"
+    if not smalltalk_path.exists():
+        print("No smalltalk_intents.json — skipping smalltalk TTS.")
+        return
+
+    audio_dir = APP_DIR / "assets" / "audio_cache"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    intents = json.loads(smalltalk_path.read_text(encoding="utf-8"))
+    print(f"\nEnsuring TTS for {len(intents)} smalltalk intents...")
+    for intent in intents:
+        audio_file = intent.get("audio_file")
+        text = intent.get("response_text", "")
+        if not audio_file or not text:
+            continue
+        audio_path = audio_dir / audio_file
+        if audio_path.exists():
+            print(f"  OK  {audio_file}")
+            continue
+        try:
+            print(f"  TTS {audio_file} — \"{text[:60]}...\"")
+            generate_tts_audio(text, audio_path)
+        except Exception as e:
+            print(f"  [ERROR] {audio_file}: {e}")
+
 if __name__ == "__main__":
     build_cache()

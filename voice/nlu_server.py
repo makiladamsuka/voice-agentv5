@@ -224,7 +224,7 @@ def _match_intent(runtime, user_text: str) -> dict:
         else None
     )
     return {
-        "reply_text": "I'm a campus guide! Try asking me about events or directions.",
+        "reply_text": "I'm NEma, your campus guide! Say hi, ask who I am, or ask about events and directions.",
         "audio_url": fallback_url,
         "action": {},
     }

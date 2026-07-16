@@ -3,9 +3,9 @@
 
 camera:
   face_model_path: face_detection_yunet_2023mar.onnx
-  main_res: [1920, 1080]     # max camera sensor resolution
+  main_res: [3280, 2464]     # max camera sensor resolution
   detect_res: [1280, 720]    # max detection resolution
-  full_sensor_fov: false     # use full sensor FOV for higher res
+  full_sensor_fov: true      # use full sensor FOV for higher res
   confidence_threshold: 0.6
   nms_threshold: 0.3
   rotate_180: false
@@ -26,11 +26,14 @@ stream:
   enabled: true
   host: "0.0.0.0"
   port: 8083   # not 8081 — LiveKit worker health server uses 8081 in start mode
-  fps: 8
-  jpeg_quality: 70
-  render_fps: 24
-  vision_fps: 10
-  res: [320, 180]
+  fps: 15
+  jpeg_quality: 90
+  render_fps: 30
+  vision_fps: 5
+  vision_fps_voice: 2        # slower detect between voice turns (when not hearing/speaking)
+  vision_pause_on_audio: true # skip camera+YuNet while user/agent audio is active
+  vision_pause_poll_hz: 2     # blackboard poll only while paused (no capture)
+  res: [640, 360]
 
 debug_viz:
   enabled: true

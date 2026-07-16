@@ -233,6 +233,7 @@ class DetectionThread(threading.Thread):
             # ── Face detection ───────────────────────────────────────────
             if self.tune.get("face_detection_enabled") and detector is not None:
                 detector.setInputSize(detect_res)
+                detector.setScoreThreshold(self.tune.get("confidence_threshold"))
                 _, faces = detector.detect(frame)
                 if faces is not None and len(faces) > 0:
                     valid = [f for f in faces if float(f[2]) > 4 and float(f[3]) > 4]

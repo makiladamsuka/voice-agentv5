@@ -30,6 +30,9 @@ stream:
   jpeg_quality: 70
   render_fps: 24
   vision_fps: 10
+  vision_fps_voice: 2        # slower detect between voice turns (when not hearing/speaking)
+  vision_pause_on_audio: true # skip camera+YuNet while user/agent audio is active
+  vision_pause_poll_hz: 2     # blackboard poll only while paused (no capture)
   res: [320, 180]
 
 debug_viz:

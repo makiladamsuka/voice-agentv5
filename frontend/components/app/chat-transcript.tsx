@@ -21,16 +21,21 @@ export function ChatTranscript({
   isLoading = false,
   ...props
 }: ChatTranscriptProps & React.HTMLAttributes<HTMLDivElement>) {
-  // Combine only messages (LiveKit automatically syncs STT into messages)
+  // Combine messages — support LiveKit shape AND NLU adapter shape
+  // LiveKit: { message|text, from.isLocal }
+  // NLU:     { content, role: "user"|"assistant" }
   const rawItems = messages
     .map((m: any) => {
-      const text = m.message || m.text;
-      const isLocal = m.from?.isLocal || false;
+      const text = m.message || m.text || m.content || "";
+      const isLocal =
+        m.from?.isLocal === true ||
+        m.role === "user" ||
+        m.participantIdentity === "user";
       return {
         id: m.id || String(m.timestamp),
-        timestamp: m.timestamp,
+        timestamp: m.timestamp ?? Date.now(),
         message: text,
-        isLocal: isLocal,
+        isLocal: Boolean(isLocal),
         isFinal: true,
       };
     })

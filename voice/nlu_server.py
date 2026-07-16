@@ -50,6 +50,12 @@ def _get_runtime():
         log.info("NLU runtime ready.")
     return _runtime
 
+def reload_nlu_runtime():
+    """Clear the cached runtime so it reloads from disk on the next request."""
+    global _runtime
+    _runtime = None
+    log.info("NLU runtime cache cleared (will reload on next request).")
+
 
 # ── Starlette WebSocket application ──────────────────────────────────────────
 
@@ -92,6 +98,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                     continue
 
                 log.info(f"[NLU] Transcript: '{user_text}'")
+                print(f"[NLU] Transcript: '{user_text}'")
 
                 # Update blackboard — show "thinking" on robot face
                 if _bb is not None:
@@ -105,6 +112,11 @@ async def _voice_ws_endpoint(websocket) -> None:
                 loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(
                     None, _match_intent, runtime, user_text
+                )
+
+                print(
+                    f"[NLU] Reply: '{result.get('reply_text', '')[:80]}' "
+                    f"audio={result.get('audio_url')}"
                 )
 
                 # Write result to blackboard (only fields that exist on Blackboard)
@@ -189,7 +201,7 @@ def _match_intent(runtime, user_text: str) -> dict:
 
     if intent:
         audio_file = intent.get("audio_file")
-        audio_url = f"/audio_cache/{audio_file}" if audio_file else None
+        audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
 
         # Verify the cached file actually exists on disk
         if audio_file and not (audio_base / audio_file).exists():
@@ -207,7 +219,7 @@ def _match_intent(runtime, user_text: str) -> dict:
     # No intent matched — return fallback
     fallback_audio = "intent_fallback.mp3"
     fallback_url = (
-        f"/audio_cache/{fallback_audio}"
+        f"/assets/audio_cache/{fallback_audio}"
         if (audio_base / fallback_audio).exists()
         else None
     )

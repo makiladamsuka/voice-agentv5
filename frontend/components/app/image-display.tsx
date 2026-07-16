@@ -35,6 +35,21 @@ export function ImageDisplay({
 }: {
   ignoreNavigation?: boolean;
 }) {
+  // NLU kiosk has no LiveKit SessionProvider — image/nav overlays are handled
+  // by kiosk-view itself via the NLU WebSocket action payloads.
+  if (process.env.NEXT_PUBLIC_NLU_MODE === "true") {
+    return null;
+  }
+  return (
+    <ImageDisplayLiveKit ignoreNavigation={ignoreNavigation} />
+  );
+}
+
+function ImageDisplayLiveKit({
+  ignoreNavigation = false,
+}: {
+  ignoreNavigation?: boolean;
+}) {
   const session = useSessionContext();
   const room = session?.room;
   const [imageData, setImageData] = useState<ImageData | null>(null);

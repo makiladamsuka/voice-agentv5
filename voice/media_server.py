@@ -281,6 +281,7 @@ class MediaServer:
                         ".png": "image/png",
                         ".gif": "image/gif",
                         ".webp": "image/webp",
+                        ".mp3": "audio/mpeg",
                     }.get(suffix, "application/octet-stream")
                     self._bytes_response(200, file_path.read_bytes(), content_type)
                 except ValueError:

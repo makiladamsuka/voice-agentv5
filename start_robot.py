@@ -813,8 +813,10 @@ def main():
         #     )
 
     from voice.voice_service import ensure_media_server
+    from voice.compiler.watchdog import run_watchdog
 
     ensure_media_server(bb, cfg)
+    run_watchdog(interval=5, daemon=True)
 
     for t in threads:
         t.start()
@@ -871,11 +873,14 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     if voice_cfg.get("enabled", False):
-        mode_label = "dev" if voice_devmode else "start"
-        print(
-            f"Voice agent enabled (LiveKit {mode_label}). "
-            "Connect via frontend with AGENT_NAME=campus-greeting-agent."
-        )
+        if nlu_mode:
+            print("Voice agent enabled (Local NLU mode). Listening on ws://localhost:8765")
+        else:
+            mode_label = "dev" if voice_devmode else "start"
+            print(
+                f"Voice agent enabled (LiveKit {mode_label}). "
+                "Connect via frontend with AGENT_NAME=campus-greeting-agent."
+            )
 
     print("Robot running. Press Ctrl+C to exit.")
 

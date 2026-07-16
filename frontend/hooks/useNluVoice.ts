@@ -1,22 +1,17 @@
 /**
  * useNluVoice.ts
  *
- * Drop-in replacement for LiveKit's useVoiceAssistant / SessionProvider.
- *
- * This hook handles the complete NLU voice pipeline entirely on the browser:
- *   1. Browser VAD (@ricky0123/vad-web) detects when the user starts/stops speaking.
- *   2. Raw audio is streamed directly from the browser to Deepgram STT (no Pi CPU used).
- *   3. The final transcript is sent over a local WebSocket to the Python NLU server.
- *   4. The Python server returns a JSON response with the reply text and a cached audio URL.
- *   5. The browser plays the cached MP3, or falls back to Deepgram TTS for dynamic replies.
- *   6. Barge-in: if VAD detects speech while audio is playing, the audio is instantly paused.
+ * Browser voice pipeline for NLU mode (no LiveKit, no Silero ONNX):
+ *   1. Mic → MediaRecorder (webm/opus) streamed to Deepgram.
+ *   2. Deepgram VAD + endpointing detects speech start/end.
+ *   3. Final utterance transcript → local NLU WebSocket.
+ *   4. NLU replies with text + cached MP3 (or Deepgram TTS fallback).
+ *   5. Barge-in: Deepgram SpeechStarted stops robot audio.
  */
 
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 export type NluVoiceState =
   | "idle"
@@ -33,17 +28,29 @@ export interface NluResponse {
 }
 
 interface UseNluVoiceOptions {
-  /** Local Python NLU WebSocket server URL. Default: ws://localhost:8765/ws/voice */
   nluServerUrl?: string;
-  /** Deepgram API key for STT. Reads NEXT_PUBLIC_DEEPGRAM_API_KEY env var if not provided. */
   deepgramApiKey?: string;
-  /** Called when the NLU server sends a complete response. */
   onResponse?: (response: NluResponse) => void;
-  /** Called when the voice state changes (for UI feedback). */
   onStateChange?: (state: NluVoiceState) => void;
 }
 
-// ── Hook ─────────────────────────────────────────────────────────────────────
+/** Prefer a MediaRecorder mime type the browser actually supports. */
+function pickRecorderMime(): string | undefined {
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+  ];
+  for (const t of candidates) {
+    if (
+      typeof MediaRecorder !== "undefined" &&
+      MediaRecorder.isTypeSupported(t)
+    ) {
+      return t;
+    }
+  }
+  return undefined;
+}
 
 export function useNluVoice({
   nluServerUrl = "ws://localhost:8765/ws/voice",
@@ -55,18 +62,21 @@ export function useNluVoice({
   const [isActive, setIsActive] = useState(false);
   const [lastTranscript, setLastTranscript] = useState("");
 
-  // Refs (mutable, no re-render)
   const nluWs = useRef<WebSocket | null>(null);
   const dgWs = useRef<WebSocket | null>(null);
-  const vadRef = useRef<any>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const stateRef = useRef<NluVoiceState>("idle");
+  const isActiveRef = useRef(false);
+  /** Last non-empty transcript for UtteranceEnd fallback. */
+  const pendingTranscriptRef = useRef("");
+  /** Avoid double-sending the same utterance. */
+  const sentUtteranceRef = useRef(false);
 
   const apiKey =
     deepgramApiKey ?? process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY ?? "";
 
-  // Keep stateRef in sync so callbacks can read state without stale closures
   const setVoiceState = useCallback(
     (newState: NluVoiceState) => {
       stateRef.current = newState;
@@ -76,57 +86,62 @@ export function useNluVoice({
     [onStateChange],
   );
 
-  // ── Barge-in: stop audio when user starts speaking ──────────────────────
   const stopCurrentAudio = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
-    // Notify server that TTS was interrupted
     if (
-      nluWs.current &&
-      nluWs.current.readyState === WebSocket.OPEN &&
+      nluWs.current?.readyState === WebSocket.OPEN &&
       stateRef.current === "speaking"
     ) {
       nluWs.current.send(JSON.stringify({ type: "tts_done" }));
     }
   }, []);
 
-  // ── Play audio from URL (cached MP3) or fall back to Deepgram TTS ────────
   const playAudio = useCallback(
     async (audioUrl: string | null, replyText: string) => {
+      console.log("[NluVoice] Playing reply:", replyText?.slice(0, 80), audioUrl);
       setVoiceState("speaking");
-
-      // Stop any currently playing audio first
       stopCurrentAudio();
 
       const resolvedUrl = audioUrl
-        ? // The Python media server serves cached files from port 8080
-          `http://localhost:8080${audioUrl}`
+        ? `http://localhost:8080${audioUrl}`
         : null;
 
-      // Try to play cached MP3 first (0ms latency)
+      // While the robot talks, stop feeding the mic to Deepgram — otherwise
+      // speaker echo triggers SpeechStarted and immediately kills playback.
+      const resumeAfter = () => {
+        sentUtteranceRef.current = false;
+        pendingTranscriptRef.current = "";
+        setVoiceState("listening");
+      };
+
       if (resolvedUrl) {
         const audio = new Audio(resolvedUrl);
         audioRef.current = audio;
+        try {
+          await audio.play();
+          await new Promise<void>((resolve) => {
+            audio.onended = () => resolve();
+            audio.onerror = () => resolve();
+          });
+          if (nluWs.current?.readyState === WebSocket.OPEN) {
+            nluWs.current.send(JSON.stringify({ type: "tts_done" }));
+          }
+          resumeAfter();
+          return;
+        } catch (e) {
+          console.warn("[NluVoice] Cached audio play blocked/failed:", e);
+          // fall through to Deepgram TTS
+        }
+      }
 
-        await new Promise<void>((resolve) => {
-          audio.onended = () => resolve();
-          audio.onerror = () => resolve(); // fallback to TTS on error
-          audio.play().catch(() => resolve());
-        });
-
-        // Notify server that TTS finished
+      if (!apiKey || !replyText) {
         if (nluWs.current?.readyState === WebSocket.OPEN) {
           nluWs.current.send(JSON.stringify({ type: "tts_done" }));
         }
-        setVoiceState("listening");
-        return;
-      }
-
-      // Fallback: Deepgram TTS for dynamic responses (no cached audio)
-      if (!apiKey || !replyText) {
-        setVoiceState("listening");
+        resumeAfter();
         return;
       }
 
@@ -142,21 +157,20 @@ export function useNluVoice({
             body: JSON.stringify({ text: replyText }),
           },
         );
-
-        if (!response.ok) throw new Error(`Deepgram TTS error: ${response.status}`);
-
+        if (!response.ok) {
+          throw new Error(`Deepgram TTS error: ${response.status}`);
+        }
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         audioRef.current = audio;
-
+        await audio.play();
         await new Promise<void>((resolve) => {
           audio.onended = () => {
             URL.revokeObjectURL(url);
             resolve();
           };
           audio.onerror = () => resolve();
-          audio.play().catch(() => resolve());
         });
       } catch (e) {
         console.error("[NluVoice] TTS playback failed:", e);
@@ -165,208 +179,405 @@ export function useNluVoice({
       if (nluWs.current?.readyState === WebSocket.OPEN) {
         nluWs.current.send(JSON.stringify({ type: "tts_done" }));
       }
-      setVoiceState("listening");
+      resumeAfter();
     },
     [apiKey, setVoiceState, stopCurrentAudio],
   );
 
-  // ── Send a transcript to the NLU server ──────────────────────────────────
   const sendTranscript = useCallback(
     (text: string) => {
-      if (!text.trim() || nluWs.current?.readyState !== WebSocket.OPEN) return;
-      setLastTranscript(text);
+      const trimmed = text.trim();
+      if (!trimmed || nluWs.current?.readyState !== WebSocket.OPEN) return;
+      console.log(`[NluVoice] → NLU: "${trimmed}"`);
+      setLastTranscript(trimmed);
       setVoiceState("thinking");
-      nluWs.current.send(JSON.stringify({ type: "transcript", text }));
+      nluWs.current.send(JSON.stringify({ type: "transcript", text: trimmed }));
     },
     [setVoiceState],
   );
 
-  // ── Stream audio chunk to Deepgram STT WebSocket ──────────────────────────
-  const sendAudioToDeepgram = useCallback((audioData: Blob) => {
-    if (dgWs.current?.readyState === WebSocket.OPEN) {
-      dgWs.current.send(audioData);
-    }
-  }, []);
-
-  // ── Open Deepgram streaming STT WebSocket ─────────────────────────────────
-  const openDeepgramStream = useCallback(() => {
-    if (!apiKey) {
-      console.error("[NluVoice] No Deepgram API key provided.");
-      return;
-    }
-
-    // Close any existing Deepgram stream
-    if (dgWs.current) {
-      dgWs.current.close();
-    }
-
-    const dg = new WebSocket(
-      `wss://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&interim_results=false&endpointing=false`,
-      ["token", apiKey],
-    );
-    dgWs.current = dg;
-
-    dg.onmessage = (event) => {
+  const handleDeepgramMessage = useCallback(
+    (raw: string) => {
+      let data: any;
       try {
-        const data = JSON.parse(event.data);
-        const transcript =
-          data?.channel?.alternatives?.[0]?.transcript ?? "";
-
-        if (data.is_final && transcript.trim()) {
-          console.log(`[STT] Final: "${transcript}"`);
-          sendTranscript(transcript);
-        }
-      } catch (e) {
-        // ignore
+        data = JSON.parse(raw);
+      } catch {
+        return;
       }
-    };
 
-    dg.onerror = (e) => console.error("[Deepgram STT] WebSocket error:", e);
-  }, [apiKey, sendTranscript]);
+      const busy =
+        stateRef.current === "speaking" || stateRef.current === "thinking";
 
-  // ── Initialise VAD ───────────────────────────────────────────────────────
-  const initVad = useCallback(async () => {
-    try {
-      // Dynamically import to avoid SSR issues
-      const { MicVAD } = await import("@ricky0123/vad-web");
+      // Deepgram VAD: user started talking → barge-in (only while listening)
+      if (data.type === "SpeechStarted") {
+        if (busy) {
+          // Ignore speaker echo while we play a reply / wait for NLU
+          return;
+        }
+        console.log("[Deepgram VAD] SpeechStarted");
+        sentUtteranceRef.current = false;
+        pendingTranscriptRef.current = "";
+        if (nluWs.current?.readyState === WebSocket.OPEN) {
+          nluWs.current.send(JSON.stringify({ type: "user_speaking" }));
+        }
+        setVoiceState("listening");
+        return;
+      }
 
-      const vad = await MicVAD.new({
-        // Use browser's built-in echo cancellation and noise suppression
-        additionalAudioConstraints: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+      // Ignore STT while robot is thinking/speaking (echo + overlap)
+      if (busy) return;
 
-        onSpeechStart: () => {
-          console.log("[VAD] Speech started");
-          // Barge-in: stop robot talking
-          stopCurrentAudio();
-          // Open a fresh Deepgram stream for this utterance
-          openDeepgramStream();
-          // Notify the server
-          if (nluWs.current?.readyState === WebSocket.OPEN) {
-            nluWs.current.send(JSON.stringify({ type: "user_speaking" }));
-          }
-          setVoiceState("listening");
-        },
+      // End-of-utterance (word-timing based). Flush pending if speech_final missed.
+      if (data.type === "UtteranceEnd") {
+        console.log("[Deepgram VAD] UtteranceEnd");
+        if (!sentUtteranceRef.current && pendingTranscriptRef.current.trim()) {
+          sentUtteranceRef.current = true;
+          sendTranscript(pendingTranscriptRef.current);
+          pendingTranscriptRef.current = "";
+        }
+        return;
+      }
 
-        onFrameProcessed: (probabilities, audio) => {
-          // Stream each audio frame to Deepgram while the user is speaking
+      const alt = data?.channel?.alternatives?.[0];
+      const transcript: string = alt?.transcript ?? "";
+      if (!transcript.trim()) return;
+
+      // Keep latest interim for UtteranceEnd fallback; show live text via pending
+      pendingTranscriptRef.current = transcript;
+
+      // Endpointing: speech_final === end of spoken turn
+      if (data.speech_final && !sentUtteranceRef.current) {
+        console.log(`[STT] speech_final: "${transcript}"`);
+        sentUtteranceRef.current = true;
+        pendingTranscriptRef.current = "";
+        sendTranscript(transcript);
+      }
+    },
+    [sendTranscript, setVoiceState],
+  );
+
+  const openDeepgramStream = useCallback((): Promise<void> => {
+    if (!apiKey) {
+      return Promise.reject(new Error("Missing Deepgram API key"));
+    }
+    if (dgWs.current) {
+      try {
+        dgWs.current.close();
+      } catch {
+        /* ignore */
+      }
+      dgWs.current = null;
+    }
+
+    // Deepgram's own VAD + endpointing — no Silero / ONNX in the browser.
+    const params = new URLSearchParams({
+      model: "nova-3",
+      smart_format: "true",
+      interim_results: "true",
+      vad_events: "true",
+      endpointing: "300",
+      utterance_end_ms: "1000",
+    });
+    const url = `wss://api.deepgram.com/v1/listen?${params}`;
+    console.log("[NluVoice] Opening Deepgram stream (built-in VAD)…");
+
+    return new Promise((resolve, reject) => {
+      const dg = new WebSocket(url, ["token", apiKey]);
+      dgWs.current = dg;
+      let settled = false;
+
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          reject(new Error("Deepgram WebSocket connect timeout"));
+        }
+      }, 10000);
+
+      dg.onopen = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        console.log("[NluVoice] Deepgram connected.");
+        resolve();
+      };
+
+      dg.onmessage = (event) => {
+        if (typeof event.data === "string") {
+          handleDeepgramMessage(event.data);
+        }
+      };
+
+      dg.onerror = (e) => {
+        console.error("[Deepgram STT] WebSocket error:", e);
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error("Deepgram WebSocket error"));
+        }
+      };
+
+      dg.onclose = () => {
+        console.log("[NluVoice] Deepgram disconnected.");
+      };
+    });
+  }, [apiKey, handleDeepgramMessage]);
+
+  const startMicCapture = useCallback(async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    mediaStreamRef.current = stream;
+
+    const mime = pickRecorderMime();
+    const recorder = mime
+      ? new MediaRecorder(stream, { mimeType: mime })
+      : new MediaRecorder(stream);
+    recorderRef.current = recorder;
+
+    recorder.ondataavailable = (event) => {
+      if (
+        event.data.size > 0 &&
+        dgWs.current?.readyState === WebSocket.OPEN &&
+        isActiveRef.current &&
+        // Do not stream mic→Deepgram while NLU is thinking or TTS is playing
+        // (speaker echo would fake SpeechStarted and kill the reply).
+        stateRef.current !== "speaking" &&
+        stateRef.current !== "thinking"
+      ) {
+        event.data.arrayBuffer().then((buf) => {
           if (
             dgWs.current?.readyState === WebSocket.OPEN &&
-            stateRef.current !== "speaking"
+            stateRef.current !== "speaking" &&
+            stateRef.current !== "thinking"
           ) {
-            const blob = new Blob([audio.buffer], { type: "audio/pcm" });
-            sendAudioToDeepgram(blob);
+            dgWs.current.send(buf);
           }
-        },
+        });
+      }
+    };
 
-        onSpeechEnd: (audio) => {
-          console.log("[VAD] Speech ended — closing Deepgram stream");
-          // Send the remaining audio and close the stream to flush the final transcript
-          if (dgWs.current?.readyState === WebSocket.OPEN) {
-            const blob = new Blob([audio.buffer], { type: "audio/pcm" });
-            dgWs.current.send(blob);
-            // Send CloseStream message to Deepgram to get the final transcript
-            dgWs.current.send(JSON.stringify({ type: "CloseStream" }));
-          }
-        },
+    recorder.onerror = (e) => {
+      console.error("[NluVoice] MediaRecorder error:", e);
+    };
 
-        // Tune VAD sensitivity
-        positiveSpeechThreshold: 0.85,
-        negativeSpeechThreshold: 0.5,
-        minSpeechFrames: 4,
-        redemptionFrames: 8,
-      });
+    // Small timeslice → low-latency chunks for Deepgram VAD
+    recorder.start(250);
+    console.log("[NluVoice] Mic capture started", mime ?? "(default mime)");
+  }, []);
 
-      vadRef.current = vad;
-      return vad;
-    } catch (e) {
-      console.error("[NluVoice] VAD init failed:", e);
-      throw e;
+  const connectNluServer = useCallback((): Promise<void> => {
+    if (nluWs.current?.readyState === WebSocket.OPEN) {
+      return Promise.resolve();
     }
-  }, [openDeepgramStream, sendAudioToDeepgram, setVoiceState, stopCurrentAudio]);
-
-  // ── Connect NLU WebSocket ─────────────────────────────────────────────────
-  const connectNluServer = useCallback(() => {
-    if (nluWs.current?.readyState === WebSocket.OPEN) return;
+    if (nluWs.current) {
+      try {
+        nluWs.current.close();
+      } catch {
+        /* ignore */
+      }
+      nluWs.current = null;
+    }
 
     console.log(`[NluVoice] Connecting to NLU server: ${nluServerUrl}`);
-    const ws = new WebSocket(nluServerUrl);
-    nluWs.current = ws;
 
-    ws.onopen = () => {
-      console.log("[NluVoice] NLU server connected.");
-      setVoiceState("listening");
-    };
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(nluServerUrl);
+      nluWs.current = ws;
+      let settled = false;
 
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          try {
+            ws.close();
+          } catch {
+            /* ignore */
+          }
+          reject(new Error(`NLU WebSocket connect timeout: ${nluServerUrl}`));
+        }
+      }, 8000);
 
-      if (msg.type === "response") {
-        const response: NluResponse = {
-          reply_text: msg.reply_text,
-          audio_url: msg.audio_url,
-          action: msg.action,
-        };
-        onResponse?.(response);
-        playAudio(msg.audio_url, msg.reply_text);
-      } else if (msg.type === "state") {
-        setVoiceState(msg.conv_state as NluVoiceState);
-      }
-    };
+      ws.onopen = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        console.log("[NluVoice] NLU server connected.");
+        resolve();
+      };
 
-    ws.onclose = () => {
-      console.log("[NluVoice] NLU server disconnected.");
-      if (isActive) {
-        // Auto-reconnect after 2s if user hasn't manually stopped
-        setTimeout(connectNluServer, 2000);
-      }
-    };
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "response") {
+          console.log("[NluVoice] ← NLU response:", msg.reply_text);
+          onResponse?.({
+            reply_text: msg.reply_text,
+            audio_url: msg.audio_url,
+            action: msg.action,
+          });
+          void playAudio(msg.audio_url, msg.reply_text);
+        } else if (msg.type === "state") {
+          // Don't let server "listening" clobber local speaking/thinking mid-turn
+          if (
+            msg.conv_state === "listening" &&
+            (stateRef.current === "speaking" || stateRef.current === "thinking")
+          ) {
+            return;
+          }
+          setVoiceState(msg.conv_state as NluVoiceState);
+        }
+      };
 
-    ws.onerror = (e) => {
-      console.error("[NluVoice] NLU WebSocket error:", e);
-      setVoiceState("error");
-    };
-  }, [nluServerUrl, isActive, onResponse, playAudio, setVoiceState]);
+      ws.onclose = () => {
+        console.log("[NluVoice] NLU server disconnected.");
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error("NLU WebSocket closed before open"));
+        } else if (isActiveRef.current) {
+          setTimeout(() => {
+            connectNluServer().catch((e) =>
+              console.error("[NluVoice] reconnect failed:", e),
+            );
+          }, 2000);
+        }
+      };
 
-  // ── Start voice session ───────────────────────────────────────────────────
+      ws.onerror = (e) => {
+        console.error("[NluVoice] NLU WebSocket error:", e);
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(
+            new Error(`NLU WebSocket error — is the backend on ${nluServerUrl}?`),
+          );
+        } else {
+          setVoiceState("error");
+        }
+      };
+    });
+  }, [nluServerUrl, onResponse, playAudio, setVoiceState]);
+
   const start = useCallback(async () => {
-    if (isActive) return;
+    if (isActiveRef.current) {
+      console.warn("[NluVoice] start() ignored — already active");
+      return;
+    }
+    if (!apiKey) {
+      const err = new Error(
+        "Missing NEXT_PUBLIC_DEEPGRAM_API_KEY — cannot start NLU voice.",
+      );
+      console.error("[NluVoice]", err.message);
+      setVoiceState("error");
+      throw err;
+    }
+
+    isActiveRef.current = true;
     setIsActive(true);
     setVoiceState("connecting");
+    pendingTranscriptRef.current = "";
+    sentUtteranceRef.current = false;
 
     try {
-      connectNluServer();
-      const vad = await initVad();
-      vad.start();
+      await connectNluServer();
+      await openDeepgramStream();
+      await startMicCapture();
       setVoiceState("listening");
+      console.log("[NluVoice] Listening (Deepgram VAD) — speak now");
     } catch (e) {
       console.error("[NluVoice] Failed to start:", e);
-      setVoiceState("error");
+      isActiveRef.current = false;
       setIsActive(false);
+      setVoiceState("error");
+      try {
+        recorderRef.current?.stop();
+      } catch {
+        /* ignore */
+      }
+      recorderRef.current = null;
+      mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current = null;
+      try {
+        dgWs.current?.close();
+      } catch {
+        /* ignore */
+      }
+      dgWs.current = null;
+      try {
+        nluWs.current?.close();
+      } catch {
+        /* ignore */
+      }
+      nluWs.current = null;
+      throw e;
     }
-  }, [isActive, connectNluServer, initVad, setVoiceState]);
+  }, [
+    apiKey,
+    connectNluServer,
+    openDeepgramStream,
+    setVoiceState,
+    startMicCapture,
+  ]);
 
-  // ── Stop voice session ────────────────────────────────────────────────────
   const stop = useCallback(() => {
+    isActiveRef.current = false;
     setIsActive(false);
-    vadRef.current?.destroy();
-    vadRef.current = null;
-    dgWs.current?.close();
-    dgWs.current = null;
-    nluWs.current?.close();
-    nluWs.current = null;
-    stopCurrentAudio();
+
+    try {
+      if (recorderRef.current?.state !== "inactive") {
+        recorderRef.current?.stop();
+      }
+    } catch {
+      /* ignore */
+    }
+    recorderRef.current = null;
+
     mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+    mediaStreamRef.current = null;
+
+    // Ask Deepgram to flush, then close
+    try {
+      if (dgWs.current?.readyState === WebSocket.OPEN) {
+        dgWs.current.send(JSON.stringify({ type: "CloseStream" }));
+      }
+      dgWs.current?.close();
+    } catch {
+      /* ignore */
+    }
+    dgWs.current = null;
+
+    try {
+      nluWs.current?.close();
+    } catch {
+      /* ignore */
+    }
+    nluWs.current = null;
+
+    stopCurrentAudio();
     setVoiceState("idle");
   }, [setVoiceState, stopCurrentAudio]);
 
-  // Cleanup on unmount
+  const stopRef = useRef(stop);
+  stopRef.current = stop;
+
   useEffect(() => {
-    return () => stop();
-  }, [stop]);
+    return () => {
+      stopRef.current();
+    };
+  }, []);
+
+  useEffect(() => {
+    const onInject = (event: Event) => {
+      const text = (event as CustomEvent<{ text?: string }>).detail?.text;
+      if (text) sendTranscript(text);
+    };
+    window.addEventListener("nlu:inject_transcript", onInject);
+    return () => window.removeEventListener("nlu:inject_transcript", onInject);
+  }, [sendTranscript]);
 
   return {
     state,

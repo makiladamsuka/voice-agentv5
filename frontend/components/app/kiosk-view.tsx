@@ -2,6 +2,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @next/next/no-img-element */
 
+// ── NLU mode gate ─────────────────────────────────────────────────────────────
+// When NEXT_PUBLIC_NLU_MODE=true the kiosk uses Browser VAD + Deepgram + the
+// local NLU WebSocket server instead of LiveKit. All LiveKit imports below are
+// guarded so they can be tree-shaken in the NLU build.
+const NLU_MODE = process.env.NEXT_PUBLIC_NLU_MODE === "true";
+
 import {
   useSessionContext,
   useSessionMessages,
@@ -34,6 +40,7 @@ import {
   sessionStartOptions,
   useVoiceConfig,
 } from "@/hooks/use-voice-config";
+import { useNluAdapter } from "@/hooks/useNluAdapter";
 
 // Lazy load 3D map to avoid SSR issues with Three.js
 const CampusMapEmbed = dynamic(
@@ -45,36 +52,121 @@ const NavigationMap = dynamic(() => import("@/components/app/isometric-map"), {
 });
 
 export function KioskView() {
-  const [glowingSection, setGlowingSection] = useState<'where-to' | 'chat' | 'mic' | 'news' | null>(null);
-  const session = useSessionContext();
-  const { isConnected, start, end } = session;
-  const voiceConfig = useVoiceConfig();
-  const startSession = useCallback(
-    () => start(sessionStartOptions(voiceConfig?.localMic)),
-    [start, voiceConfig?.localMic],
+  // Must split: LiveKit hooks require SessionProvider; NLU mode has none.
+  if (NLU_MODE) {
+    return <KioskViewNlu />;
+  }
+  return <KioskViewLiveKit />;
+}
+
+function KioskViewNlu() {
+  const nluAdapter = useNluAdapter();
+  const startRef = useRef(nluAdapter.start);
+  startRef.current = nluAdapter.start;
+  const endRef = useRef(nluAdapter.end);
+  endRef.current = nluAdapter.end;
+
+  const startSession = useCallback(async () => {
+    console.log("[KioskNlu] startSession()");
+    await startRef.current();
+  }, []);
+
+  const end = useCallback(() => {
+    endRef.current();
+  }, []);
+
+  // Prove browser ↔ NLU server reachability as soon as the page mounts
+  useEffect(() => {
+    console.log("[KioskNlu] mounted — NLU_MODE on");
+    fetch("http://127.0.0.1:8765/health")
+      .then((r) => r.json())
+      .then((j) => console.log("[KioskNlu] NLU health:", j))
+      .catch((e) => console.error("[KioskNlu] NLU health failed:", e));
+  }, []);
+
+  return (
+    <KioskViewUI
+      isConnected={nluAdapter.isConnected}
+      startSession={startSession}
+      end={end}
+      messages={nluAdapter.messages}
+      transcriptions={nluAdapter.transcriptions}
+      agentState={nluAdapter.agentState}
+      maxVolume={nluAdapter.maxVolume}
+      room={null}
+      lastAction={nluAdapter.lastAction}
+    />
   );
+}
+
+function KioskViewLiveKit() {
+  const session = useSessionContext();
+  const voiceConfig = useVoiceConfig();
   const { messages } = useSessionMessages(session);
   const room = useRoomContext();
-
-  // Focused event state — set when a news card is tapped
-  const [focusedEvent, setFocusedEvent] = useState<any | null>(null);
-  const pendingEventRef = useRef<any | null>(null);
-  const transcriptions = useTranscriptions();
-  const [navData, setNavData] = useState<any | null>(null);
-
   const { audioTrack: agentTrack, state: agentState } = useVoiceAssistant();
   const agentVolume = useTrackVolume(agentTrack);
   const micTracks = useTracks([Track.Source.Microphone]);
   const localMicTrack = micTracks.find((t) => t.participant.isLocal);
   const micVolume = useTrackVolume(localMicTrack);
+  const transcriptions = useTranscriptions();
+
+  const isConnected = session.isConnected;
   const maxVolume = isConnected
     ? Math.max(agentVolume || 0, micVolume || 0)
     : 0;
 
+  const startSession = useCallback(
+    () => session.start(sessionStartOptions(voiceConfig?.localMic)),
+    [session, voiceConfig?.localMic],
+  );
+
+  return (
+    <KioskViewUI
+      isConnected={isConnected}
+      startSession={startSession}
+      end={session.end}
+      messages={messages}
+      transcriptions={transcriptions as any}
+      agentState={(agentState as string) ?? "disconnected"}
+      maxVolume={maxVolume}
+      room={room}
+      lastAction={null}
+    />
+  );
+}
+
+type KioskViewUIProps = {
+  isConnected: boolean;
+  startSession: () => Promise<void>;
+  end: () => void;
+  messages: any[];
+  transcriptions: any[];
+  agentState: string;
+  maxVolume: number;
+  room: any;
+  lastAction: Record<string, string> | null;
+};
+
+function KioskViewUI({
+  isConnected,
+  startSession,
+  end,
+  messages,
+  transcriptions,
+  agentState,
+  maxVolume,
+  room,
+  lastAction,
+}: KioskViewUIProps) {
+  const [glowingSection, setGlowingSection] = useState<'where-to' | 'chat' | 'mic' | 'news' | null>(null);
+
+  // Focused event state — set when a news card is tapped
+  const [focusedEvent, setFocusedEvent] = useState<any | null>(null);
+  const pendingEventRef = useRef<any | null>(null);
+  const [navData, setNavData] = useState<any | null>(null);
+
   const isThinking = agentState === "thinking";
-  // Ready when the agent is in the voice loop — do NOT wait for chat/transcript
-  // messages. With local mic/speaker the Pi can answer before the UI sees text,
-  // so a message-based check left the kiosk stuck in "connecting" forever.
   const agentReady =
     agentState === "listening" ||
     agentState === "thinking" ||
@@ -82,7 +174,6 @@ export function KioskView() {
     agentState === "idle" ||
     agentState === "pre-connect-buffering";
   const isAgentInitializing = isConnected && !agentReady;
-  // Dramatically amplify the scaling and opacity for the visual pulse effect
   const pulseScale = isThinking
     ? 1.05
     : !isConnected
@@ -128,9 +219,18 @@ export function KioskView() {
     [room],
   );
 
-  // Send event context to backend via LiveKit data channel
+  // Send event context — LiveKit data channel OR NLU WebSocket transcript
   const sendEventFocus = useCallback(
     (event: any) => {
+      if (NLU_MODE) {
+        // In NLU mode, synthesise a spoken question and send it as a transcript
+        const text = event.message || `Tell me about ${event.title || "this event"}`;
+        // The useNluVoice hook listens for the server URL from env; we trigger
+        // it here by dispatching a custom event the hook can pick up.
+        window.dispatchEvent(new CustomEvent("nlu:inject_transcript", { detail: { text } }));
+        console.log("📲 [NLU] Injected transcript:", text);
+        return;
+      }
       if (!room) return;
       try {
         const payload = JSON.stringify({ type: "event_focus", event });
@@ -155,8 +255,14 @@ export function KioskView() {
     }
   }, [isConnected, sendEventFocus]);
 
-  // Listen for navigation data
+  // Listen for navigation data (LiveKit) or NLU action (NLU mode)
   useEffect(() => {
+    if (NLU_MODE) {
+      if (lastAction && lastAction.action === "navigate" && lastAction.destination) {
+        setNavData(lastAction);
+      }
+      return;
+    }
     if (!room) return;
     const handleDataReceived = (payload: Uint8Array) => {
       try {
@@ -170,7 +276,7 @@ export function KioskView() {
     return () => {
       room.off("dataReceived", handleDataReceived);
     };
-  }, [room]);
+  }, [room, lastAction]);
 
   const [isConnecting, setIsConnecting] = useState(false);
 
@@ -190,7 +296,9 @@ export function KioskView() {
 
   // Handle mic button press — show blob overlay while connecting
   const handleMicClick = useCallback(async () => {
+    console.log("[Kiosk] Mic clicked", { NLU_MODE, isConnected });
     if (isConnected) {
+      console.log("[Kiosk] Ending session");
       end();
       // Brief settle so the backend can release the previous job before a
       // quick re-press races the old room's cleanup.
@@ -208,26 +316,27 @@ export function KioskView() {
           90_000,
         ),
       );
+      console.log("[Kiosk] Starting session…");
       await Promise.race([startSession(), timeoutPromise]);
-    } catch (e) {
+      console.log("[Kiosk] Session start resolved");
+    } catch (e: any) {
       console.error("Agent connection failed:", e);
+      const msg = e?.message || String(e);
+      if (e?.name === "NotAllowedError" || msg.includes("getUserMedia")) {
+        alert("Microphone access blocked! Use http://localhost (not an IP) or HTTPS.");
+      } else {
+        alert(`Voice start failed: ${msg}`);
+      }
       setIsConnecting(false);
     }
   }, [isConnected, startSession, end]);
 
-  // Auto-dismiss morphing button once room is up and agent is usable
+  // Auto-dismiss morphing button once room/NLU session is up and agent is usable
   useEffect(() => {
     if (isConnected && !isAgentInitializing && isConnecting) {
       setIsConnecting(false);
     }
   }, [isConnected, isAgentInitializing, isConnecting]);
-
-  // Clear connecting UI if the session ends (failed / idle disconnect)
-  useEffect(() => {
-    if (!isConnected && isConnecting) {
-      setIsConnecting(false);
-    }
-  }, [isConnected, isConnecting]);
 
   const latestTranscription = transcriptions[transcriptions.length - 1];
   const [stagingText, setStagingText] = useState("");
@@ -421,6 +530,7 @@ export function KioskView() {
         // Transitioned from connected to disconnected
         setFocusedEvent(null);
         pendingEventRef.current = null;
+        setIsConnecting(false);
       }
       wasConnectedRef.current = false;
       return;
@@ -546,8 +656,13 @@ export function KioskView() {
       <div className="relative z-10 w-full h-full flex flex-col">
         {/* Top App Bar */}
         <header className="bg-transparent flex-shrink-0 w-full flex justify-between items-center px-6 h-[60px] z-20">
-          <div className="text-[26px] font-black tracking-[-0.04em] text-black dark:text-white">
+          <div className="text-[26px] font-black tracking-[-0.04em] text-black dark:text-white flex items-center gap-3">
             NEma
+            {NLU_MODE && (
+              <span className="text-[11px] font-bold tracking-wide uppercase px-2 py-0.5 rounded-full bg-amber-500 text-black">
+                NLU
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-4">
             <button
@@ -922,16 +1037,16 @@ export function KioskView() {
                       : undefined,
                   }}
                 >
-                <div className="w-full flex justify-center items-center text-center font-extrabold text-black dark:text-white tracking-tight leading-[1.2] min-h-[64px] relative z-10 pl-4 pr-20">
+                <div className="w-full flex justify-center items-center text-center font-extrabold text-black dark:text-white tracking-tight leading-[1.2] min-h-[64px] relative z-0 pl-4 pr-20 pointer-events-none">
                   {!isConnected ? (
-                    <div className="relative w-full overflow-hidden flex items-center justify-center h-full min-h-[64px]">
+                    <div className="relative w-full overflow-hidden flex items-center justify-center h-full min-h-[64px] pointer-events-none">
                       {STANDBY_PROMPTS.map((prompt, index) => (
                         <div
                           key={index}
-                          className={`absolute inset-0 flex items-center justify-center text-center transition-all duration-1000 ease-in-out text-[28px] ${
+                          className={`absolute inset-0 flex items-center justify-center text-center transition-all duration-1000 ease-in-out text-[28px] pointer-events-none ${
                             currentPromptIndex === index
                               ? "opacity-100 translate-y-0 blur-none scale-100"
-                              : "opacity-0 translate-y-3 blur-[4px] scale-[0.98] pointer-events-none"
+                              : "opacity-0 translate-y-3 blur-[4px] scale-[0.98]"
                           }`}
                         >
                           {prompt}
@@ -939,12 +1054,19 @@ export function KioskView() {
                       ))}
                     </div>
                   ) : (
-                    <div className="w-full flex justify-center break-words leading-[1.2] max-w-xl text-center text-[21px]">
-                      {stagingText || ""}
+                    <div className="w-full flex justify-center break-words leading-[1.2] max-w-xl text-center text-[21px] pointer-events-none">
+                      {stagingText ||
+                        (agentState === "speaking" || agentState === "thinking"
+                          ? [...messages]
+                              .reverse()
+                              .find((m: any) => m.role === "assistant")
+                              ?.content ||
+                            (agentState === "thinking" ? "Thinking…" : "")
+                          : "")}
                     </div>
                   )}
                 </div>
-                <div className="absolute right-4 z-10 flex items-center justify-center">
+                <div className="absolute right-4 z-[9999] flex items-center justify-center">
                   {/* Premium Voice Amplitude Halo — only when connected */}
                   {isConnected && (
                     <div
@@ -955,12 +1077,37 @@ export function KioskView() {
                       }}
                     />
                   )}
-                  {/* Gemini morphing shape replaces mic button while connecting */}
-                  <GeminiMorphButton
-                    isAnimating={isConnecting}
-                    isConnected={isConnected}
-                    onClick={handleMicClick}
-                  />
+                  {/* Plain button in NLU mode so clicks cannot be swallowed by overlays/motion */}
+                  {NLU_MODE ? (
+                    <button
+                      type="button"
+                      id="nlu-mic-button"
+                      aria-label={isConnected ? "Stop voice" : "Start voice"}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log("[Kiosk] NATIVE mic button click");
+                        void handleMicClick();
+                      }}
+                      className={`relative z-[9999] w-[72px] h-[72px] rounded-full flex items-center justify-center border-none shadow-lg cursor-pointer active:scale-95 transition-transform ${
+                        isConnecting
+                          ? "bg-amber-500 text-white animate-pulse"
+                          : isConnected
+                            ? "bg-red-600 text-white"
+                            : "bg-black dark:bg-white text-white dark:text-black"
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-4xl">
+                        {isConnected ? "mic_off" : "mic"}
+                      </span>
+                    </button>
+                  ) : (
+                    <GeminiMorphButton
+                      isAnimating={isConnecting}
+                      isConnected={isConnected}
+                      onClick={handleMicClick}
+                    />
+                  )}
                 </div>
               </div>
               </div>
@@ -1000,32 +1147,17 @@ export function KioskView() {
                       <button
                         key={roomNode.id}
                         onClick={() => {
+                          const navEvent = {
+                            title: roomNode.label,
+                            message: `Please give me directions to ${roomNode.label}`,
+                            category: "navigation",
+                          };
                           if (!isConnected) {
+                            pendingEventRef.current = navEvent;
                             startSession();
+                          } else {
+                            sendEventFocus(navEvent);
                           }
-                          setTimeout(
-                            () => {
-                              if (room) {
-                                const payload = JSON.stringify({
-                                  type: "event_focus",
-                                  event: {
-                                    title: roomNode.label,
-                                    message: `Please give me directions to ${roomNode.label}`,
-                                    category: "navigation",
-                                  },
-                                });
-                                try {
-                                  room.localParticipant.publishData(
-                                    new TextEncoder().encode(payload),
-                                    { reliable: true },
-                                  );
-                                } catch (e) {
-                                  console.error(e);
-                                }
-                              }
-                            },
-                            isConnected ? 100 : 3000,
-                          );
                         }}
                         className="bg-white/50 dark:bg-black/20 hover:bg-white/80 dark:hover:bg-black/40 text-on-surface border border-outline-variant/30 rounded-2xl h-[48px] w-full text-[14px] flex items-center justify-start px-5 gap-3 transition-all active:scale-[0.98] font-bold flex-shrink-0"
                       >
@@ -1141,7 +1273,7 @@ export function KioskView() {
           </div>
         )}
 
-        {/* Listens for image messages to show popup posters (ignores navigation to let KioskView handle it inline) */}
+        {/* LiveKit-only: NLU mode returns null inside ImageDisplay (no SessionProvider). */}
         <ImageDisplay ignoreNavigation={true} />
       </div>
 

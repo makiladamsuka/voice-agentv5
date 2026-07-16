@@ -16,6 +16,7 @@ import { useDebugMode } from "@/hooks/useDebug";
 import { getSandboxTokenSource } from "@/lib/utils";
 
 const IN_DEVELOPMENT = process.env.NODE_ENV !== "production";
+const NLU_MODE = process.env.NEXT_PUBLIC_NLU_MODE === "true";
 
 function AppSetup() {
   useDebugMode({ enabled: IN_DEVELOPMENT });
@@ -37,7 +38,23 @@ interface AppProps {
   appConfig: AppConfig;
 }
 
-export function App({ appConfig }: AppProps) {
+/** NLU kiosk: no LiveKit session, tokens, or StartAudio overlay. */
+function NluApp() {
+  useEffect(() => {
+    console.log("[App] NLU mode — LiveKit disabled");
+  }, []);
+
+  return (
+    <>
+      <main className="grid h-svh grid-cols-1 place-content-center">
+        <KioskView />
+      </main>
+      <Toaster />
+    </>
+  );
+}
+
+function LiveKitApp({ appConfig }: AppProps) {
   const tokenSource = useMemo(() => {
     return typeof process.env.NEXT_PUBLIC_CONN_DETAILS_ENDPOINT === "string"
       ? getSandboxTokenSource(appConfig)
@@ -62,4 +79,11 @@ export function App({ appConfig }: AppProps) {
       <Toaster />
     </SessionProvider>
   );
+}
+
+export function App({ appConfig }: AppProps) {
+  if (NLU_MODE) {
+    return <NluApp />;
+  }
+  return <LiveKitApp appConfig={appConfig} />;
 }

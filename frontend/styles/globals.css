@@ -473,7 +473,7 @@
 /* Kiosk touchscreen: hide cursor, faster taps, lighter GPU load on Pi */
 html.kiosk-mode,
 html.kiosk-mode * {
-  cursor: none !important;
+  /* cursor: none !important; */
 }
 
 .kiosk-mode {

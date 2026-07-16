@@ -3,9 +3,9 @@
 
 camera:
   face_model_path: face_detection_yunet_2023mar.onnx
-  main_res: [640, 480]       # lower capture cost vs 1280x720 (voice priority on Pi)
-  detect_res: [480, 270]     # YuNet input — halved vs 960x540
-  full_sensor_fov: false     # skip 3280×2464 ISP crop (auto-off when max(main_res) ≤ 720)
+  main_res: [1280, 720]      # increased for better quality
+  detect_res: [960, 540]     # increased for better detection
+  full_sensor_fov: true      # use full sensor FOV for higher res
   confidence_threshold: 0.6
   nms_threshold: 0.3
   rotate_180: false
@@ -26,14 +26,14 @@ stream:
   enabled: true
   host: "0.0.0.0"
   port: 8083   # not 8081 — LiveKit worker health server uses 8081 in start mode
-  fps: 6
-  jpeg_quality: 60
-  render_fps: 15
+  fps: 15
+  jpeg_quality: 90
+  render_fps: 30
   vision_fps: 5
   vision_fps_voice: 2        # slower detect between voice turns (when not hearing/speaking)
   vision_pause_on_audio: true # skip camera+YuNet while user/agent audio is active
   vision_pause_poll_hz: 2     # blackboard poll only while paused (no capture)
-  res: [320, 180]
+  res: [640, 360]
 
 debug_viz:
   enabled: true

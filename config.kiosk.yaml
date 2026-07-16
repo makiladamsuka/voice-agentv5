@@ -3,9 +3,9 @@
 
 camera:
   face_model_path: face_detection_yunet_2023mar.onnx
-  main_res: [1920, 1080]     # increased for maximum quality
-  detect_res: [480, 270]     # Reverted to keep face tracking fast/responsive!
-  full_sensor_fov: false     # skip full sensor to keep framerate high
+  main_res: [3280, 2464]     # max camera sensor resolution
+  detect_res: [1280, 720]    # max detection resolution
+  full_sensor_fov: true      # use full sensor FOV for higher res
   confidence_threshold: 0.6
   nms_threshold: 0.3
   rotate_180: false

@@ -160,6 +160,8 @@ class TuneState:
                         setattr(self, k, int(float(v)))
                     elif isinstance(old, float):
                         setattr(self, k, float(v))
+                    elif isinstance(old, str):
+                        setattr(self, k, str(v))
 
 
 # ── Detection thread ─────────────────────────────────────────────────────────

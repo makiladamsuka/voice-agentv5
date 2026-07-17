@@ -892,6 +892,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <input type="checkbox" id="servo_enabled">
         <label for="servo_enabled">Enable Servos (⚠ Moves Robot)</label>
       </div>
+      <div class="toggle-row">
+        <input type="checkbox" id="launch_kiosk">
+        <label for="launch_kiosk">Launch Kiosk Mode</label>
+      </div>
       <div style="display:flex;gap:20px;align-items:flex-start;margin-top:8px">
         <div style="text-align:center">
           <div style="font-size:0.75em;color:#888;margin-bottom:4px">Head (WASD)</div>
@@ -1006,7 +1010,7 @@ const SLIDERS = [
 ];
 const TOGGLES = [
   'face_detection_enabled','hand_detection_enabled','face_tracking_enabled','hand_tracking_enabled',
-  'hi_gesture_enabled','bye_gesture_enabled','talk_gesture_enabled','servo_enabled'
+  'hi_gesture_enabled','bye_gesture_enabled','talk_gesture_enabled','servo_enabled','launch_kiosk'
 ];
 
 // ── Init ────────────────────────────────────────────────────────────────────
@@ -1108,6 +1112,12 @@ setInterval(async () => {
       document.getElementById('s_servo').textContent = 'OFF';
       document.getElementById('s_servo').style.color = '#666';
     }
+    
+    // Sync launch kiosk checkbox state if we want to
+    const chkKiosk = document.getElementById('launch_kiosk');
+    if (chkKiosk && s.launch_kiosk !== undefined) {
+      chkKiosk.checked = (s.launch_kiosk === 1);
+    }
 
     const pf = document.getElementById('pill-face');
     pf.className = 'pill ' + (s.face_detected ? 'on' : 'off');
@@ -1205,6 +1215,12 @@ class StreamHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/tune":
+            if "launch_kiosk" in payload and payload["launch_kiosk"] == 1 and self.tune.get("launch_kiosk") != 1:
+                import subprocess
+                try:
+                    subprocess.Popen(["bash", "script/launch-kiosk.sh"])
+                except Exception as e:
+                    print("Failed to launch kiosk script:", e)
             self.tune.update(payload)
             self._json(200, {"ok": True})
             return

@@ -758,9 +758,24 @@ def main():
         if nlu_mode:
             from voice.nlu_server import run_nlu_server
 
+            # Preload the Wayfinder so navigate intents can return live paths
+            # for the kiosk's 3D NavigationMap.
+            nlu_wayfinder = None
+            try:
+                from voice.wayfinding import Wayfinder
+
+                nlu_wayfinder = Wayfinder()
+                print("[Bootstrap] Wayfinder ready for NLU navigation.")
+            except Exception as exc:
+                print(f"[Bootstrap] Wayfinder unavailable for NLU mode: {exc}")
+
             voice_thread = threading.Thread(
                 target=run_nlu_server,
-                kwargs={"bb": bb, "port": nlu_port},
+                kwargs={
+                    "bb": bb,
+                    "port": nlu_port,
+                    "wayfinder": nlu_wayfinder,
+                },
                 daemon=True,
                 name="NluServer",
             )

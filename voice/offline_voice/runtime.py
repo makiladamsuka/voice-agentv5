@@ -2,7 +2,9 @@
 
 import json
 import os
+import re
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -21,6 +23,97 @@ load_dotenv(APP_DIR / ".env")
 
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 
+
+# ── Domain router ─────────────────────────────────────────────────────────────
+# Routes a transcript to one domain BEFORE vector retrieval so that, e.g.,
+# "what is the time right now" never competes with event utterances like
+# "what time is the sports meeting".
+
+# Clock questions only — deliberately narrow so "what time is the meeting"
+# still routes to events.
+_TIME_RE = re.compile(
+    r"\b("
+    r"what time is it"
+    r"|what(?:'s| is) the time"
+    r"|tell me the time"
+    r"|current time"
+    r"|time (?:right )?now"
+    r"|do you have the time"
+    r"|what does the clock say"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_NAVIGATE_RE = re.compile(
+    r"\b("
+    r"where(?:'s| is| are)"
+    r"|take me to"
+    r"|directions? to"
+    r"|how (?:do|can) i (?:get|go) to"
+    r"|how to (?:get|go) to"
+    r"|navigate to"
+    r"|find the"
+    r"|show me the way"
+    r"|way to the"
+    r"|looking for the"
+    r"|guide me to"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_SMALLTALK_RE = re.compile(
+    r"\b("
+    r"hi|hello|hey|yo|sup|what's up"
+    r"|good (?:morning|afternoon|evening|night)"
+    r"|who are you|what are you|your name|introduce yourself|who am i talking to"
+    r"|are you (?:a robot|an ai|ok|okay|there|listening|working)"
+    r"|how are you|how(?:'s| is) it going|how do you feel|you good|how have you been"
+    r"|what can you do|how can you help|what do you know|help me|can you help"
+    r"|what can i ask|your features"
+    r"|thank you|thanks|appreciate it|cheers"
+    r"|bye|goodbye|see you|talk to you later|catch you later"
+    r"|can you hear me|is anyone there|you there|testing|test test"
+    r"|nice|cool|awesome|great|interesting|okay|ok|alright"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def route_domain(text: str) -> str:
+    """Route a transcript to: 'tool_time', 'navigate', 'smalltalk', or 'events'."""
+    if _TIME_RE.search(text):
+        return "tool_time"
+    if _NAVIGATE_RE.search(text):
+        return "navigate"
+    if _SMALLTALK_RE.search(text):
+        return "smalltalk"
+    return "events"
+
+
+def get_time_reply() -> str:
+    """Dynamic reply for the get_time tool."""
+    now = datetime.now().strftime("%I:%M %p").lstrip("0")
+    return f"It's {now} right now."
+
+
+# Per-domain acceptance thresholds (L2 distance — lower is better) and the
+# minimum top-1/top-2 margin required when the two nearest hits belong to
+# DIFFERENT intents (ambiguity rejection).
+DOMAIN_THRESHOLDS = {
+    "events": 1.2,
+    "smalltalk": 1.4,
+    "navigate": 1.3,
+}
+AMBIGUITY_MARGIN = 0.15
+
+# Intent JSON files per domain (all live in voice/event_db/)
+DOMAIN_SOURCES = {
+    "events": "compiled_intents.json",
+    "smalltalk": "smalltalk_intents.json",
+    "navigate": "navigate_intents.json",
+}
+
+
 class IntentMatcher:
     def __init__(self, db_path: Path):
         self.client = chromadb.PersistentClient(path=str(db_path))
@@ -30,32 +123,40 @@ class IntentMatcher:
         )
         self.intents_map = {}
 
-    def _load_intent_lists(self, compiled_json_path: Path) -> list[dict]:
-        intents: list[dict] = []
-        if compiled_json_path.exists():
-            intents.extend(
-                json.loads(compiled_json_path.read_text(encoding="utf-8"))
-            )
-        smalltalk_path = compiled_json_path.parent / "smalltalk_intents.json"
-        if smalltalk_path.exists():
-            intents.extend(
-                json.loads(smalltalk_path.read_text(encoding="utf-8"))
-            )
-        return intents
+    def _load_intent_lists(self, compiled_json_path: Path) -> list[tuple[str, dict]]:
+        """Load all domain intent files. Returns a list of (domain, intent) pairs."""
+        db_dir = compiled_json_path.parent
+        pairs: list[tuple[str, dict]] = []
+        for domain, filename in DOMAIN_SOURCES.items():
+            path = db_dir / filename
+            if not path.exists():
+                continue
+            for intent in json.loads(path.read_text(encoding="utf-8")):
+                pairs.append((domain, intent))
+        return pairs
+
+    def _cache_is_current(self, expected_docs: int) -> bool:
+        """True if Chroma already holds the expected docs WITH domain metadata."""
+        if expected_docs == 0 or self.collection.count() != expected_docs:
+            return False
+        sample = self.collection.peek(limit=1)
+        metadatas = sample.get("metadatas") or []
+        return bool(metadatas) and "domain" in metadatas[0]
 
     def load_cache(self, compiled_json_path: Path):
-        intents = self._load_intent_lists(compiled_json_path)
-        if not intents:
+        pairs = self._load_intent_lists(compiled_json_path)
+        if not pairs:
             print("No compiled intents found. Run intent_compiler.py first.")
             return
 
-        for intent in intents:
+        for _, intent in pairs:
             self.intents_map[intent["id"]] = intent
 
-        expected_docs = sum(len(i.get("utterances") or []) for i in intents)
+        expected_docs = sum(len(i.get("utterances") or []) for _, i in pairs)
 
-        # Rebuild Chroma when empty OR when utterance count drifted (e.g. new smalltalk)
-        if self.collection.count() == expected_docs and expected_docs > 0:
+        # Rebuild Chroma when empty, when utterance count drifted, or when the
+        # index predates domain metadata.
+        if self._cache_is_current(expected_docs):
             print(
                 f"Loaded {len(self.intents_map)} intents "
                 f"({expected_docs} utterances) from ChromaDB cache."
@@ -63,7 +164,7 @@ class IntentMatcher:
             return
 
         print(
-            f"Indexing {len(intents)} intents into ChromaDB "
+            f"Indexing {len(pairs)} intents into ChromaDB "
             f"({expected_docs} utterances)..."
         )
         try:
@@ -78,11 +179,11 @@ class IntentMatcher:
         ids = []
         documents = []
         metadatas = []
-        for intent in intents:
+        for domain, intent in pairs:
             for i, utt in enumerate(intent.get("utterances") or []):
                 ids.append(f"{intent['id']}_{i}")
                 documents.append(utt)
-                metadatas.append({"intent_id": intent["id"]})
+                metadatas.append({"intent_id": intent["id"], "domain": domain})
 
         if ids:
             # Chroma has a batch size limit; chunk if needed
@@ -96,23 +197,57 @@ class IntentMatcher:
                 )
         print(f"Successfully indexed {len(ids)} utterances.")
 
-    def match(self, text: str) -> dict | None:
+    def match(self, text: str, domain: str | None = None) -> dict | None:
+        """Match a transcript against ONE domain's intents with a confidence gate.
+
+        Accept only when the nearest utterance is below the domain threshold
+        AND — if the second-nearest hit belongs to a different intent — the
+        distance margin between them is at least AMBIGUITY_MARGIN.
+        """
         if not text.strip():
             return None
 
-        results = self.collection.query(query_texts=[text], n_results=1)
-        if not results["metadatas"] or not results["metadatas"][0]:
+        if domain is None:
+            domain = route_domain(text)
+        if domain == "tool_time":
+            # Tools are handled by the caller, not by retrieval.
             return None
 
-        distance = results["distances"][0][0]
-        print(f"  [Matcher] Top match distance: {distance:.2f}")
+        results = self.collection.query(
+            query_texts=[text],
+            n_results=2,
+            where={"domain": domain},
+        )
+        metadatas = results.get("metadatas") or [[]]
+        distances = results.get("distances") or [[]]
+        if not metadatas[0]:
+            print(f"  [Matcher] domain={domain}: no candidates.")
+            return None
 
-        # L2 distance — lower is better. Slightly looser for short smalltalk.
-        threshold = 1.55 if len(text.split()) <= 4 else 1.4
-        if distance < threshold:
-            intent_id = results["metadatas"][0][0]["intent_id"]
-            return self.intents_map.get(intent_id)
-        return None
+        d1 = distances[0][0]
+        top_intent = metadatas[0][0]["intent_id"]
+        threshold = DOMAIN_THRESHOLDS.get(domain, 1.2)
+
+        if len(metadatas[0]) > 1:
+            d2 = distances[0][1]
+            second_intent = metadatas[0][1]["intent_id"]
+            margin = d2 - d1
+            print(
+                f"  [Matcher] domain={domain} d1={d1:.2f} d2={d2:.2f} "
+                f"margin={margin:.2f} ({top_intent} vs {second_intent})"
+            )
+            # Two different intents too close together → ambiguous, abstain.
+            if second_intent != top_intent and margin < AMBIGUITY_MARGIN:
+                print("  [Matcher] Rejected: ambiguous top-2 candidates.")
+                return None
+        else:
+            print(f"  [Matcher] domain={domain} d1={d1:.2f} (single candidate)")
+
+        if d1 >= threshold:
+            print(f"  [Matcher] Rejected: distance {d1:.2f} >= {threshold}.")
+            return None
+
+        return self.intents_map.get(top_intent)
 
 
 def transcribe_audio(audio_data: bytes) -> str:
@@ -209,7 +344,21 @@ class OfflineVoiceRuntime:
     def process_text_input(self, text: str):
         """Processes a transcript, matches intent, updates Blackboard, and plays audio."""
         self.bb.write(conv_state="thinking", user_text=text)
-        
+
+        # Tool routes (e.g. clock) bypass retrieval entirely
+        if route_domain(text) == "tool_time":
+            reply = get_time_reply()
+            print(f"\n🕐 Tool: get_time → {reply}")
+            self.bb.write(
+                conv_state="speaking",
+                agent_speaking=True,
+                agent_text=reply,
+                current_action={},
+            )
+            print(f"🔊 [Audio Playback] {reply}")
+            self.bb.write(conv_state="listening", agent_speaking=False)
+            return
+
         # 1. Match Intent instantly via ChromaDB
         intent = self.matcher.match(text)
         

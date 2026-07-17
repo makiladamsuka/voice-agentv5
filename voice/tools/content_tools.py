@@ -142,7 +142,7 @@ class ContentTools:
         if self.wayfinder and self.wayfinder.floors:
             self.wayfinder.reload()
             start = (start_location or "").strip() or None
-            result = self.wayfinder.find_path(destination, start=start)
+            result = self.wayfinder.find_path(destination, origin=start)
             if not result:
                 return "I'm sorry, I couldn't find directions to that location."
             if "error" in result:
@@ -155,6 +155,8 @@ class ContentTools:
                         "destination": result["destination"],
                         "floor": result.get("floor", "floor_1"),
                         "path": result["path_coords"],
+                        "path_coords": result["path_coords"],
+                        "path_ids": result.get("path_ids", []),
                         "nodes": [
                             {
                                 "id": n["id"],
@@ -163,6 +165,9 @@ class ContentTools:
                                 "world": n["world"],
                                 "building": n.get("building"),
                                 "size": n.get("size", [1, 1, 1]),
+                                "floor": n.get(
+                                    "floor", result.get("floor", "floor_1")
+                                ),
                             }
                             for n in result["nodes"]
                         ],

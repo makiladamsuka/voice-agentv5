@@ -21,10 +21,32 @@ export type NluVoiceState =
   | "connecting"
   | "error";
 
+/** Action payload from the NLU server. Navigate actions carry full map data. */
+export interface NluAction {
+  action?: string;
+  target?: string;
+  destination?: string;
+  floor?: string;
+  path?: number[][];
+  path_coords?: number[][];
+  path_ids?: string[];
+  nodes?: Array<{
+    id: string;
+    label: string;
+    type: string;
+    world: number[];
+    building?: string | null;
+    size?: number[];
+    floor?: string;
+  }>;
+  buildings?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export interface NluResponse {
   reply_text: string;
   audio_url: string | null;
-  action: Record<string, string> | null;
+  action: NluAction | null;
 }
 
 interface UseNluVoiceOptions {

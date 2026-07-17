@@ -38,6 +38,7 @@ log = logging.getLogger("NluServer")
 # ── Module-level state ────────────────────────────────────────────────────────
 _bb: "Blackboard | None" = None
 _runtime = None  # OfflineVoiceRuntime, lazy-loaded on first connection
+_wayfinder = None  # Wayfinder, injected from start_robot.py (or lazy-loaded)
 
 
 def _get_runtime():
@@ -49,6 +50,19 @@ def _get_runtime():
         _runtime = OfflineVoiceRuntime(_bb)
         log.info("NLU runtime ready.")
     return _runtime
+
+
+def _get_wayfinder():
+    """Return the injected Wayfinder, lazy-loading one if none was provided."""
+    global _wayfinder
+    if _wayfinder is None:
+        try:
+            from voice.wayfinding import Wayfinder
+            log.info("Loading Wayfinder (no instance was injected)...")
+            _wayfinder = Wayfinder()
+        except Exception as exc:
+            log.error(f"Wayfinder unavailable: {exc}")
+    return _wayfinder
 
 def reload_nlu_runtime():
     """Clear the cached runtime so it reloads from disk on the next request."""
@@ -195,11 +209,28 @@ def _match_intent(runtime, user_text: str) -> dict:
     Synchronous NLU matching (runs in a thread via run_in_executor).
     Returns a dict with reply_text, audio_url, and action.
     """
+    from voice.offline_voice.runtime import route_domain, get_time_reply
+
     audio_base = APP_DIR / "assets" / "audio_cache"
 
-    intent = runtime.matcher.match(user_text)
+    # ── Tool routes (dynamic replies, no retrieval) ──────────────────────────
+    domain = route_domain(user_text)
+    if domain == "tool_time":
+        return {
+            "reply_text": get_time_reply(),
+            "audio_url": None,  # browser Deepgram TTS speaks the dynamic text
+            "action": {},
+        }
+
+    intent = runtime.matcher.match(user_text, domain=domain)
 
     if intent:
+        action = intent.get("action", {}) or {}
+
+        # ── Navigate intents: run live pathfinding and enrich the action ─────
+        if action.get("action") == "navigate" and action.get("destination"):
+            return _navigate_response(action["destination"])
+
         audio_file = intent.get("audio_file")
         audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
 
@@ -213,7 +244,7 @@ def _match_intent(runtime, user_text: str) -> dict:
         return {
             "reply_text": intent.get("response_text", ""),
             "audio_url": audio_url,
-            "action": intent.get("action", {}),
+            "action": action,
         }
 
     # No intent matched — return fallback
@@ -230,16 +261,81 @@ def _match_intent(runtime, user_text: str) -> dict:
     }
 
 
+def _navigate_response(destination: str) -> dict:
+    """Run Wayfinder pathfinding and build a map-ready navigate action."""
+    wayfinder = _get_wayfinder()
+    if wayfinder is None:
+        return {
+            "reply_text": "I'm sorry, my navigation system isn't available right now.",
+            "audio_url": None,
+            "action": {},
+        }
+
+    try:
+        result = wayfinder.find_path(destination)
+    except Exception as exc:
+        log.error(f"Wayfinder.find_path('{destination}') failed: {exc}")
+        result = None
+
+    if not result:
+        return {
+            "reply_text": f"I'm sorry, I couldn't find a path to {destination}.",
+            "audio_url": None,
+            "action": {},
+        }
+
+    if "error" in result:
+        return {
+            "reply_text": result["error"],
+            "audio_url": None,
+            "action": {},
+        }
+
+    # Same node shape LiveKit / v2 kiosk expect — include floor for the
+    # multi-floor switcher and scoped ids so path_ids line up.
+    nodes = [
+        {
+            "id": n["id"],
+            "label": n["label"],
+            "type": n.get("type", "room"),
+            "world": n["world"],
+            "building": n.get("building"),
+            "size": n.get("size", [1, 1, 1]),
+            "floor": n.get("floor", result.get("floor", "floor_1")),
+        }
+        for n in result["nodes"]
+    ]
+
+    return {
+        "reply_text": result["directions"],
+        "audio_url": None,  # spoken live via browser TTS so audio matches path
+        "action": {
+            "action": "navigate",
+            "destination": result["destination"],
+            "floor": result.get("floor", "floor_1"),
+            "path": result["path_coords"],
+            "path_coords": result["path_coords"],
+            "path_ids": result.get("path_ids", []),
+            "nodes": nodes,
+            "buildings": result["buildings"],
+        },
+    }
+
+
 # ── Public entry point (called from start_robot.py thread) ───────────────────
 
-def run_nlu_server(bb: "Blackboard", *, host: str = "0.0.0.0", port: int = 8765) -> None:
+def run_nlu_server(
+    bb: "Blackboard", *, host: str = "0.0.0.0", port: int = 8765, wayfinder=None
+) -> None:
     """
     Start the NLU WebSocket server on a dedicated asyncio event loop.
     Called from a daemon thread in start_robot.py.
     Blocking — runs until the Blackboard's running flag is cleared.
     """
-    global _bb
+    global _bb, _wayfinder
     _bb = bb
+    if wayfinder is not None:
+        _wayfinder = wayfinder
 
     try:
         import uvicorn

@@ -26,6 +26,7 @@ interface NavigationData {
   destination: string;
   floor: string;
   path: number[][];
+  path_ids?: string[];
   nodes: any[];
   buildings: any;
 }
@@ -97,7 +98,8 @@ function ImageDisplayLiveKit({
             setNavData({
               destination: message.destination,
               floor: message.floor,
-              path: message.path,
+              path: message.path || message.path_coords,
+              path_ids: message.path_ids || [],
               nodes: message.nodes,
               buildings: message.buildings,
             });
@@ -142,6 +144,7 @@ function ImageDisplayLiveKit({
         >
           <NavigationMap
             path={navData.path}
+            path_ids={navData.path_ids}
             nodes={navData.nodes}
             buildings={navData.buildings}
             destination={navData.destination}

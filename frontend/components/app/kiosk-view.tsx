@@ -32,7 +32,6 @@ import { ThemeToggle } from "@/components/app/theme-toggle";
 import { QRCodeSVG } from "qrcode.react";
 import { UploadCloud, X, Settings } from "lucide-react";
 import dynamic from "next/dynamic";
-import LoadingOverlay from "@/components/ui/LoadingOverlay";
 import { GeminiMorphButton } from "@/components/ui/GeminiMorphButton";
 import { SiriGlow } from "@/components/ui/SiriGlow";
 import { ImageDisplay } from "@/components/app/image-display";
@@ -41,12 +40,9 @@ import {
   useVoiceConfig,
 } from "@/hooks/use-voice-config";
 import { useNluAdapter } from "@/hooks/useNluAdapter";
+import type { NluAction } from "@/hooks/useNluVoice";
 
 // Lazy load 3D map to avoid SSR issues with Three.js
-const CampusMapEmbed = dynamic(
-  () => import("@/components/app/campus-map-embed"),
-  { ssr: false },
-);
 const NavigationMap = dynamic(() => import("@/components/app/isometric-map"), {
   ssr: false,
 });
@@ -145,7 +141,7 @@ type KioskViewUIProps = {
   agentState: string;
   maxVolume: number;
   room: any;
-  lastAction: Record<string, string> | null;
+  lastAction: NluAction | null;
 };
 
 function KioskViewUI({
@@ -259,7 +255,13 @@ function KioskViewUI({
   useEffect(() => {
     if (NLU_MODE) {
       if (lastAction && lastAction.action === "navigate" && lastAction.destination) {
-        setNavData(lastAction);
+        // Backend may send path, path_coords, or both — normalize for the v2 map.
+        setNavData({
+          ...lastAction,
+          path: lastAction.path ?? lastAction.path_coords,
+          path_coords: lastAction.path_coords ?? lastAction.path,
+          path_ids: lastAction.path_ids ?? [],
+        });
       }
       return;
     }
@@ -268,7 +270,11 @@ function KioskViewUI({
       try {
         const data = JSON.parse(new TextDecoder().decode(payload));
         if (data.type === "navigation") {
-          setNavData(data);
+          setNavData({
+            ...data,
+            path: data.path_coords || data.path,
+            path_ids: data.path_ids || [],
+          });
         }
       } catch (e) {}
     };
@@ -351,29 +357,121 @@ function KioskViewUI({
     }
   }, [latestTranscription?.text]);
 
-  // Keep other state variables below
+  // 3D Map data — full world-coordinate nodes for the mini-map preview
+  const [homeMapData, setHomeMapData] = useState<{
+    nodes: any[];
+    buildings: any;
+    edges: any[];
+  } | null>(null);
+  const [isMapExpanded, setIsMapExpanded] = useState(false);
+  const [isNavLoading, setIsNavLoading] = useState(false);
+  const isNavigating = navData !== null;
+
+  useEffect(() => {
+    fetch("/api/map?floor=floor_1")
+      .then((res) => res.json())
+      .then((data) => {
+        const buildings = data.buildings || {};
+        const edges = data.edges || [];
+        const nodes = (data.nodes || []).map((n: any) => {
+          const b = buildings[n.building] || { position: [0, 0, 0] };
+          return {
+            ...n,
+            floor: "floor_1",
+            world: [b.position[0] + n.x, 0, b.position[2] + n.z],
+          };
+        });
+        setHomeMapData({ nodes, buildings, edges });
+      })
+      .catch(() => {});
+  }, []);
+
+  // All-floor locations for category modal (Lecture Halls / Lab / Offices)
+  const [locationsModalCategory, setLocationsModalCategory] = useState<
+    string | null
+  >(null);
+  const [allLocations, setAllLocations] = useState<any[]>([]);
+  const [filteredLocations, setFilteredLocations] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch("/api/locations")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.locations) setAllLocations(data.locations);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleCategoryClick = (category: string, filterKeyword: string) => {
+    setLocationsModalCategory(category);
+    if (filterKeyword === "office") {
+      // "Offices & More" — everything that isn't a lecture hall or lab
+      setFilteredLocations(
+        allLocations.filter((loc) => {
+          const l = loc.label.toLowerCase();
+          return (
+            !l.includes("lecture") &&
+            !l.includes("lab") &&
+            !l.includes("stair")
+          );
+        }),
+      );
+    } else {
+      setFilteredLocations(
+        allLocations.filter((loc) =>
+          loc.label.toLowerCase().includes(filterKeyword.toLowerCase()),
+        ),
+      );
+    }
+  };
+
+  const handleNavigateToLocation = async (destination: string) => {
+    setLocationsModalCategory(null);
+    setIsMapExpanded(true);
+    setIsNavLoading(true);
+    try {
+      const res = await fetch(
+        `/api/navigate?destination=${encodeURIComponent(destination)}`,
+      );
+      const data = await res.json();
+      if (data && data.path_coords) {
+        setNavData({
+          type: "navigation",
+          destination: data.destination,
+          floor: data.floor,
+          path: data.path_coords,
+          path_coords: data.path_coords,
+          path_ids: data.path_ids || [],
+          directions: data.directions || "",
+          nodes: data.nodes || [],
+          buildings: data.buildings || {},
+        });
+        // Ask the voice agent to speak directions when a session is live
+        if (isConnected) {
+          sendEventFocus({
+            title: destination,
+            message: `Please give me directions to ${destination}`,
+            category: "navigation",
+          });
+        }
+      } else {
+        console.error("Navigate API error:", data);
+        setIsMapExpanded(false);
+      }
+    } catch (e) {
+      console.error("Failed to fetch navigation:", e);
+      setIsMapExpanded(false);
+    } finally {
+      setIsNavLoading(false);
+    }
+  };
+
   const [time, setTime] = useState("");
   const [dateStr, setDateStr] = useState("");
 
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isColorModalOpen, setIsColorModalOpen] = useState(false);
   const [qrUrl, setQrUrl] = useState("");
-
-  // 3D Map data from saved floor
-  const [mapData, setMapData] = useState<any>(null);
-  const [mapRooms, setMapRooms] = useState<any[]>([]);
-
-  useEffect(() => {
-    fetch("/api/map?floor=floor_1")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && data.nodes) {
-          setMapData(data);
-          setMapRooms(data.nodes.filter((n: any) => n.type !== "waypoint"));
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     async function fetchIp() {
@@ -875,18 +973,23 @@ function KioskViewUI({
             {/* Middle Column: Events Carousel & Microphone — flex-1 fills freed space */}
             <motion.div layout initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 30, delay: 0.1 }} className="flex-1 h-full min-h-0 flex flex-col gap-2 min-w-0">
               <div className="bg-[#e6f4ea] dark:bg-[#050505] rounded-[32px] flex-1 overflow-hidden relative flex flex-col min-h-0">
-                {navData ? (
+                {isNavLoading ? (
+                  <div className="flex-1 flex items-center justify-center flex-col gap-4 bg-surface-container rounded-[32px]">
+                    <span className="material-symbols-outlined animate-spin text-primary text-5xl">navigation</span>
+                    <p className="text-on-surface-variant font-semibold text-[15px]">Calculating route...</p>
+                  </div>
+                ) : isNavigating ? (
                   <div className="flex-1 flex flex-col relative h-full bg-surface-container rounded-[32px] overflow-hidden">
-                    <div className="absolute top-4 left-6 right-6 z-20 flex justify-between items-center bg-surface-container-highest border-none rounded-full px-6 py-3">
+                    <div className="absolute top-4 left-6 right-6 z-20 flex justify-between items-center bg-surface-container-highest border-none rounded-full px-6 py-3 shadow-md">
                       <div className="flex items-center gap-3 text-on-surface">
-                        <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-                        <span className="text-white text-lg font-bold">
+                        <div className="w-3 h-3 bg-primary rounded-full animate-pulse" />
+                        <span className="text-on-surface text-lg font-bold">
                           Navigating to: {navData.destination}
                         </span>
                       </div>
                       <button
-                        onClick={() => setNavData(null)}
-                        className="text-gray-400 hover:text-white text-2xl font-bold transition-colors"
+                        onClick={() => { setNavData(null); setIsMapExpanded(false); }}
+                        className="text-on-surface-variant hover:text-on-surface text-2xl font-bold transition-colors"
                       >
                         &times;
                       </button>
@@ -899,13 +1002,36 @@ function KioskViewUI({
                       }
                     >
                       <NavigationMap
-                        path={navData.path}
+                        path={navData.path_coords || navData.path}
+                        path_ids={navData.path_ids}
                         nodes={navData.nodes}
                         buildings={navData.buildings}
                         destination={navData.destination}
-                        inline={true}
-                        onClose={() => setNavData(null)}
+                        isManualExpanded={true}
+                        onClose={() => { setNavData(null); setIsMapExpanded(false); }}
                       />
+                    </Suspense>
+                  </div>
+                ) : isMapExpanded ? (
+                  <div className="flex-1 flex flex-col relative h-full bg-surface-container rounded-[32px] overflow-hidden">
+                    <button
+                      onClick={() => setIsMapExpanded(false)}
+                      className="absolute top-6 right-6 z-20 w-12 h-12 flex items-center justify-center bg-surface-variant/90 backdrop-blur-sm border border-outline-variant/30 rounded-full text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest hover:scale-105 active:scale-95 text-3xl font-light transition-all shadow-md"
+                      aria-label="Close Map"
+                    >
+                      &times;
+                    </button>
+                    <Suspense fallback={<div className="flex h-full items-center justify-center text-white/50 animate-pulse">Loading Map...</div>}>
+                      {homeMapData && (
+                        <NavigationMap
+                          nodes={homeMapData.nodes}
+                          buildings={homeMapData.buildings}
+                          edges={homeMapData.edges}
+                          isStandalone={true}
+                          hideFloorSwitcher={false}
+                          onNodeClick={handleNavigateToLocation}
+                        />
+                      )}
                     </Suspense>
                   </div>
                 ) : (isConnected && !isAgentInitializing) ? (
@@ -1113,86 +1239,159 @@ function KioskViewUI({
               </div>
             </motion.div>
 
-            {/* Right Column: Navigation — collapses when poster is focused */}
+            {/* Right Column: Navigation — collapses when poster is focused or map is active */}
             <motion.div
               layout
               initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: focusedEvent ? 0 : 1, y: 0, width: focusedEvent ? "0px" : "20%" }}
+              animate={{
+                opacity: focusedEvent || isMapExpanded || isNavigating ? 0 : 1,
+                y: 0,
+                width: focusedEvent || isMapExpanded || isNavigating ? "0px" : "20%",
+              }}
               transition={{ type: "spring", stiffness: 300, damping: 30, delay: 0.2 }}
               className="flex flex-col gap-2 h-full min-h-0 flex-shrink-0"
             >
-              {/* Where to? Card — with embedded 3D map (Material Secondary Tint) */}
+              {/* Where to? Card — multi-floor NavigationMap with category modal */}
               <div className="relative flex-1 flex flex-col min-h-0">
-                <SiriGlow active={glowingSection === 'where-to'} />
+                <SiriGlow active={glowingSection === "where-to"} />
                 <div className="z-10 bg-[#f3edf7] dark:bg-[#050505] rounded-[32px] p-5 flex-1 flex flex-col relative overflow-hidden min-h-0">
-                <h2 className="text-[24px] leading-[32px] tracking-[-0.02em] text-on-surface mb-2 font-bold flex-shrink-0">
-                  Where to?
-                </h2>
+                  <h2 className="text-[24px] leading-[32px] tracking-[-0.02em] text-on-surface mb-2 font-bold flex-shrink-0">
+                    Where to?
+                  </h2>
 
-                {/* Embedded 3D Campus Map */}
-                <div className="flex-1 min-h-0 rounded-[1.5rem] overflow-hidden mb-4 bg-surface-container border-none relative">
-                  <Suspense
-                    fallback={
-                      <LoadingOverlay label="Loading map..." />
-                    }
-                  >
-                    <CampusMapEmbed mapData={mapData} />
-                  </Suspense>
-                </div>
-
-                {/* Room buttons */}
-                <div className="flex flex-col gap-2 w-full flex-shrink-0">
-                  {mapRooms.length > 0 ? (
-                    mapRooms.slice(0, 3).map((roomNode, i) => (
-                      <button
-                        key={roomNode.id}
-                        onClick={() => {
-                          const navEvent = {
-                            title: roomNode.label,
-                            message: `Please give me directions to ${roomNode.label}`,
-                            category: "navigation",
-                          };
-                          if (!isConnected) {
-                            pendingEventRef.current = navEvent;
-                            startSession();
-                          } else {
-                            sendEventFocus(navEvent);
-                          }
-                        }}
-                        className="bg-white/50 dark:bg-black/20 hover:bg-white/80 dark:hover:bg-black/40 text-on-surface border border-outline-variant/30 rounded-2xl h-[48px] w-full text-[14px] flex items-center justify-start px-5 gap-3 transition-all active:scale-[0.98] font-bold flex-shrink-0"
+                  {/* Mini map preview — tap to expand */}
+                  <AnimatePresence>
+                    {!isNavigating && !isMapExpanded && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0, marginBottom: 0 }}
+                        animate={{ opacity: 1, height: 180, marginBottom: 8 }}
+                        exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                        className="w-full rounded-2xl overflow-hidden relative bg-black/10 mt-2 shadow-inner border border-outline/20 flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-primary transition-all group"
+                        onClick={() => setIsMapExpanded(true)}
                       >
-                        <span className="material-symbols-outlined text-[20px] opacity-70">
-                          {i === 0
-                            ? "school"
-                            : i === 1
-                              ? "apartment"
-                              : "meeting_room"}
-                        </span>
-                        <span className="truncate capitalize">{roomNode.label.toLowerCase()}</span>
-                      </button>
-                    ))
-                  ) : (
-                    <>
-                      <button className="bg-primary/10 text-primary border border-primary/20 rounded-2xl h-[48px] w-full text-[14px] flex items-center justify-start px-5 gap-3 transition-all active:scale-[0.98] font-semibold flex-shrink-0">
-                        <span className="material-symbols-outlined text-[20px] opacity-80">
-                          school
-                        </span>
-                        <span className="truncate">Dean's Office</span>
-                      </button>
-                      <button className="bg-transparent text-on-surface border border-transparent hover:bg-black/5 dark:hover:bg-white/5 hover:border-black/10 dark:hover:border-white/10 rounded-2xl h-[48px] w-full text-[14px] flex items-center justify-start px-5 gap-3 transition-all active:scale-[0.98] font-semibold flex-shrink-0">
-                        <span className="material-symbols-outlined text-[20px] opacity-80">
-                          apartment
-                        </span>
-                        <span className="truncate">Main Hall</span>
-                      </button>
-                    </>
-                  )}
+                        {homeMapData ? (
+                          <div className="absolute inset-0">
+                            <Suspense
+                              fallback={
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <span className="material-symbols-outlined animate-spin text-primary opacity-50">
+                                    refresh
+                                  </span>
+                                </div>
+                              }
+                            >
+                              <NavigationMap
+                                nodes={homeMapData.nodes}
+                                buildings={homeMapData.buildings}
+                                edges={homeMapData.edges}
+                                isStandalone={true}
+                                hideFloorSwitcher={true}
+                                onNodeClick={handleNavigateToLocation}
+                              />
+                            </Suspense>
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center cursor-pointer">
+                              <span className="material-symbols-outlined text-white opacity-0 group-hover:opacity-100 transition-opacity text-4xl drop-shadow-md">
+                                open_in_full
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="material-symbols-outlined animate-spin text-primary opacity-50">
+                              refresh
+                            </span>
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Category quick-nav buttons */}
+                  <div className="flex flex-col gap-2 mt-auto w-full flex-shrink-0">
+                    <button
+                      onClick={() => handleCategoryClick("Lecture Halls", "lecture")}
+                      className="bg-primary text-on-primary rounded-full h-[46px] w-full text-[15px] flex items-center justify-center gap-3 hover:bg-surface-tint transition-colors active:scale-95 shadow-md font-bold flex-shrink-0"
+                    >
+                      <span className="material-symbols-outlined text-xl">school</span>
+                      Lecture Halls
+                    </button>
+                    <button
+                      onClick={() => handleCategoryClick("Laboratory", "lab")}
+                      className="bg-surface-variant text-on-surface-variant rounded-full h-[46px] w-full text-[15px] flex items-center justify-center gap-3 hover:bg-surface-container-highest transition-colors active:scale-95 shadow-sm border border-outline-variant font-bold flex-shrink-0"
+                    >
+                      <span className="material-symbols-outlined text-xl">science</span>
+                      Laboratory
+                    </button>
+                    <button
+                      onClick={() => handleCategoryClick("Offices & More", "office")}
+                      className="bg-surface-variant text-on-surface-variant rounded-full h-[46px] w-full text-[15px] flex items-center justify-center gap-3 hover:bg-surface-container-highest transition-colors active:scale-95 shadow-sm border border-outline-variant font-bold flex-shrink-0"
+                    >
+                      <span className="material-symbols-outlined text-xl">apartment</span>
+                      Offices &amp; More
+                    </button>
+                  </div>
                 </div>
-              </div>
               </div>
             </motion.div>
           </div>
         </main>
+
+        {/* Locations Category Modal */}
+        <AnimatePresence>
+          {locationsModalCategory && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end justify-center"
+              onClick={() => setLocationsModalCategory(null)}
+            >
+              <motion.div
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                className="bg-surface text-on-surface w-full max-w-xl rounded-t-3xl p-6 max-h-[70vh] overflow-y-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xl font-bold">{locationsModalCategory}</h3>
+                  <button
+                    onClick={() => setLocationsModalCategory(null)}
+                    className="text-on-surface-variant hover:text-on-surface bg-surface-variant/50 hover:bg-surface-variant p-2 rounded-full transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                {filteredLocations.length === 0 ? (
+                  <p className="text-center text-on-surface-variant py-8">
+                    No rooms found in this category.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {filteredLocations.map((loc) => (
+                      <button
+                        key={`${loc.floor}-${loc.id}`}
+                        onClick={() => handleNavigateToLocation(loc.label)}
+                        className="bg-surface-container hover:bg-surface-container-highest text-on-surface border border-outline-variant/30 rounded-2xl h-[52px] w-full text-[15px] flex items-center justify-between px-5 gap-3 transition-all active:scale-[0.98] font-semibold"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="material-symbols-outlined text-[20px] text-primary opacity-70">
+                            navigation
+                          </span>
+                          <span className="truncate">{loc.label}</span>
+                        </div>
+                        <span className="text-[11px] font-bold text-on-surface-variant opacity-60 flex-shrink-0">
+                          {(loc.floor as string).replace("floor_", "Floor ")}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Upload Poster QR Modal */}
         {isUploadModalOpen && (

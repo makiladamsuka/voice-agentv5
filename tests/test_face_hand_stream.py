@@ -658,10 +658,44 @@ class AnimationRunner:
             if not moved:
                 break
 
+    def _play_smooth_sequence(self, sequence, speed, home):
+        current = [home["a0"], home["a1"], home["a2"], home["a3"]]
+        pose_duration = max(0.2, 0.8 / max(0.1, speed))
+        dt = 0.03
+        
+        for target_pose in sequence:
+            targets = [target_pose["a0"], target_pose["a1"], target_pose["a2"], target_pose["a3"]]
+            start = list(current)
+            steps = int(pose_duration / dt)
+            
+            for i in range(1, steps + 1):
+                t = i / steps
+                # Cubic ease-in-out (acceleration and deceleration)
+                eased = t * t * (3.0 - 2.0 * t)
+                for j in range(4):
+                    current[j] = start[j] + (targets[j] - start[j]) * eased
+                self.link.write_arms(current[0], current[1], current[2], current[3], force=True)
+                time.sleep(dt)
+
+        # Return home smoothly
+        start = list(current)
+        targets = [home["a0"], home["a1"], home["a2"], home["a3"]]
+        steps = int(0.6 / dt)
+        for i in range(1, steps + 1):
+            t = i / steps
+            eased = t * t * (3.0 - 2.0 * t)
+            for j in range(4):
+                current[j] = start[j] + (targets[j] - start[j]) * eased
+            self.link.write_arms(current[0], current[1], current[2], current[3], force=True)
+            time.sleep(dt)
+
     def _play_hi(self):
         self.tune.set("animation_active", "hi")
+        # For smooth sequence, we'll just use the average of V and H speed
         speed_v = self.tune.get("hi_speed_v")
         speed_h = self.tune.get("hi_speed_h")
+        speed = (speed_v + speed_h) / 2.0
+        
         poses = self._presets.get("poses", {})
         hi_poses = [poses.get(f"hi{i}") for i in range(1, 5) if poses.get(f"hi{i}")]
         home = poses.get("home", {"a0": 47, "a1": 65, "a2": 54, "a3": 76})
@@ -680,8 +714,8 @@ class AnimationRunner:
                     pass
             threading.Thread(target=_spin, daemon=True).start()
 
-        # Play hi sequence elastically
-        self._play_elastic_sequence(hi_poses, speed_v, speed_h, home, pose_duration=0.5)
+        # Play hi sequence with smooth ease-in-out (acceleration/deceleration)
+        self._play_smooth_sequence(hi_poses, speed, home)
 
         # Rotate back (concurrent with returning home)
         if base_deg > 0:
@@ -693,7 +727,7 @@ class AnimationRunner:
             threading.Thread(target=_spin_back, daemon=True).start()
 
         self.tune.set("animation_active", "")
-        return "Hi wave complete (elastic)"
+        return "Hi wave complete (smooth)"
 
     def _play_bye(self):
         self.tune.set("animation_active", "bye")

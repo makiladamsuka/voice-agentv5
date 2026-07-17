@@ -54,6 +54,7 @@ except ImportError:
     Image = None
 
 from lib.hand_detector import HandDetector, draw_skeleton
+from lib.elastic_head_motion import HeadMotionParams, tick_toward
 from hardware.arduino_servo import ArduinoServoLink
 
 # ── Config loading ───────────────────────────────────────────────────────────
@@ -141,10 +142,13 @@ class TuneState:
         self.bye_gesture_enabled = True
         self.talk_gesture_enabled = True
 
-        # Animation speeds (seconds per frame)
-        self.hi_speed = 0.15
-        self.bye_speed = 0.15
-        self.talk_speed = 0.4
+        # Animation speeds (seconds per frame or multipliers)
+        self.hi_speed_v = float(_cfg(cfg, "hi_gesture", "vertical_speed", default=1.0))
+        self.hi_speed_h = float(_cfg(cfg, "hi_gesture", "horizontal_speed", default=1.5))
+        self.bye_speed_v = float(_cfg(cfg, "bye_gesture", "vertical_speed", default=1.0))
+        self.bye_speed_h = float(_cfg(cfg, "bye_gesture", "horizontal_speed", default=1.5))
+        self.talk_speed_v = float(_cfg(cfg, "talk_gesture", "vertical_speed", default=1.0))
+        self.talk_speed_h = float(_cfg(cfg, "talk_gesture", "horizontal_speed", default=1.5))
         self.base_rotate_deg = 15.0
 
         # Stats (read-only from detection thread)
@@ -167,6 +171,10 @@ class TuneState:
         # Manual control deltas (set by keyboard, consumed by servo thread)
         self.manual_pan_delta = 0.0
         self.manual_tilt_delta = 0.0
+        self.manual_arm_up = False
+        self.manual_arm_down = False
+        self.manual_arm_left = False
+        self.manual_arm_right = False
         self.manual_mode = False
         self.manual_step = 2.0
 
@@ -461,6 +469,10 @@ class ServoThread(threading.Thread):
         self.link = link
         self.pan = self.tune.get("pan_center")
         self.tilt = self.tune.get("tilt_center")
+        self.a0 = 47.0
+        self.a1 = 65.0
+        self.a2 = 54.0
+        self.a3 = 76.0
 
     def run(self):
         if self.link is None or not self.link.connected:
@@ -474,21 +486,52 @@ class ServoThread(threading.Thread):
             if not self.tune.get("servo_enabled"):
                 continue
 
-            # ── Manual WASD control ──────────────────────────────────────
+            # ── Manual WASD & IJKL control ────────────────────────────────
             pan_delta = self.tune.get("manual_pan_delta")
             tilt_delta = self.tune.get("manual_tilt_delta")
+            arm_up = self.tune.get("manual_arm_up")
+            arm_down = self.tune.get("manual_arm_down")
+            arm_left = self.tune.get("manual_arm_left")
+            arm_right = self.tune.get("manual_arm_right")
             manual_mode = self.tune.get("manual_mode")
 
-            if manual_mode and (abs(pan_delta) > 0.001 or abs(tilt_delta) > 0.001):
+            is_head_moving = abs(pan_delta) > 0.001 or abs(tilt_delta) > 0.001
+            is_arm_moving = arm_up or arm_down or arm_left or arm_right
+
+            if manual_mode and (is_head_moving or is_arm_moving):
                 step = self.tune.get("manual_step")
-                self.pan += pan_delta * step
-                self.tilt += tilt_delta * step
-                self.pan = max(self.tune.get("pan_min"), min(self.tune.get("pan_max"), self.pan))
-                self.tilt = max(self.tune.get("tilt_min"), min(self.tune.get("tilt_max"), self.tilt))
-                self.tune.set("current_pan", self.pan)
-                self.tune.set("current_tilt", self.tilt)
+                
+                if is_head_moving:
+                    self.pan += pan_delta * step
+                    self.tilt += tilt_delta * step
+                    self.pan = max(self.tune.get("pan_min"), min(self.tune.get("pan_max"), self.pan))
+                    self.tilt = max(self.tune.get("tilt_min"), min(self.tune.get("tilt_max"), self.tilt))
+                    self.tune.set("current_pan", self.pan)
+                    self.tune.set("current_tilt", self.tilt)
+                    
+                if is_arm_moving:
+                    if arm_up:
+                        self.a0 += step
+                        self.a1 += step
+                    if arm_down:
+                        self.a0 -= step
+                        self.a1 -= step
+                    if arm_left:
+                        self.a2 -= step
+                        self.a3 += step
+                    if arm_right:
+                        self.a2 += step
+                        self.a3 -= step
+                    self.a0 = max(0, min(180, self.a0))
+                    self.a1 = max(0, min(180, self.a1))
+                    self.a2 = max(0, min(180, self.a2))
+                    self.a3 = max(0, min(180, self.a3))
+                    
                 if self.link is not None and self.link.connected:
-                    self.link.write_angles(self.pan, self.tilt, force=True)
+                    if is_head_moving:
+                        self.link.write_angles(self.pan, self.tilt, force=True)
+                    if is_arm_moving:
+                        self.link.write_arms(self.a0, self.a1, self.a2, self.a3, force=True)
                 continue
 
             # ── Auto tracking ────────────────────────────────────────────
@@ -565,9 +608,50 @@ class AnimationRunner:
             else:
                 return f"Unknown command: {command}"
 
+    def _play_elastic_sequence(self, sequence, speed_v, speed_h, home, pose_duration=0.5):
+        # Init state
+        arms = [home["a0"], home["a1"], home["a2"], home["a3"]]
+        vels = [0.0, 0.0, 0.0, 0.0]
+        
+        base_vel = 120.0
+        base_accel = 300.0
+        base_decel = 350.0
+        
+        p_v = HeadMotionParams(
+            max_vel_pos=base_vel * speed_v, max_vel_neg=base_vel * speed_v,
+            accel=base_accel * speed_v, decel=base_decel * speed_v, track_gain=10.0
+        )
+        p_h = HeadMotionParams(
+            max_vel_pos=base_vel * speed_h, max_vel_neg=base_vel * speed_h,
+            accel=base_accel * speed_h, decel=base_decel * speed_h, track_gain=10.0
+        )
+        
+        dt = 0.03
+        for target_pose in sequence:
+            targets = [target_pose["a0"], target_pose["a1"], target_pose["a2"], target_pose["a3"]]
+            # Hold each pose while moving elastically
+            for _ in range(int(pose_duration / dt)):
+                arms[0], vels[0] = tick_toward(arms[0], vels[0], targets[0], dt, lo=0, hi=180, params=p_v)
+                arms[1], vels[1] = tick_toward(arms[1], vels[1], targets[1], dt, lo=0, hi=180, params=p_v)
+                arms[2], vels[2] = tick_toward(arms[2], vels[2], targets[2], dt, lo=0, hi=180, params=p_h)
+                arms[3], vels[3] = tick_toward(arms[3], vels[3], targets[3], dt, lo=0, hi=180, params=p_h)
+                self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=False)
+                time.sleep(dt)
+
+        # Return home elastically
+        targets = [home["a0"], home["a1"], home["a2"], home["a3"]]
+        for _ in range(int(0.6 / dt)):
+            arms[0], vels[0] = tick_toward(arms[0], vels[0], targets[0], dt, lo=0, hi=180, params=p_v)
+            arms[1], vels[1] = tick_toward(arms[1], vels[1], targets[1], dt, lo=0, hi=180, params=p_v)
+            arms[2], vels[2] = tick_toward(arms[2], vels[2], targets[2], dt, lo=0, hi=180, params=p_h)
+            arms[3], vels[3] = tick_toward(arms[3], vels[3], targets[3], dt, lo=0, hi=180, params=p_h)
+            self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=False)
+            time.sleep(dt)
+
     def _play_hi(self):
         self.tune.set("animation_active", "hi")
-        speed = self.tune.get("hi_speed")
+        speed_v = self.tune.get("hi_speed_v")
+        speed_h = self.tune.get("hi_speed_h")
         poses = self._presets.get("poses", {})
         hi_poses = [poses.get(f"hi{i}") for i in range(1, 5) if poses.get(f"hi{i}")]
         home = poses.get("home", {"a0": 47, "a1": 65, "a2": 54, "a3": 76})
@@ -584,17 +668,8 @@ class AnimationRunner:
             except Exception:
                 pass
 
-        # Play hi sequence
-        for pose in hi_poses:
-            self.link.write_arms(pose["a0"], pose["a1"], pose["a2"], pose["a3"], force=True)
-            time.sleep(speed)
-
-        # Hold the last pose briefly
-        time.sleep(0.3)
-
-        # Return home
-        self.link.write_arms(home["a0"], home["a1"], home["a2"], home["a3"], force=True)
-        time.sleep(0.3)
+        # Play hi sequence elastically
+        self._play_elastic_sequence(hi_poses, speed_v, speed_h, home, pose_duration=0.5)
 
         # Rotate back
         if base_deg > 0:
@@ -604,11 +679,12 @@ class AnimationRunner:
                 pass
 
         self.tune.set("animation_active", "")
-        return "Hi wave complete"
+        return "Hi wave complete (elastic)"
 
     def _play_bye(self):
         self.tune.set("animation_active", "bye")
-        speed = self.tune.get("bye_speed")
+        speed_v = self.tune.get("bye_speed_v")
+        speed_h = self.tune.get("bye_speed_h")
         anims = self._presets.get("animations", {})
         bye_names = [k for k in anims if k.startswith("bye")]
         if not bye_names:
@@ -617,6 +693,8 @@ class AnimationRunner:
 
         chosen = random.choice(bye_names)
         frames = anims[chosen].get("frames", [])
+        poses = self._presets.get("poses", {})
+        home = poses.get("home", {"a0": 47, "a1": 65, "a2": 54, "a3": 76})
 
         # Optional base rotate
         base_deg = self.tune.get("base_rotate_deg")
@@ -626,9 +704,7 @@ class AnimationRunner:
             except Exception:
                 pass
 
-        for frame in frames:
-            self.link.write_arms(frame["a0"], frame["a1"], frame["a2"], frame["a3"], force=True)
-            time.sleep(speed)
+        self._play_elastic_sequence(frames, speed_v, speed_h, home, pose_duration=0.4)
 
         # Rotate back
         if base_deg > 0:
@@ -638,11 +714,13 @@ class AnimationRunner:
                 pass
 
         self.tune.set("animation_active", "")
-        return f"Bye wave ({chosen}) complete"
+        return f"Bye wave ({chosen}) complete (elastic)"
 
     def _play_talk(self):
         self.tune.set("animation_active", "talk")
-        speed = self.tune.get("talk_speed")
+        speed_v = self.tune.get("talk_speed_v")
+        speed_h = self.tune.get("talk_speed_h")
+        
         poses = self._presets.get("poses", {})
         talk_poses = [poses.get(f"talk{i}") for i in range(1, 11) if poses.get(f"talk{i}")]
         home = poses.get("home", {"a0": 47, "a1": 65, "a2": 54, "a3": 76})
@@ -651,20 +729,13 @@ class AnimationRunner:
             self.tune.set("animation_active", "")
             return "No talk poses found"
 
-        # Pick 4-6 random talk poses
         count = min(len(talk_poses), random.randint(4, 6))
         sequence = random.sample(talk_poses, count)
-
-        for pose in sequence:
-            self.link.write_arms(pose["a0"], pose["a1"], pose["a2"], pose["a3"], force=True)
-            time.sleep(speed)
-
-        # Return home
-        self.link.write_arms(home["a0"], home["a1"], home["a2"], home["a3"], force=True)
-        time.sleep(0.3)
+        
+        self._play_elastic_sequence(sequence, speed_v, speed_h, home, pose_duration=0.5)
 
         self.tune.set("animation_active", "")
-        return "Talk gesture complete"
+        return "Talk gesture complete (elastic)"
 
     def _play_home(self):
         self.tune.set("animation_active", "home")
@@ -784,19 +855,22 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <div style="text-align:center">
           <div style="font-size:0.75em;color:#888;margin-bottom:4px">Head (WASD)</div>
           <div class="keys-grid">
-            <div class="placeholder"></div>
-            <span class="kbd" id="k_w">W</span>
-            <div class="placeholder"></div>
-            <span class="kbd" id="k_a">A</span>
-            <span class="kbd" id="k_s">S</span>
-            <span class="kbd" id="k_d">D</span>
+            <div class="placeholder"></div><span class="kbd" id="k_w">W</span><div class="placeholder"></div>
+            <span class="kbd" id="k_a">A</span><span class="kbd" id="k_s">S</span><span class="kbd" id="k_d">D</span>
           </div>
         </div>
         <div style="text-align:center">
-          <div style="font-size:0.75em;color:#888;margin-bottom:4px">Base (J/K)</div>
+          <div style="font-size:0.75em;color:#888;margin-bottom:4px">Arms (IJKL)</div>
+          <div class="keys-grid">
+            <div class="placeholder"></div><span class="kbd" id="k_i">I</span><div class="placeholder"></div>
+            <span class="kbd" id="k_j">J</span><span class="kbd" id="k_k">K</span><span class="kbd" id="k_l">L</span>
+          </div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:0.75em;color:#888;margin-bottom:4px">Base (1/2)</div>
           <div style="display:flex;gap:3px;justify-content:center;margin-top:3px">
-            <span class="kbd" id="k_j">J ←</span>
-            <span class="kbd" id="k_k">K →</span>
+            <span class="kbd" id="k_1">1 ←</span>
+            <span class="kbd" id="k_2">2 →</span>
           </div>
         </div>
       </div>
@@ -823,9 +897,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="toggle-row"><input type="checkbox" id="bye_gesture_enabled" checked><label>Bye Wave</label></div>
       <div class="toggle-row"><input type="checkbox" id="talk_gesture_enabled" checked><label>Talk Gesture</label></div>
 
-      <div class="slider-row"><label>Hi Speed</label><input type="range" id="hi_speed" min="0.05" max="0.5" step="0.01"><span class="val" id="v_hi_speed"></span></div>
-      <div class="slider-row"><label>Bye Speed</label><input type="range" id="bye_speed" min="0.05" max="0.5" step="0.01"><span class="val" id="v_bye_speed"></span></div>
-      <div class="slider-row"><label>Talk Speed</label><input type="range" id="talk_speed" min="0.1" max="1.0" step="0.05"><span class="val" id="v_talk_speed"></span></div>
+      <div class="slider-row"><label>Hi V-Speed</label><input type="range" id="hi_speed_v" min="0.1" max="4.0" step="0.1"><span class="val" id="v_hi_speed_v"></span></div>
+      <div class="slider-row"><label>Hi H-Speed</label><input type="range" id="hi_speed_h" min="0.1" max="4.0" step="0.1"><span class="val" id="v_hi_speed_h"></span></div>
+      <div class="slider-row"><label>Bye V-Speed</label><input type="range" id="bye_speed_v" min="0.1" max="4.0" step="0.1"><span class="val" id="v_bye_speed_v"></span></div>
+      <div class="slider-row"><label>Bye H-Speed</label><input type="range" id="bye_speed_h" min="0.1" max="4.0" step="0.1"><span class="val" id="v_bye_speed_h"></span></div>
+      <div class="slider-row"><label>Talk V-Speed</label><input type="range" id="talk_speed_v" min="0.1" max="4.0" step="0.1"><span class="val" id="v_talk_speed_v"></span></div>
+      <div class="slider-row"><label>Talk H-Speed</label><input type="range" id="talk_speed_h" min="0.1" max="4.0" step="0.1"><span class="val" id="v_talk_speed_h"></span></div>
       <div class="slider-row"><label>Base Rotate °</label><input type="range" id="base_rotate_deg" min="0" max="45" step="1"><span class="val" id="v_base_rotate_deg"></span></div>
 
       <div class="btn-group">
@@ -883,7 +960,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 const SLIDERS = [
   'detect_res_w','detect_res_h','jpeg_quality','vision_fps','confidence_threshold',
   'deadzone_x','deadzone_y','pan_p_gain','tilt_p_gain','manual_step',
-  'hi_speed','bye_speed','talk_speed','base_rotate_deg'
+  'hi_speed_v','hi_speed_h','bye_speed_v','bye_speed_h',
+  'talk_speed_v','talk_speed_h','base_rotate_deg'
 ];
 const TOGGLES = [
   'face_detection_enabled','hand_detection_enabled','face_tracking_enabled','hand_tracking_enabled',
@@ -923,7 +1001,7 @@ for (const id of TOGGLES) {
 
 // ── Keyboard controls ───────────────────────────────────────────────────────
 const keyState = {};
-const keyMap = {w:'k_w', a:'k_a', s:'k_s', d:'k_d', j:'k_j', k:'k_k'};
+const keyMap = {w:'k_w', a:'k_a', s:'k_s', d:'k_d', i:'k_i', j:'k_j', k:'k_k', l:'k_l', '1':'k_1', '2':'k_2'};
 
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;  // don't hijack text input
@@ -1124,10 +1202,10 @@ class StreamHandler(BaseHTTPRequestHandler):
             tilt_d = -1.0 if pressed else 0.0
         elif key == "s":
             tilt_d = 1.0 if pressed else 0.0
-        elif key in ("j", "k"):
+        elif key in ("1", "2"):
             if pressed and self.link is not None and self.link.connected:
                 deg = self.tune.get("base_rotate_deg") or 15.0
-                if key == "j":
+                if key == "1":
                     deg = -deg
                 threading.Thread(
                     target=lambda: self.link.write_base_step_spin(deg, timeout_sec=5.0),
@@ -1139,9 +1217,26 @@ class StreamHandler(BaseHTTPRequestHandler):
             self.tune.set("manual_pan_delta", pan_d)
         elif key in ("w", "s"):
             self.tune.set("manual_tilt_delta", tilt_d)
+            
+        elif key == "i":
+            self.tune.set("manual_arm_up", pressed)
+            self.tune.set("manual_mode", pressed or self.tune.get("manual_mode"))
+        elif key == "k":
+            self.tune.set("manual_arm_down", pressed)
+            self.tune.set("manual_mode", pressed or self.tune.get("manual_mode"))
+        elif key == "j":
+            self.tune.set("manual_arm_left", pressed)
+            self.tune.set("manual_mode", pressed or self.tune.get("manual_mode"))
+        elif key == "l":
+            self.tune.set("manual_arm_right", pressed)
+            self.tune.set("manual_mode", pressed or self.tune.get("manual_mode"))
 
-        # Set manual mode if any WASD key held
-        self.tune.set("manual_mode", pressed)
+        # Set manual mode if any WASD/IJKL key held
+        self.tune.set("manual_mode", pressed or any([
+            self.tune.get("manual_arm_up"), self.tune.get("manual_arm_down"),
+            self.tune.get("manual_arm_left"), self.tune.get("manual_arm_right"),
+            self.tune.get("manual_pan_delta"), self.tune.get("manual_tilt_delta")
+        ]))
 
     def _json(self, code: int, data: dict):
         body = json.dumps(data).encode("utf-8")
@@ -1212,7 +1307,7 @@ def main():
 
     server = ThreadingHTTPServer((args.host, args.port), handler)
     print(f"[Main] Dashboard live on port {args.port}")
-    print(f"[Main] Controls: WASD=head  J/K=base  Buttons/textbox=animations")
+    print(f"[Main] Controls: WASD=head  IJKL=arms  1/2=base  Buttons=animations")
 
     try:
         server.serve_forever()

@@ -411,8 +411,8 @@ function KioskViewUI({
       } catch {
         /* fall through */
       }
-      if (typeof window !== "undefined") {
-        setQrUrl(`http://${window.location.hostname}:3000/upload-portal`);
+        if (typeof window !== "undefined") {
+          setQrUrl(`http://${window.location.hostname}:3000/upload-portal`);
       }
     }
     fetchIp();
@@ -435,26 +435,26 @@ function KioskViewUI({
         if (data.allFiles) {
           setLocalPosts(
             data.allFiles.map((file: any) => {
-              const categoryMap: Record<string, string> = {
-                events: "Featured Campus Event",
-                competitions: "Upcoming Competition",
-                posts: "Campus Announcement",
-              };
-              const defaultTitle =
-                categoryMap[file.category] || "Campus Highlight";
-              const title = file.extracted?.title || defaultTitle;
-              return {
-                id: "local_" + file.mtimeMs + "_" + file.name,
-                full_picture: file.url,
-                message: title,
-                description: file.extracted?.description || "",
-                extracted_date: file.extracted?.date || "",
-                extracted_time: file.extracted?.time || "",
-                extracted_location: file.extracted?.location || "",
-                created_time: new Date(file.mtimeMs).toISOString(),
-                isLocal: true,
-                category: file.category,
-              };
+            const categoryMap: Record<string, string> = {
+              events: "Featured Campus Event",
+              competitions: "Upcoming Competition",
+              posts: "Campus Announcement",
+            };
+            const defaultTitle =
+              categoryMap[file.category] || "Campus Highlight";
+            const title = file.extracted?.title || defaultTitle;
+            return {
+              id: "local_" + file.mtimeMs + "_" + file.name,
+              full_picture: file.url,
+              message: title,
+              description: file.extracted?.description || "",
+              extracted_date: file.extracted?.date || "",
+              extracted_time: file.extracted?.time || "",
+              extracted_location: file.extracted?.location || "",
+              created_time: new Date(file.mtimeMs).toISOString(),
+              isLocal: true,
+              category: file.category,
+            };
             }),
           );
         }
@@ -498,24 +498,54 @@ function KioskViewUI({
   const ensureMapsData = useCallback(async () => {
     if (mapsReady) return;
     try {
-      const [locRes, mapRes] = await Promise.all([
-        fetch("/api/locations"),
-        fetch("/api/map?floor=floor_1"),
-      ]);
+      const locRes = await fetch("/api/locations");
       const locData = await locRes.json();
       if (locData.locations) setAllLocations(locData.locations);
 
-      const data = await mapRes.json();
-      const buildings = data.buildings || {};
-      const edges = data.edges || [];
-      const nodes = (data.nodes || []).map((n: any) => {
-        const b = buildings[n.building] || { position: [0, 0, 0] };
-        return {
-          ...n,
-          floor: "floor_1",
-          world: [b.position[0] + n.x, 0, b.position[2] + n.z],
-        };
+      const floorsFromLocations = Array.from(
+        new Set((locData.locations || []).map((l: any) => l.floor).filter(Boolean)),
+      ) as string[];
+      const floors =
+        floorsFromLocations.length > 0 ? floorsFromLocations : ["floor_1"];
+
+      const mapResponses = await Promise.all(
+        floors.map((floor) =>
+          fetch(`/api/map?floor=${encodeURIComponent(floor)}`).then((r) =>
+            r.json(),
+          ),
+        ),
+      );
+
+      const buildings: Record<string, any> = {};
+      const edges: any[] = [];
+      const nodes: any[] = [];
+
+      mapResponses.forEach((data: any, idx) => {
+        const floor = floors[idx] as string;
+        const rawBuildings = data.buildings || {};
+        const rawEdges = data.edges || [];
+        const rawNodes = data.nodes || [];
+
+        Object.entries(rawBuildings).forEach(([bId, b]: [string, any]) => {
+          const scopedId = `${floor}::${bId}`;
+          buildings[scopedId] = { ...b, floor };
+        });
+
+        rawNodes.forEach((n: any) => {
+          const scopedBuildingId = `${floor}::${n.building}`;
+          const b = buildings[scopedBuildingId] || { position: [0, 0, 0] };
+          nodes.push({
+            ...n,
+            id: n.id || `${floor}::${n.label || "node"}`,
+            building: scopedBuildingId,
+            floor,
+            world: [b.position[0] + n.x, 0, b.position[2] + n.z],
+          });
+        });
+
+        edges.push(...rawEdges);
       });
+
       setExploreMapData({ nodes, buildings, edges });
       setMapsReady(true);
     } catch (e) {
@@ -626,6 +656,7 @@ function KioskViewUI({
   const openMaps = useCallback(() => {
     setMode("maps");
     setFocusedEvent(null);
+    setNavData(null);
     setShowExploreMap(false);
     setLocationsModalCategory(null);
     void ensureMapsData();
@@ -801,33 +832,28 @@ function KioskViewUI({
         <main className="flex-1 min-h-0 px-3 pb-3 flex flex-col relative overflow-hidden">
           {/* NAV / EXPLORE MAP overlay */}
           {mode === "maps" && mountMap ? (
-            <div className="flex-1 min-h-0 rounded-[28px] overflow-hidden bg-neutral-900 relative">
+            <div className={`flex-1 min-h-0 ${PANEL} overflow-hidden relative bg-[var(--kiosk-surface-muted)]`}>
               {isNavLoading ? (
-                <div className="flex h-full items-center justify-center flex-col gap-3 text-white">
-                  <span className="material-symbols-outlined animate-spin text-5xl">
+                <div className="flex h-full items-center justify-center flex-col gap-3 text-[var(--kiosk-text)]">
+                  <span className="material-symbols-outlined animate-spin text-5xl text-[var(--kiosk-brand)]">
                     navigation
                   </span>
                   <p className="font-semibold text-[16px]">Calculating route…</p>
                 </div>
               ) : navData ? (
                 <>
-                  <div className="absolute top-4 left-4 right-4 z-20 flex justify-between items-center bg-black/60 backdrop-blur-sm rounded-full px-5 py-3">
-                    <div className="flex items-center gap-3 text-white">
-                      <div className="w-2.5 h-2.5 bg-[var(--kiosk-success)] rounded-full animate-pulse" />
-                      <span className="text-lg font-bold truncate">
-                        {navData.destination}
-                      </span>
-                    </div>
-                    <PopButton
-                      onClick={closeNav}
-                      className="text-white/80 hover:text-white text-2xl font-bold px-2"
-                    >
-                      &times;
-                    </PopButton>
-                  </div>
+                  <PopButton
+                    onClick={closeNav}
+                    aria-label="Close"
+                    className={`absolute top-4 right-4 z-30 ${ICON_BTN} bg-[var(--kiosk-surface)] shadow-sm`}
+                  >
+                    <span className="material-symbols-outlined text-[22px]">
+                      close
+                    </span>
+                  </PopButton>
                   <Suspense
                     fallback={
-                      <div className="flex h-full items-center justify-center text-white/50">
+                      <div className="flex h-full items-center justify-center text-[var(--kiosk-muted)]">
                         Loading map…
                       </div>
                     }
@@ -847,19 +873,25 @@ function KioskViewUI({
                 <>
                   <PopButton
                     onClick={() => setShowExploreMap(false)}
-                    className="absolute top-4 right-4 z-20 w-12 h-12 flex items-center justify-center bg-black/50 rounded-full text-white text-3xl"
                     aria-label="Close map"
+                    className={`absolute top-4 right-4 z-30 ${ICON_BTN} bg-[var(--kiosk-surface)] shadow-sm`}
                   >
-                    &times;
+                    <span className="material-symbols-outlined text-[22px]">
+                      close
+                    </span>
                   </PopButton>
                   <Suspense
                     fallback={
-                      <div className="flex h-full items-center justify-center text-white/50">
+                      <div className="flex h-full items-center justify-center text-[var(--kiosk-muted)]">
                         Loading map…
                       </div>
                     }
                   >
                     <NavigationMap
+                      key="explore-map"
+                      path={[]}
+                      path_ids={[]}
+                      destination=""
                       nodes={exploreMapData.nodes}
                       buildings={exploreMapData.buildings}
                       edges={exploreMapData.edges}
@@ -884,9 +916,9 @@ function KioskViewUI({
                 >
                   <span className="material-symbols-outlined text-[22px]">
                     close
-                  </span>
+                    </span>
                 </PopButton>
-              </div>
+                  </div>
               <p className="text-[16px] text-[var(--kiosk-muted)] mb-6">
                 Pick a category, then choose a room.
               </p>
@@ -921,6 +953,7 @@ function KioskViewUI({
                 <PopButton
                   className={`${CAT_BTN} opacity-80`}
                   onClick={() => {
+                    setNavData(null);
                     void ensureMapsData().then(() => setShowExploreMap(true));
                   }}
                 >
@@ -929,8 +962,8 @@ function KioskViewUI({
                   </span>
                   Explore map
                 </PopButton>
-              </div>
-            </div>
+                </div>
+                </div>
           ) : mode === "talk" ? (
             <div className={`flex-1 min-h-0 ${PANEL} flex flex-col items-center justify-center gap-6 px-6 relative`}>
               <PopButton
@@ -967,9 +1000,9 @@ function KioskViewUI({
                 </span>
               </PopButton>
               <div className="flex-1 min-h-0">
-                <img
-                  src={focusedEvent.full_picture}
-                  alt={focusedEvent.message}
+                      <img
+                        src={focusedEvent.full_picture}
+                        alt={focusedEvent.message}
                   className="w-full h-full object-contain"
                 />
               </div>
@@ -981,7 +1014,7 @@ function KioskViewUI({
                     }`}
                   >
                     {eventCategoryMeta(focusedEvent.category).label}
-                  </span>
+                        </span>
                   {focusedEvent.extracted_date && (
                     <span className="text-[12px] font-semibold opacity-80">
                       {focusedEvent.extracted_date}
@@ -995,17 +1028,17 @@ function KioskViewUI({
                       {focusedEvent.extracted_location}
                     </span>
                   )}
-                </div>
+                    </div>
                 <p className="font-semibold text-[20px] leading-tight">
-                  {focusedEvent.message}
-                </p>
-                {focusedEvent.description && (
+                        {focusedEvent.message}
+                      </p>
+                      {focusedEvent.description && (
                   <p className="text-[14px] opacity-80 line-clamp-3">
-                    {focusedEvent.description}
-                  </p>
-                )}
-              </div>
-            </div>
+                          {focusedEvent.description}
+                        </p>
+                        )}
+                      </div>
+                    </div>
           ) : mode === "events" && eventCategory ? (
             /* Category list — picked Competitions / Events / Announcements */
             <div className={`flex-1 min-h-0 ${PANEL} flex flex-col`}>
@@ -1022,8 +1055,8 @@ function KioskViewUI({
                       : eventCategory === "events"
                         ? "Campus Events"
                         : "Announcements"}
-                  </h2>
-                </div>
+                      </h2>
+                    </div>
                 <PopButton
                   onClick={() => setEventCategory(null)}
                   aria-label="Close"
@@ -1048,25 +1081,25 @@ function KioskViewUI({
                   <div className="grid grid-cols-2 gap-3">
                     {categoryEventPosts.map((post) => {
                       const meta = eventCategoryMeta(post.category);
-                      return (
+                        return (
                         <PopButton
-                          key={post.id}
+                            key={post.id}
                           type="button"
                           onClick={() => handlePosterTap(post)}
                           className="text-left rounded-2xl overflow-hidden border border-[var(--kiosk-border)] bg-[var(--kiosk-surface-muted)] flex flex-col min-h-[200px]"
-                        >
+                          >
                           <div className="relative w-full aspect-[4/3] shrink-0 overflow-hidden bg-[var(--kiosk-border)]">
-                            <img
-                              src={post.full_picture}
+                                <img
+                                  src={post.full_picture}
                               alt=""
                               className="w-full h-full object-cover"
-                            />
-                            <div
+                                />
+                                <div
                               className={`absolute top-0 left-0 right-0 h-1 ${meta.accent}`}
-                            />
-                          </div>
+                                />
+                              </div>
                           <div className="flex-1 p-3 min-w-0 flex flex-col">
-                            {post.extracted_date && (
+                                  {post.extracted_date && (
                               <p className="text-[11px] font-semibold text-[var(--kiosk-muted)] mb-1 line-clamp-1">
                                 {post.extracted_date}
                                 {post.extracted_location
@@ -1075,21 +1108,21 @@ function KioskViewUI({
                               </p>
                             )}
                             <p className="text-[15px] font-semibold text-[var(--kiosk-text)] leading-tight line-clamp-2">
-                              {post.message}
-                            </p>
-                            {post.description && (
+                                  {post.message}
+                                </p>
+                                {post.description && (
                               <p className="text-[12px] text-[var(--kiosk-muted)] mt-1 line-clamp-2">
-                                {post.description}
-                              </p>
-                            )}
-                          </div>
+                                    {post.description}
+                                  </p>
+                                )}
+                              </div>
                         </PopButton>
-                      );
-                    })}
-                  </div>
-                )}
+                        );
+                      })}
+                        </div>
+                      )}
+                    </div>
               </div>
-            </div>
           ) : mode === "events" ? (
             /* Events hub — same pattern as Maps: pick a category first */
             <div className={`flex-1 min-h-0 ${PANEL} p-6 flex flex-col`}>
@@ -1104,9 +1137,9 @@ function KioskViewUI({
                 >
                   <span className="material-symbols-outlined text-[22px]">
                     close
-                  </span>
+                        </span>
                 </PopButton>
-              </div>
+                      </div>
               <p className="text-[16px] text-[var(--kiosk-muted)] mb-6">
                 Pick a category, then open a poster.
               </p>
@@ -1160,25 +1193,25 @@ function KioskViewUI({
                   </span>
                 </PopButton>
               </div>
-            </div>
-          ) : (
+                  </div>
+                ) : (
             /* Idle — two-zone: featured banner + always-visible "What's New" rail */
             <div className="flex-1 min-h-0 flex gap-3">
               {/* Featured banner — image-first; caption/dots clear of floating island */}
-              <div
+                  <div
                 className="flex-1 min-w-0 rounded-[28px] overflow-hidden relative bg-neutral-800"
-                onTouchStart={onTouchStart}
-                onTouchMove={onTouchMove}
-                onTouchEnd={onTouchEnd}
-              >
-                {fbPosts.length > 0 ? (
+                    onTouchStart={onTouchStart}
+                    onTouchMove={onTouchMove}
+                    onTouchEnd={onTouchEnd}
+                  >
+                      {fbPosts.length > 0 ? (
                   <>
                     {fbPosts.map((post, index) => (
                       <PopButton
-                        key={post.id}
+                            key={post.id}
                         type="button"
                         className={`absolute inset-0 w-full h-full transition-opacity duration-700 ${
-                          index === currentSlide
+                                index === currentSlide
                             ? "opacity-100 pointer-events-auto"
                             : "opacity-0 pointer-events-none"
                         }`}
@@ -1224,8 +1257,8 @@ function KioskViewUI({
                           </div>
                           <p className="text-[20px] font-bold leading-snug line-clamp-2 drop-shadow-[0_2px_8px_rgba(0,0,0,0.65)]">
                             {post.message}
-                          </p>
-                        </div>
+                              </p>
+                            </div>
                       );
                     })()}
 
@@ -1256,9 +1289,9 @@ function KioskViewUI({
                     <p className="text-[15px] opacity-70">
                       Tap Maps for directions, or Talk to ask NEma
                     </p>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
 
               {/* What's New rail — newest first */}
               <div className={`w-[300px] shrink-0 ${PANEL} flex flex-col overflow-hidden`}>
@@ -1267,7 +1300,7 @@ function KioskViewUI({
                   <h2 className="text-[18px] font-bold text-[var(--kiosk-text)]">
                     What&apos;s New
                   </h2>
-                </div>
+              </div>
                 <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-28 space-y-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                   {latestPosts.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center gap-2 text-[var(--kiosk-muted)] py-8 text-center">
@@ -1296,7 +1329,7 @@ function KioskViewUI({
                               <div
                                 className={`absolute inset-y-0 left-0 w-1 ${meta.accent}`}
                               />
-                            </div>
+                        </div>
                             <div className="flex-1 p-2.5 min-w-0">
                               <div className="flex items-center gap-1.5 mb-0.5">
                                 <span
@@ -1305,7 +1338,7 @@ function KioskViewUI({
                                 <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--kiosk-muted)]">
                                   {meta.label}
                                 </span>
-                              </div>
+                    </div>
                               <p className="text-[13px] font-semibold text-[var(--kiosk-text)] leading-tight line-clamp-2">
                                 {post.message}
                               </p>
@@ -1313,8 +1346,8 @@ function KioskViewUI({
                                 <p className="text-[11px] text-[var(--kiosk-muted)] mt-0.5 line-clamp-1">
                                   {post.extracted_date}
                                 </p>
-                              )}
-                            </div>
+                  )}
+                </div>
                           </div>
                         </PopButton>
                       );
@@ -1322,7 +1355,7 @@ function KioskViewUI({
                   )}
                 </div>
               </div>
-            </div>
+              </div>
           )}
         </main>
 
@@ -1351,17 +1384,17 @@ function KioskViewUI({
                   isThinking
                 }
                 isConnected={isConnected}
-                onClick={() => {
+                        onClick={() => {
                   if (mode !== "talk") {
                     openTalk();
                     if (!isConnected) void handleMicClick();
-                  } else {
+                          } else {
                     void handleMicClick();
                   }
                 }}
               />
+                </div>
               </div>
-            </div>
 
             <PopButton
               type="button"
@@ -1371,9 +1404,9 @@ function KioskViewUI({
               <span className="material-symbols-outlined text-[24px]">map</span>
               Maps
             </PopButton>
-          </div>
+              </div>
         </nav>
-      </div>
+          </div>
 
       {/* Locations category sheet */}
       <AnimatePresence>
@@ -1390,40 +1423,42 @@ function KioskViewUI({
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
               transition={{ type: "spring", stiffness: 320, damping: 32 }}
-              className="bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] w-full max-w-2xl rounded-t-3xl p-6 max-h-[70vh] overflow-y-auto"
+              className="bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] w-full max-w-2xl rounded-t-3xl max-h-[70vh] overflow-hidden flex flex-col"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between mb-4">
+              <div className="shrink-0 flex items-center justify-between p-6 pb-4">
                 <h3 className="text-[22px] font-bold">
                   {locationsModalCategory}
                 </h3>
                 <PopButton
                   onClick={() => setLocationsModalCategory(null)}
                   className="p-2 rounded-full bg-black/5 dark:bg-white/10"
-                >
-                  <X className="w-5 h-5" />
+              >
+                <X className="w-5 h-5" />
                 </PopButton>
-              </div>
-              {filteredLocations.length === 0 ? (
-                <p className="text-center py-8 opacity-60">
-                  No rooms found in this category.
-                </p>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {filteredLocations.map((loc) => (
-                    <PopButton
-                      key={`${loc.floor}-${loc.id}`}
-                      onClick={() => handleNavigateToLocation(loc.label)}
-                      className="min-h-[56px] bg-[var(--kiosk-surface-muted)] border border-[var(--kiosk-border)] rounded-2xl w-full text-[16px] flex items-center justify-between px-5 font-semibold"
-                    >
-                      <span className="truncate text-left">{loc.label}</span>
-                      <span className="text-[12px] opacity-50 flex-shrink-0 ml-3">
-                        {(loc.floor as string).replace("floor_", "Floor ")}
-                      </span>
-                    </PopButton>
-                  ))}
                 </div>
-              )}
+              <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                {filteredLocations.length === 0 ? (
+                  <p className="text-center py-8 opacity-60">
+                    No rooms found in this category.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {filteredLocations.map((loc) => (
+                      <PopButton
+                        key={`${loc.floor}-${loc.id}`}
+                        onClick={() => handleNavigateToLocation(loc.label)}
+                        className="min-h-[56px] bg-[var(--kiosk-surface-muted)] border border-[var(--kiosk-border)] rounded-2xl w-full text-[16px] flex items-center justify-between px-5 font-semibold"
+                      >
+                        <span className="truncate text-left">{loc.label}</span>
+                        <span className="text-[12px] opacity-50 flex-shrink-0 ml-3">
+                          {(loc.floor as string).replace("floor_", "Floor ")}
+                        </span>
+                      </PopButton>
+                    ))}
+                </div>
+                )}
+                </div>
             </motion.div>
           </motion.div>
         )}
@@ -1452,8 +1487,8 @@ function KioskViewUI({
                 <PopButton
                   onClick={() => setIsSettingsOpen(false)}
                   className="p-2 rounded-full bg-black/5 dark:bg-white/10"
-                >
-                  <X className="w-5 h-5" />
+              >
+                <X className="w-5 h-5" />
                 </PopButton>
               </div>
               {NLU_MODE && (
@@ -1464,7 +1499,7 @@ function KioskViewUI({
               <div className="flex items-center justify-between py-2">
                 <span className="font-semibold">Theme</span>
                 <ThemeToggle />
-              </div>
+                </div>
               <div className="py-2 space-y-3">
                 <span className="font-semibold">Eye color</span>
                 <div className="flex items-center gap-2.5 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
@@ -1528,9 +1563,9 @@ function KioskViewUI({
               </div>
               <p className="text-sm opacity-60 break-all">{qrUrl}</p>
             </div>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
       {!NLU_MODE && <ImageDisplay ignoreNavigation={true} />}
     </div>

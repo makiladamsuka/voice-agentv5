@@ -40,7 +40,7 @@ const GlowingPath = ({ points }: { points: [number, number, number][] }) => {
       {/* Base track: continuous solid line (progress bar base) */}
       <Line
         points={points}
-        color="#4338ca" // deep indigo base
+        color="#1D4ED8" // brand blue base
         lineWidth={18}
         transparent
         opacity={0.8}
@@ -49,7 +49,7 @@ const GlowingPath = ({ points }: { points: [number, number, number][] }) => {
       <Line
         ref={lineRef}
         points={points}
-        color="#818cf8" // bright indigo pulse
+        color="#60A5FA" // light brand pulse
         lineWidth={18}
         transparent
         opacity={0.9}
@@ -94,7 +94,7 @@ const DestinationMarker = ({
       >
         <ringGeometry args={[0.6, 0.9, 32]} />
         <meshBasicMaterial
-          color="#22c55e"
+          color="#10B981"
           transparent
           opacity={0.5}
           side={THREE.DoubleSide}
@@ -104,8 +104,8 @@ const DestinationMarker = ({
       <mesh ref={meshRef} position={position}>
         <octahedronGeometry args={[0.3]} />
         <meshStandardMaterial
-          color="#22c55e"
-          emissive="#22c55e"
+          color="#10B981"
+          emissive="#10B981"
           emissiveIntensity={0.8}
         />
       </mesh>
@@ -113,12 +113,12 @@ const DestinationMarker = ({
       <Text
         position={[position[0], position[1] + 1.5, position[2]]}
         fontSize={0.5}
-        color="#22c55e"
+        color="#059669"
         anchorX="center"
         anchorY="middle"
         fontWeight="bold"
       >
-        📍 {label}
+        {label}
       </Text>
     </group>
   );
@@ -288,54 +288,56 @@ export default function NavigationMap({
         </div>
       )}
 
-      {/* Floor Switcher */}
+      {/* Floor Switcher — even pills matching kiosk chrome */}
       {!hideFloorSwitcher && (
-        <div 
-          className="absolute left-6 top-1/2 -translate-y-1/2 flex flex-col gap-3 z-10 max-h-[80vh] overflow-y-auto pb-4 pr-4 pointer-events-auto"
-          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+        <div
+          className="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-20 w-[108px] max-h-[70vh] overflow-y-auto pointer-events-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="text-on-surface-variant text-[13px] font-bold text-center uppercase tracking-widest mb-2 sticky top-0 bg-surface-variant/90 backdrop-blur-md py-2 px-4 rounded-full z-20 shadow-sm border border-outline-variant/30">
+          <div className="text-[11px] font-bold text-center uppercase tracking-wider text-[var(--kiosk-muted,#6b7280)] py-1">
             Floors
           </div>
           {availableFloors.map((f, idx) => {
             let badge = "";
-            if (floorSequence.length > 0) {
+            if (!isStandalone && floorSequence.length > 0) {
               if (floorSequence.length === 1 && f === floorSequence[0]) {
-                badge = "🏁 Start & 📍 Dest";
-              } else {
-                if (f === floorSequence[0]) badge = "🏁 Start";
-                else if (f === floorSequence[floorSequence.length - 1]) badge = "📍 Dest";
-                else if (floorSequence.includes(f as string)) badge = "🛣️ Route";
+                badge = "Start & Dest";
+              } else if (f === floorSequence[0]) {
+                badge = "Start";
+              } else if (f === floorSequence[floorSequence.length - 1]) {
+                badge = "Dest";
+              } else if (floorSequence.includes(f as string)) {
+                badge = "Route";
               }
             }
+            const active = currentFloor === f;
 
             return (
               <button
                 key={`${f}-${idx}`}
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   setCurrentFloor(f as string);
                 }}
-                className={`relative px-6 py-4 rounded-3xl font-bold shadow-sm transition-all duration-300 flex flex-col items-center active:scale-95 border ${
-                  currentFloor === f
-                    ? "bg-primary text-on-primary border-transparent scale-105"
-                    : "bg-surface-container text-on-surface hover:bg-surface-container-highest border-outline-variant/30 hover:scale-105"
+                className={`w-full min-h-[52px] px-3 py-2.5 rounded-2xl font-bold flex flex-col items-center justify-center border transition-colors ${
+                  active
+                    ? "bg-[var(--kiosk-brand,#2563eb)] text-[var(--kiosk-brand-fg,#fff)] border-[var(--kiosk-brand,#2563eb)]"
+                    : "bg-[var(--kiosk-surface,#fff)] text-[var(--kiosk-text,#111827)] border-[var(--kiosk-border,#e5e7eb)]"
                 }`}
               >
-                <span className="text-[15px]">{(f as string).replace("floor_", "Floor ")}</span>
-                {badge && (
+                <span className="text-[14px] leading-tight">
+                  {(f as string).replace("floor_", "Floor ")}
+                </span>
+                {badge ? (
                   <span
-                    className={`text-[11px] mt-1 font-semibold ${currentFloor === f ? "text-on-primary/80" : "text-on-surface-variant"}`}
+                    className={`text-[10px] mt-0.5 font-semibold leading-tight ${
+                      active ? "opacity-85" : "text-[var(--kiosk-muted,#6b7280)]"
+                    }`}
                   >
                     {badge}
                   </span>
-                )}
-
-                {/* Connector line between all floors */}
-                {idx < availableFloors.length - 1 && (
-                  <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-[2px] h-3 bg-outline-variant/30" />
-                )}
+                ) : null}
               </button>
             );
           })}
@@ -384,8 +386,8 @@ export default function NavigationMap({
             />
             <pointLight
               position={[0, 5, 0]}
-              intensity={0.5}
-              color="#ef4444"
+              intensity={0.35}
+              color="#93C5FD"
               distance={15}
             />
 
@@ -434,7 +436,7 @@ export default function NavigationMap({
                 node.label?.toLowerCase() === destination.toLowerCase();
               const theme = getRoomTheme(node.label);
               // Use a vibrant indigo for the destination instead of green
-              const boxColor = isDestination ? "#4f46e5" : theme.color;
+              const boxColor = isDestination ? "#2563EB" : theme.color;
 
               // Elevate ALL labels and alternate heights to prevent crossing
               const staggerHeight = 1.0 + (index % 2) * 0.8;
@@ -466,7 +468,7 @@ export default function NavigationMap({
                   <Box args={size} castShadow>
                     <meshStandardMaterial
                       color={boxColor}
-                      emissive={isDestination ? "#4f46e5" : "#000000"}
+                      emissive={isDestination ? "#2563EB" : "#000000"}
                       emissiveIntensity={isDestination ? 0.4 : 0}
                     />
                   </Box>
@@ -489,11 +491,15 @@ export default function NavigationMap({
               );
             })}
 
-            {/* Glowing Animated Path */}
-            {pathPoints.length >= 2 && <GlowingPath points={pathPoints} />}
+            {/* Glowing route — navigation only, never in explore mode */}
+            {!isStandalone && pathPoints.length >= 2 && (
+              <GlowingPath points={pathPoints} />
+            )}
 
-            {/* All Edges and Waypoints are hidden as requested */}
-            {destNode && destNode.floor === currentFloor && (
+            {/* Destination marker — navigation only */}
+            {!isStandalone &&
+              destNode &&
+              destNode.floor === currentFloor && (
               <DestinationMarker
                 position={[
                   destNode.world[0],

@@ -628,9 +628,8 @@ class AnimationRunner:
         for target_pose in sequence:
             targets = [target_pose["a0"], target_pose["a1"], target_pose["a2"], target_pose["a3"]]
             
-            # Phase 1: Move elastically until target is reached (position error < 2.0)
+            # Move elastically until target is reached (position error < 2.0)
             max_ticks = int(3.0 / dt)  # 3s max per pose to avoid infinite loops
-            ticks_taken = 0
             for _ in range(max_ticks):
                 moved = False
                 for i, p in enumerate([p_v, p_v, p_h, p_h]):
@@ -641,19 +640,8 @@ class AnimationRunner:
                         
                 self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=False)
                 time.sleep(dt)
-                ticks_taken += 1
                 if not moved:
                     break
-                    
-            # Phase 2: Hold the pose for the remaining duration if it reached the target quickly
-            elapsed = ticks_taken * dt
-            if elapsed < pose_duration:
-                remaining_ticks = int((pose_duration - elapsed) / dt)
-                for _ in range(remaining_ticks):
-                    for i, p in enumerate([p_v, p_v, p_h, p_h]):
-                        arms[i], vels[i] = tick_toward(arms[i], vels[i], targets[i], dt, lo=0, hi=180, params=p)
-                    self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=False)
-                    time.sleep(dt)
 
         # Return home elastically
         targets = [home["a0"], home["a1"], home["a2"], home["a3"]]

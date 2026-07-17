@@ -1,4 +1,4 @@
-import { Outfit } from "next/font/google";
+import { Plus_Jakarta_Sans } from "next/font/google";
 import localFont from "next/font/local";
 import { headers } from "next/headers";
 import { ThemeProvider } from "@/components/app/theme-provider";
@@ -6,9 +6,10 @@ import { ThemeToggle } from "@/components/app/theme-toggle";
 import { cn, getAppConfig, getStyles } from "@/lib/utils";
 import "@/styles/globals.css";
 
-const outfit = Outfit({
-  variable: "--font-outfit",
+const jakarta = Plus_Jakarta_Sans({
+  variable: "--font-jakarta",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
 });
 
 const commitMono = localFont({
@@ -53,7 +54,7 @@ export default async function RootLayout({ children }: RootLayoutProps) {
       lang="en"
       suppressHydrationWarning
       className={cn(
-        outfit.variable,
+        jakarta.variable,
         commitMono.variable,
         "kiosk-mode scroll-smooth font-sans antialiased overflow-hidden w-screen h-screen",
       )}
@@ -63,10 +64,6 @@ export default async function RootLayout({ children }: RootLayoutProps) {
         <title>{pageTitle}</title>
         <meta name="description" content={pageDescription} />
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap"
-          rel="stylesheet"
-        />
         <link
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
           rel="stylesheet"

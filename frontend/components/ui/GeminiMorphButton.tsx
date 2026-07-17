@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
+import { M3_POP } from "@/components/ui/PopButton";
 
 // ─── Shape generation (M3 Polar Math) ──────────────────────────────────────────
 const POINTS = 120;
@@ -54,12 +55,13 @@ interface GeminiMorphButtonProps {
   isAnimating: boolean;
   isConnected: boolean;
   onClick: () => void;
+  size?: number;
 }
 
 export function GeminiMorphButton({
   isAnimating,
-  isConnected,
   onClick,
+  size = 72,
 }: GeminiMorphButtonProps) {
   const mainRef = useRef<SVGPathElement | null>(null);
   const animRef = useRef<number | null>(null);
@@ -103,55 +105,54 @@ export function GeminiMorphButton({
     };
   }, [isAnimating]);
 
+  if (isAnimating) {
+    return (
+      <motion.div
+        key="morph"
+        onClick={onClick}
+        initial={{ scale: 0.72 }}
+        animate={{ scale: 1 }}
+        whileTap={{ scale: 0.92 }}
+        transition={M3_POP}
+        className="relative z-10 rounded-full flex items-center justify-center cursor-pointer"
+        style={{ width: size, height: size }}
+      >
+        <svg
+          viewBox="0 0 80 80"
+          width={size + 16}
+          height={size + 16}
+          className="absolute fill-black dark:fill-white animate-[spin_12s_linear_infinite]"
+          style={{
+            top: -8,
+            left: -8,
+            overflow: "visible",
+            zIndex: -1,
+          }}
+        >
+          <path ref={mainRef} d={buildPath(SHAPES.scallop8, 38, 40, 40)} />
+        </svg>
+        <span className="material-symbols-outlined text-3xl text-white dark:text-black relative z-10">
+          mic
+        </span>
+      </motion.div>
+    );
+  }
+
   return (
-    <AnimatePresence mode="wait">
-      {isAnimating ? (
-        <motion.div
-          key="animating-blob"
-          initial={{ scale: 0.5, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          exit={{ scale: 0, opacity: 0 }}
-          transition={{ type: "spring", stiffness: 900, damping: 25 }}
-          onClick={onClick}
-          className="relative z-10 w-[64px] h-[64px] rounded-full flex items-center justify-center cursor-pointer hover:scale-105 transition-transform active:scale-95"
-        >
-          <svg
-            viewBox="0 0 80 80"
-            width={80}
-            height={80}
-            className="absolute fill-black dark:fill-white animate-[spin_12s_linear_infinite]"
-            style={{
-              top: -8,
-              left: -8,
-              overflow: "visible",
-              zIndex: -1,
-            }}
-          >
-            <path ref={mainRef} d={buildPath(SHAPES.scallop8, 38, 40, 40)} />
-          </svg>
-          <span className="material-symbols-outlined text-3xl text-white dark:text-black relative z-10">
-            mic
-          </span>
-        </motion.div>
-      ) : (
-        <motion.button
-          key={isConnected ? "connected-red" : "idle-black"}
-          initial={{ scale: 0, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          exit={{ scale: 0.5, opacity: 0 }}
-          transition={{ type: "spring", stiffness: 900, damping: 22 }}
-          onClick={onClick}
-          className={`relative z-10 w-[64px] h-[64px] rounded-full flex items-center justify-center hover:scale-105 transition-all active:scale-95 border-none shadow-lg ${
-            isConnected
-              ? "bg-red-600 text-white"
-              : "bg-black dark:bg-white text-white dark:text-black"
-          }`}
-        >
-          <span className="material-symbols-outlined text-3xl fill-current">
-            {isConnected ? "mic_off" : "mic"}
-          </span>
-        </motion.button>
-      )}
-    </AnimatePresence>
+    <motion.button
+      key="idle"
+      type="button"
+      onClick={onClick}
+      initial={{ scale: 1.18 }}
+      animate={{ scale: 1 }}
+      whileTap={{ scale: 0.92 }}
+      transition={M3_POP}
+      className="relative z-10 rounded-full flex items-center justify-center border-none shadow-lg bg-black dark:bg-white text-white dark:text-black"
+      style={{ width: size, height: size }}
+    >
+      <span className="material-symbols-outlined text-3xl fill-current">
+        mic
+      </span>
+    </motion.button>
   );
 }

@@ -184,7 +184,7 @@ export default function NavigationMap({
     if (!path_ids || path_ids.length === 0) return [];
     const seq: string[] = [];
     path_ids.forEach((id) => {
-      const floorStr = id.split("::")[0];
+      const floorStr = id?.split("::")[0];
       if (floorStr && seq[seq.length - 1] !== floorStr) {
         seq.push(floorStr);
       }
@@ -224,14 +224,16 @@ export default function NavigationMap({
   };
 
   const pathPoints = useMemo(() => {
-    if (!path || !path_ids) return [];
+    if (!path || path.length === 0) return [];
+    // Without floor-scoped path_ids, show the whole path on every floor.
+    const hasIds = Array.isArray(path_ids) && path_ids.length === path.length;
     const points: [number, number, number][] = [];
     for (let i = 0; i < path.length; i++) {
-      const pId = path_ids[i];
-      const floorStr = pId.split("::")[0];
-      if (floorStr === currentFloor) {
-        points.push([path[i][0], 0.3, path[i][2]]);
+      if (hasIds) {
+        const floorStr = path_ids[i]?.split("::")[0];
+        if (floorStr !== currentFloor) continue;
       }
+      points.push([path[i][0], 0.3, path[i][2]]);
     }
     return points;
   }, [path, path_ids, currentFloor]);

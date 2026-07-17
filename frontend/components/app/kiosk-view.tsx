@@ -4,8 +4,7 @@
 
 // ── NLU mode gate ─────────────────────────────────────────────────────────────
 // When NEXT_PUBLIC_NLU_MODE=true the kiosk uses Browser VAD + Deepgram + the
-// local NLU WebSocket server instead of LiveKit. All LiveKit imports below are
-// guarded so they can be tree-shaken in the NLU build.
+// local NLU WebSocket server instead of LiveKit.
 const NLU_MODE = process.env.NEXT_PUBLIC_NLU_MODE === "true";
 
 import {
@@ -23,17 +22,16 @@ import React, {
   useEffect,
   useRef,
   useCallback,
+  useMemo,
   Suspense,
 } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ChatTranscript } from "@/components/app/chat-transcript";
-import { ScrollArea } from "@/components/livekit/scroll-area/scroll-area";
 import { ThemeToggle } from "@/components/app/theme-toggle";
 import { QRCodeSVG } from "qrcode.react";
 import { UploadCloud, X, Settings } from "lucide-react";
 import dynamic from "next/dynamic";
 import { GeminiMorphButton } from "@/components/ui/GeminiMorphButton";
-import { SiriGlow } from "@/components/ui/SiriGlow";
+import { PopButton } from "@/components/ui/PopButton";
 import { ImageDisplay } from "@/components/app/image-display";
 import {
   sessionStartOptions,
@@ -42,13 +40,54 @@ import {
 import { useNluAdapter } from "@/hooks/useNluAdapter";
 import type { NluAction } from "@/hooks/useNluVoice";
 
-// Lazy load 3D map to avoid SSR issues with Three.js
+/** Mount 3D map only when Maps mode / navigation needs it (no idle WebGL). */
 const NavigationMap = dynamic(() => import("@/components/app/isometric-map"), {
   ssr: false,
 });
 
+type KioskMode = "idle" | "events" | "maps" | "talk";
+
+const DOCK_BTN =
+  "min-h-[72px] flex-1 rounded-2xl text-[18px] font-bold flex flex-col items-center justify-center gap-1 border";
+const DOCK_BTN_ACTIVE =
+  "bg-neutral-900 text-white border-neutral-900 dark:bg-white dark:text-black dark:border-white";
+const DOCK_BTN_IDLE =
+  "bg-white/90 text-neutral-900 border-black/10 dark:bg-white/10 dark:text-white dark:border-white/15";
+const CAT_BTN =
+  "min-h-[72px] w-full rounded-2xl text-[20px] font-bold flex items-center justify-center gap-3 border border-black/10 dark:border-white/15 bg-white/90 dark:bg-white/10 text-neutral-900 dark:text-white";
+
+const EVENT_CATEGORY_META: Record<
+  string,
+  { label: string; accent: string; chip: string }
+> = {
+  events: {
+    label: "Event",
+    accent: "bg-violet-500",
+    chip: "bg-violet-500/20 text-violet-100",
+  },
+  competitions: {
+    label: "Competition",
+    accent: "bg-orange-500",
+    chip: "bg-orange-500/20 text-orange-100",
+  },
+  posts: {
+    label: "Announcement",
+    accent: "bg-teal-500",
+    chip: "bg-teal-500/20 text-teal-100",
+  },
+};
+
+function eventCategoryMeta(category?: string) {
+  return (
+    EVENT_CATEGORY_META[category || ""] || {
+      label: "Campus",
+      accent: "bg-neutral-500",
+      chip: "bg-white/20 text-white",
+    }
+  );
+}
+
 export function KioskView() {
-  // Must split: LiveKit hooks require SessionProvider; NLU mode has none.
   if (NLU_MODE) {
     return <KioskViewNlu />;
   }
@@ -63,7 +102,6 @@ function KioskViewNlu() {
   endRef.current = nluAdapter.end;
 
   const startSession = useCallback(async () => {
-    console.log("[KioskNlu] startSession()");
     await startRef.current();
   }, []);
 
@@ -71,9 +109,7 @@ function KioskViewNlu() {
     endRef.current();
   }, []);
 
-  // Prove browser ↔ NLU server reachability as soon as the page mounts
   useEffect(() => {
-    console.log("[KioskNlu] mounted — NLU_MODE on");
     fetch("http://127.0.0.1:8765/health")
       .then((r) => r.json())
       .then((j) => console.log("[KioskNlu] NLU health:", j))
@@ -155,12 +191,64 @@ function KioskViewUI({
   room,
   lastAction,
 }: KioskViewUIProps) {
-  const [glowingSection, setGlowingSection] = useState<'where-to' | 'chat' | 'mic' | 'news' | null>(null);
-
-  // Focused event state — set when a news card is tapped
+  const [mode, setMode] = useState<KioskMode>("idle");
   const [focusedEvent, setFocusedEvent] = useState<any | null>(null);
+  const [eventCategory, setEventCategory] = useState<
+    "events" | "competitions" | "posts" | null
+  >(null);
   const pendingEventRef = useRef<any | null>(null);
   const [navData, setNavData] = useState<any | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [isColorModalOpen, setIsColorModalOpen] = useState(false);
+  const [qrUrl, setQrUrl] = useState("");
+  const [time, setTime] = useState("");
+  const [pageVisible, setPageVisible] = useState(true);
+
+  // Maps — loaded lazily on first Maps enter
+  const [mapsReady, setMapsReady] = useState(false);
+  const [allLocations, setAllLocations] = useState<any[]>([]);
+  const [locationsModalCategory, setLocationsModalCategory] = useState<
+    string | null
+  >(null);
+  const [filteredLocations, setFilteredLocations] = useState<any[]>([]);
+  const [isNavLoading, setIsNavLoading] = useState(false);
+  const [exploreMapData, setExploreMapData] = useState<{
+    nodes: any[];
+    buildings: any;
+    edges: any[];
+  } | null>(null);
+
+  // Posts / carousel
+  const [facebookPosts, setFacebookPosts] = useState<any[]>([]);
+  const [localPosts, setLocalPosts] = useState<any[]>([]);
+  const fbPosts = useMemo(
+    () => [...localPosts, ...facebookPosts],
+    [localPosts, facebookPosts],
+  );
+  const categoryEventPosts = useMemo(() => {
+    if (!eventCategory) return [];
+    return fbPosts.filter((p) => (p.category || "posts") === eventCategory);
+  }, [fbPosts, eventCategory]);
+  const eventCategoryCounts = useMemo(() => {
+    const counts = { events: 0, competitions: 0, posts: 0 };
+    for (const p of fbPosts) {
+      const key = (p.category || "posts") as keyof typeof counts;
+      if (key in counts) counts[key] += 1;
+      else counts.posts += 1;
+    }
+    return counts;
+  }, [fbPosts]);
+  const latestPosts = useMemo(() => {
+    return [...fbPosts].sort((a, b) => {
+      const ta = new Date(a.created_time || 0).getTime();
+      const tb = new Date(b.created_time || 0).getTime();
+      return tb - ta;
+    });
+  }, [fbPosts]);
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const lastKnownUploadRef = useRef(0);
 
   const isThinking = agentState === "thinking";
   const agentReady =
@@ -170,16 +258,9 @@ function KioskViewUI({
     agentState === "idle" ||
     agentState === "pre-connect-buffering";
   const isAgentInitializing = isConnected && !agentReady;
-  const pulseScale = isThinking
-    ? 1.05
-    : !isConnected
-      ? undefined
-      : 1 + maxVolume * 2.0;
-  const pulseOpacity = !isConnected
-    ? undefined
-    : isThinking
-      ? 0.5
-      : 0.2 + maxVolume * 0.8;
+
+  // Explore map without a route: category hub first; full map only with navData or Explore
+  const [showExploreMap, setShowExploreMap] = useState(false);
 
   const applyEyeColor = useCallback(
     async (eyeTheme: string, uiTheme: string) => {
@@ -188,7 +269,6 @@ function KioskViewUI({
       } else {
         document.documentElement.removeAttribute("data-pixel-theme");
       }
-
       try {
         await fetch("/api/eye-color", {
           method: "POST",
@@ -198,7 +278,6 @@ function KioskViewUI({
       } catch (e) {
         console.error("Failed to set eye color:", e);
       }
-
       if (room) {
         try {
           room.localParticipant.publishData(
@@ -215,16 +294,14 @@ function KioskViewUI({
     [room],
   );
 
-  // Send event context — LiveKit data channel OR NLU WebSocket transcript
   const sendEventFocus = useCallback(
     (event: any) => {
       if (NLU_MODE) {
-        // In NLU mode, synthesise a spoken question and send it as a transcript
-        const text = event.message || `Tell me about ${event.title || "this event"}`;
-        // The useNluVoice hook listens for the server URL from env; we trigger
-        // it here by dispatching a custom event the hook can pick up.
-        window.dispatchEvent(new CustomEvent("nlu:inject_transcript", { detail: { text } }));
-        console.log("📲 [NLU] Injected transcript:", text);
+        const text =
+          event.message || `Tell me about ${event.title || "this event"}`;
+        window.dispatchEvent(
+          new CustomEvent("nlu:inject_transcript", { detail: { text } }),
+        );
         return;
       }
       if (!room) return;
@@ -233,7 +310,6 @@ function KioskViewUI({
         room.localParticipant.publishData(new TextEncoder().encode(payload), {
           reliable: true,
         });
-        console.log("📲 Sent event_focus to agent:", event.message);
       } catch (e) {
         console.error("Failed to publish event data:", e);
       }
@@ -241,27 +317,30 @@ function KioskViewUI({
     [room],
   );
 
-  // When connection established AND there's a pending event, send it
   useEffect(() => {
     if (isConnected && pendingEventRef.current) {
       const ev = pendingEventRef.current;
       pendingEventRef.current = null;
-      // Small delay so agent finishes its "I'm ready" greeting first
       setTimeout(() => sendEventFocus(ev), 2500);
     }
   }, [isConnected, sendEventFocus]);
 
-  // Listen for navigation data (LiveKit) or NLU action (NLU mode)
+  // Navigation from NLU / LiveKit → open Maps overlay
   useEffect(() => {
     if (NLU_MODE) {
-      if (lastAction && lastAction.action === "navigate" && lastAction.destination) {
-        // Backend may send path, path_coords, or both — normalize for the v2 map.
+      if (
+        lastAction &&
+        lastAction.action === "navigate" &&
+        lastAction.destination
+      ) {
         setNavData({
           ...lastAction,
           path: lastAction.path ?? lastAction.path_coords,
           path_coords: lastAction.path_coords ?? lastAction.path,
           path_ids: lastAction.path_ids ?? [],
         });
+        setMode("maps");
+        setShowExploreMap(false);
       }
       return;
     }
@@ -275,8 +354,12 @@ function KioskViewUI({
             path: data.path_coords || data.path,
             path_ids: data.path_ids || [],
           });
+          setMode("maps");
+          setShowExploreMap(false);
         }
-      } catch (e) {}
+      } catch {
+        /* ignore */
+      }
     };
     room.on("dataReceived", handleDataReceived);
     return () => {
@@ -284,52 +367,241 @@ function KioskViewUI({
     };
   }, [room, lastAction]);
 
-  const [isConnecting, setIsConnecting] = useState(false);
+  // Pause timers when tab/screen hidden (CPU)
+  useEffect(() => {
+    const onVis = () => setPageVisible(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
 
-  // Handle clicking a news card
-  const handleNewsClick = useCallback(
-    async (post: any) => {
-      setFocusedEvent(post);
-      if (!isConnected) {
-        pendingEventRef.current = post;
-        await startSession();
-      } else {
-        sendEventFocus(post);
+  // Clock
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setTime(
+        now.toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        }),
+      );
+    };
+    updateTime();
+    if (!pageVisible) return;
+    const timer = setInterval(updateTime, 1000);
+    return () => clearInterval(timer);
+  }, [pageVisible]);
+
+  // QR / upload IP (best-effort — route may be missing)
+  useEffect(() => {
+    async function fetchIp() {
+      try {
+        const res = await fetch("/api/network-ip");
+        const data = await res.json();
+        if (data.ip) {
+          setQrUrl(`http://${data.ip}:3000/upload-portal`);
+          return;
+        }
+      } catch {
+        /* fall through */
       }
-    },
-    [isConnected, startSession, sendEventFocus],
-  );
+      if (typeof window !== "undefined") {
+        setQrUrl(`http://${window.location.hostname}:3000/upload-portal`);
+      }
+    }
+    fetchIp();
+  }, []);
 
-  // Handle mic button press — show blob overlay while connecting
+  // Local poster poll
+  useEffect(() => {
+    if (!pageVisible) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch("/api/upload-status");
+        const data = await res.json();
+        if (lastKnownUploadRef.current === 0) {
+          lastKnownUploadRef.current = data.lastUpload;
+        } else if (data.lastUpload > lastKnownUploadRef.current) {
+          lastKnownUploadRef.current = data.lastUpload;
+          setIsUploadModalOpen(false);
+          setCurrentSlide(0);
+        }
+        if (data.allFiles) {
+          setLocalPosts(
+            data.allFiles.map((file: any) => {
+              const categoryMap: Record<string, string> = {
+                events: "Featured Campus Event",
+                competitions: "Upcoming Competition",
+                posts: "Campus Announcement",
+              };
+              const defaultTitle =
+                categoryMap[file.category] || "Campus Highlight";
+              const title = file.extracted?.title || defaultTitle;
+              return {
+                id: "local_" + file.mtimeMs + "_" + file.name,
+                full_picture: file.url,
+                message: title,
+                description: file.extracted?.description || "",
+                extracted_date: file.extracted?.date || "",
+                extracted_time: file.extracted?.time || "",
+                extracted_location: file.extracted?.location || "",
+                created_time: new Date(file.mtimeMs).toISOString(),
+                isLocal: true,
+                category: file.category,
+              };
+            }),
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 8000);
+    return () => clearInterval(interval);
+  }, [pageVisible]);
+
+  // Facebook posts (optional API)
+  useEffect(() => {
+    const fetchPosts = async () => {
+      try {
+        const response = await fetch("/api/facebook");
+        const data = await response.json();
+        if (Array.isArray(data) && data.length > 0) setFacebookPosts(data);
+      } catch {
+        /* ignore */
+      }
+    };
+    fetchPosts();
+    if (!pageVisible) return;
+    const interval = setInterval(fetchPosts, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [pageVisible]);
+
+  // Carousel — idle/events only, pause when hidden
+  useEffect(() => {
+    if (!pageVisible) return;
+    if (mode !== "idle" && mode !== "events") return;
+    if (focusedEvent) return;
+    if (fbPosts.length <= 1) return;
+    const interval = setInterval(() => {
+      setCurrentSlide((prev) => (prev + 1) % fbPosts.length);
+    }, 8000);
+    return () => clearInterval(interval);
+  }, [fbPosts.length, mode, focusedEvent, pageVisible]);
+
+  // Lazy-load map graph + locations the first time Maps is opened
+  const ensureMapsData = useCallback(async () => {
+    if (mapsReady) return;
+    try {
+      const [locRes, mapRes] = await Promise.all([
+        fetch("/api/locations"),
+        fetch("/api/map?floor=floor_1"),
+      ]);
+      const locData = await locRes.json();
+      if (locData.locations) setAllLocations(locData.locations);
+
+      const data = await mapRes.json();
+      const buildings = data.buildings || {};
+      const edges = data.edges || [];
+      const nodes = (data.nodes || []).map((n: any) => {
+        const b = buildings[n.building] || { position: [0, 0, 0] };
+        return {
+          ...n,
+          floor: "floor_1",
+          world: [b.position[0] + n.x, 0, b.position[2] + n.z],
+        };
+      });
+      setExploreMapData({ nodes, buildings, edges });
+      setMapsReady(true);
+    } catch (e) {
+      console.error("Failed to load map data:", e);
+    }
+  }, [mapsReady]);
+
+  useEffect(() => {
+    if (mode === "maps") {
+      void ensureMapsData();
+    }
+  }, [mode, ensureMapsData]);
+
+  // Auto-disconnect after 5 minutes of inactivity while talking
+  const wasConnectedRef = useRef(isConnected);
+  useEffect(() => {
+    if (!isConnected) {
+      if (wasConnectedRef.current) {
+        setFocusedEvent(null);
+        pendingEventRef.current = null;
+        setIsConnecting(false);
+        if (mode === "talk") setMode("idle");
+      }
+      wasConnectedRef.current = false;
+      return;
+    }
+    wasConnectedRef.current = true;
+    const timeoutId = setTimeout(
+      () => {
+        end();
+      },
+      5 * 60 * 1000,
+    );
+    return () => clearTimeout(timeoutId);
+  }, [isConnected, end, messages, transcriptions, mode]);
+
+  useEffect(() => {
+    if (isConnected && !isAgentInitializing && isConnecting) {
+      setIsConnecting(false);
+    }
+  }, [isConnected, isAgentInitializing, isConnecting]);
+
+  // Single live caption for Talk mode (no chat history)
+  const talkCaption = useMemo(() => {
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg) {
+      const text =
+        lastMsg.content || lastMsg.message || lastMsg.text || "";
+      if (text.trim()) {
+        const isUser =
+          lastMsg.role === "user" ||
+          lastMsg.from?.isLocal === true ||
+          lastMsg.participantIdentity === "user";
+        return { text: text.trim(), isUser };
+      }
+    }
+    const lastTx = transcriptions[transcriptions.length - 1];
+    if (lastTx?.text) {
+      return { text: String(lastTx.text).trim(), isUser: true };
+    }
+    if (isThinking) return { text: "Thinking…", isUser: false };
+    if (isAgentInitializing) return { text: "Connecting…", isUser: false };
+    if (isConnected) return { text: "Listening…", isUser: false };
+    return { text: "Tap the mic to talk", isUser: false };
+  }, [
+    messages,
+    transcriptions,
+    isThinking,
+    isAgentInitializing,
+    isConnected,
+  ]);
+
   const handleMicClick = useCallback(async () => {
-    console.log("[Kiosk] Mic clicked", { NLU_MODE, isConnected });
     if (isConnected) {
-      console.log("[Kiosk] Ending session");
       end();
-      // Brief settle so the backend can release the previous job before a
-      // quick re-press races the old room's cleanup.
       await new Promise((r) => setTimeout(r, 400));
       return;
     }
     setIsConnecting(true);
+    setMode("talk");
     try {
-      // start() resolves once the room connects; agent join can take longer.
-      // Generous ceiling so slow token/room join on the Pi does not fake-fail
-      // while the session is still coming up.
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error("Connection timeout")),
-          90_000,
-        ),
+        setTimeout(() => reject(new Error("Connection timeout")), 90_000),
       );
-      console.log("[Kiosk] Starting session…");
       await Promise.race([startSession(), timeoutPromise]);
-      console.log("[Kiosk] Session start resolved");
     } catch (e: any) {
       console.error("Agent connection failed:", e);
       const msg = e?.message || String(e);
       if (e?.name === "NotAllowedError" || msg.includes("getUserMedia")) {
-        alert("Microphone access blocked! Use http://localhost (not an IP) or HTTPS.");
+        alert(
+          "Microphone access blocked! Use http://localhost (not an IP) or HTTPS.",
+        );
       } else {
         alert(`Voice start failed: ${msg}`);
       }
@@ -337,75 +609,58 @@ function KioskViewUI({
     }
   }, [isConnected, startSession, end]);
 
-  // Auto-dismiss morphing button once room/NLU session is up and agent is usable
-  useEffect(() => {
-    if (isConnected && !isAgentInitializing && isConnecting) {
-      setIsConnecting(false);
-    }
-  }, [isConnected, isAgentInitializing, isConnecting]);
-
-  const latestTranscription = transcriptions[transcriptions.length - 1];
-  const [stagingText, setStagingText] = useState("");
-
-  useEffect(() => {
-    if (latestTranscription && latestTranscription.text) {
-      setStagingText(latestTranscription.text);
-      const timer = setTimeout(() => {
-        setStagingText("");
-      }, 2000); // Clear after 2 seconds of silence
-      return () => clearTimeout(timer);
-    }
-  }, [latestTranscription?.text]);
-
-  // 3D Map data — full world-coordinate nodes for the mini-map preview
-  const [homeMapData, setHomeMapData] = useState<{
-    nodes: any[];
-    buildings: any;
-    edges: any[];
-  } | null>(null);
-  const [isMapExpanded, setIsMapExpanded] = useState(false);
-  const [isNavLoading, setIsNavLoading] = useState(false);
-  const isNavigating = navData !== null;
-
-  useEffect(() => {
-    fetch("/api/map?floor=floor_1")
-      .then((res) => res.json())
-      .then((data) => {
-        const buildings = data.buildings || {};
-        const edges = data.edges || [];
-        const nodes = (data.nodes || []).map((n: any) => {
-          const b = buildings[n.building] || { position: [0, 0, 0] };
-          return {
-            ...n,
-            floor: "floor_1",
-            world: [b.position[0] + n.x, 0, b.position[2] + n.z],
-          };
-        });
-        setHomeMapData({ nodes, buildings, edges });
-      })
-      .catch(() => {});
+  const openEvents = useCallback(() => {
+    setMode("events");
+    setFocusedEvent(null);
+    setEventCategory(null);
+    setNavData(null);
+    setShowExploreMap(false);
   }, []);
 
-  // All-floor locations for category modal (Lecture Halls / Lab / Offices)
-  const [locationsModalCategory, setLocationsModalCategory] = useState<
-    string | null
-  >(null);
-  const [allLocations, setAllLocations] = useState<any[]>([]);
-  const [filteredLocations, setFilteredLocations] = useState<any[]>([]);
+  const openMaps = useCallback(() => {
+    setMode("maps");
+    setFocusedEvent(null);
+    setShowExploreMap(false);
+    setLocationsModalCategory(null);
+    void ensureMapsData();
+  }, [ensureMapsData]);
 
-  useEffect(() => {
-    fetch("/api/locations")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.locations) setAllLocations(data.locations);
-      })
-      .catch(() => {});
+  const openTalk = useCallback(() => {
+    setMode("talk");
+    setFocusedEvent(null);
+    setShowExploreMap(false);
   }, []);
+
+  const goIdle = useCallback(() => {
+    setMode("idle");
+    setFocusedEvent(null);
+    setEventCategory(null);
+    setNavData(null);
+    setShowExploreMap(false);
+    setLocationsModalCategory(null);
+    if (isConnected) end();
+  }, [isConnected, end]);
+
+  /** Idle/events poster tap — detail only; voice only if Talk already live */
+  const handlePosterTap = useCallback(
+    (post: any) => {
+      setFocusedEvent(post);
+      setMode("events");
+      const cat = post.category;
+      if (cat === "events" || cat === "competitions" || cat === "posts") {
+        setEventCategory(cat);
+      }
+      if (isConnected) {
+        sendEventFocus(post);
+      }
+    },
+    [isConnected, sendEventFocus],
+  );
 
   const handleCategoryClick = (category: string, filterKeyword: string) => {
     setLocationsModalCategory(category);
+    setShowExploreMap(false);
     if (filterKeyword === "office") {
-      // "Offices & More" — everything that isn't a lecture hall or lab
       setFilteredLocations(
         allLocations.filter((loc) => {
           const l = loc.label.toLowerCase();
@@ -427,8 +682,8 @@ function KioskViewUI({
 
   const handleNavigateToLocation = async (destination: string) => {
     setLocationsModalCategory(null);
-    setIsMapExpanded(true);
     setIsNavLoading(true);
+    setShowExploreMap(false);
     try {
       const res = await fetch(
         `/api/navigate?destination=${encodeURIComponent(destination)}`,
@@ -446,7 +701,7 @@ function KioskViewUI({
           nodes: data.nodes || [],
           buildings: data.buildings || {},
         });
-        // Ask the voice agent to speak directions when a session is live
+        setMode("maps");
         if (isConnected) {
           sendEventFocus({
             title: destination,
@@ -456,1026 +711,799 @@ function KioskViewUI({
         }
       } else {
         console.error("Navigate API error:", data);
-        setIsMapExpanded(false);
       }
     } catch (e) {
       console.error("Failed to fetch navigation:", e);
-      setIsMapExpanded(false);
     } finally {
       setIsNavLoading(false);
     }
   };
 
-  const [time, setTime] = useState("");
-  const [dateStr, setDateStr] = useState("");
-
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [isColorModalOpen, setIsColorModalOpen] = useState(false);
-  const [qrUrl, setQrUrl] = useState("");
-
-  useEffect(() => {
-    async function fetchIp() {
-      try {
-        const res = await fetch("/api/network-ip");
-        const data = await res.json();
-        if (data.ip) {
-          setQrUrl(`http://${data.ip}:3000/upload-portal`);
-        } else {
-          setQrUrl(`http://${window.location.hostname}:3000/upload-portal`);
-        }
-      } catch (err) {
-        if (typeof window !== "undefined") {
-          setQrUrl(`http://${window.location.hostname}:3000/upload-portal`);
-        }
-      }
+  const closeNav = () => {
+    setNavData(null);
+    setShowExploreMap(false);
+    if (mode === "maps") {
+      // stay in maps hub
+    } else {
+      setMode("idle");
     }
-    fetchIp();
-  }, []);
+  };
 
-  const lastKnownUploadRef = useRef(0);
-
-  // Poll for successful uploads to auto-close the modal and show the new poster
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch("/api/upload-status");
-        const data = await res.json();
-
-        if (lastKnownUploadRef.current === 0) {
-          // Initial load, just sync the current state
-          lastKnownUploadRef.current = data.lastUpload;
-        } else if (data.lastUpload > lastKnownUploadRef.current) {
-          // A new upload happened globally!
-          lastKnownUploadRef.current = data.lastUpload;
-
-          // We can still trigger UI changes like resetting current slide or closing modal
-          setIsUploadModalOpen(false);
-          setCurrentSlide(0);
-        }
-
-        // Always sync the local files list dynamically to reflect additions and deletions
-        if (data.allFiles) {
-          const newLocalPosts = data.allFiles.map((file: any) => {
-            const categoryMap: Record<string, string> = {
-              events: "Featured Campus Event",
-              competitions: "Upcoming Competition",
-              posts: "Campus Announcement",
-            };
-            const defaultTitle =
-              categoryMap[file.category] || "Campus Highlight";
-
-            // Prioritize the AI-extracted title
-            const title = file.extracted?.title || defaultTitle;
-
-            return {
-              id: "local_" + file.mtimeMs + "_" + file.name,
-              full_picture: file.url,
-              message: title,
-              description: file.extracted?.description || "",
-              extracted_date: file.extracted?.date || "",
-              extracted_time: file.extracted?.time || "",
-              extracted_location: file.extracted?.location || "",
-              created_time: new Date(file.mtimeMs).toISOString(),
-              isLocal: true,
-              category: file.category,
-            };
-          });
-          setLocalPosts(newLocalPosts);
-        }
-      } catch (e) {
-        // Ignore errors
-      }
-    }, 8000);
-
-    return () => clearInterval(interval);
-  }, []);
-
-
-  // Merged Posts State
-  const [facebookPosts, setFacebookPosts] = useState<any[]>([]);
-  const [localPosts, setLocalPosts] = useState<any[]>([]);
-  const fbPosts = [...localPosts, ...facebookPosts];
-  const [currentSlide, setCurrentSlide] = useState(0);
-
-  // Standby Rotating Prompts
-  const STANDBY_PROMPTS = [
-    "Welcome to the Faculty of IT!",
-    "Ask for directions to Lab 03",
-    "Find the Dean's Office here",
-    "Ask about events & news",
-    "Need help navigating campus?",
-    "Tap the mic to start chatting!",
-  ];
-  const [currentPromptIndex, setCurrentPromptIndex] = useState(0);
-
-  useEffect(() => {
-    if (isConnected) return;
-    const interval = setInterval(() => {
-      setCurrentPromptIndex((prev) => (prev + 1) % STANDBY_PROMPTS.length);
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [isConnected]);
-
-  // Weather State
-  const [weather, setWeather] = useState<{ temp: number; icon: string } | null>(
-    null,
-  );
-
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    // Scroll to bottom whenever messages or transcriptions change
-    if (scrollAreaRef.current) {
-      // Use requestAnimationFrame to let React paint the new bubbles first
-      requestAnimationFrame(() => {
-        if (scrollAreaRef.current) {
-          scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
-        }
-      });
-    }
-  }, [messages, transcriptions, stagingText]);
-
-  useEffect(() => {
-    const updateTime = () => {
-      const now = new Date();
-      setTime(
-        now.toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "2-digit",
-          hour12: true,
-        }),
-      );
-      setDateStr(
-        now.toLocaleDateString("en-US", {
-          weekday: "long",
-          month: "short",
-          day: "numeric",
-        }),
-      );
-    };
-    updateTime();
-    const timer = setInterval(updateTime, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // Track connection state transitions
-  const wasConnectedRef = useRef(isConnected);
-
-  // Auto-disconnect after 5 minutes of inactivity
-  useEffect(() => {
-    if (!isConnected) {
-      if (wasConnectedRef.current) {
-        // Transitioned from connected to disconnected
-        setFocusedEvent(null);
-        pendingEventRef.current = null;
-        setIsConnecting(false);
-      }
-      wasConnectedRef.current = false;
-      return;
-    }
-    wasConnectedRef.current = true;
-
-    const timeoutId = setTimeout(
-      () => {
-        console.log("Disconnecting due to inactivity");
-        end();
-      },
-      5 * 60 * 1000,
-    ); // 5 minutes
-
-    return () => clearTimeout(timeoutId);
-  }, [isConnected, end, messages, transcriptions]);
-
-  useEffect(() => {
-    const fetchWeather = async () => {
-      try {
-        const res = await fetch(
-          "https://api.open-meteo.com/v1/forecast?latitude=6.7951&longitude=79.9003&current_weather=true",
-        );
-        const data = await res.json();
-        const code = data.current_weather.weathercode;
-        let icon = "light_mode";
-        if (code === 0) icon = "light_mode";
-        else if (code === 1 || code === 2) icon = "partly_cloudy_day";
-        else if (code === 3) icon = "cloud";
-        else if (code === 45 || code === 48) icon = "foggy";
-        else if (code >= 51 && code <= 65) icon = "rainy";
-        else if (code >= 71 && code <= 77) icon = "weather_snow";
-        else if (code >= 80 && code <= 82) icon = "rainy";
-        else if (code >= 85 && code <= 86) icon = "weather_snow";
-        else if (code >= 95) icon = "thunderstorm";
-
-        setWeather({
-          temp: Math.round(data.current_weather.temperature),
-          icon,
-        });
-      } catch (err) {
-        console.error("Failed to fetch weather", err);
-      }
-    };
-    fetchWeather();
-    const interval = setInterval(fetchWeather, 30 * 60 * 1000); // 30 mins
-    return () => clearInterval(interval);
-  }, []);
-
-  // Fetch Facebook Posts
-  useEffect(() => {
-    const fetchPosts = async () => {
-      try {
-        const response = await fetch("/api/facebook");
-        const data = await response.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setFacebookPosts(data);
-        }
-      } catch (error) {
-        console.error("Failed to fetch FB posts:", error);
-      }
-    };
-    fetchPosts();
-    // Refresh every 30 minutes
-    const interval = setInterval(fetchPosts, 30 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Slideshow Logic - only rotates when standby (disconnected)
-  useEffect(() => {
-    if (isConnected) return;
-    if (fbPosts.length <= 1) return;
-    const interval = setInterval(() => {
-      setCurrentSlide((prev) => (prev + 1) % fbPosts.length);
-    }, 8000); // 8 seconds per slide
-    return () => clearInterval(interval);
-  }, [fbPosts.length, isConnected]);
-
-  // Swipe to change slides (refs avoid re-render on every touchmove)
+  // Swipe on banner
   const touchStartRef = useRef<number | null>(null);
   const touchEndRef = useRef<number | null>(null);
-
-  const minSwipeDistance = 50;
-
   const onTouchStart = (e: React.TouchEvent) => {
     touchEndRef.current = null;
     touchStartRef.current = e.targetTouches[0].clientX;
   };
-
   const onTouchMove = (e: React.TouchEvent) => {
     touchEndRef.current = e.targetTouches[0].clientX;
   };
-
   const onTouchEnd = () => {
-    const touchStart = touchStartRef.current;
-    const touchEnd = touchEndRef.current;
-    if (touchStart == null || touchEnd == null) return;
-    const distance = touchStart - touchEnd;
-    const isLeftSwipe = distance > minSwipeDistance;
-    const isRightSwipe = distance < -minSwipeDistance;
-
-    if (isLeftSwipe && fbPosts.length > 0) {
+    if (touchStartRef.current == null || touchEndRef.current == null) return;
+    const distance = touchStartRef.current - touchEndRef.current;
+    if (distance > 50 && fbPosts.length > 0) {
       setCurrentSlide((prev) => (prev + 1) % fbPosts.length);
     }
-    if (isRightSwipe && fbPosts.length > 0) {
-      setCurrentSlide((prev) => (prev - 1 + fbPosts.length) % fbPosts.length);
+    if (distance < -50 && fbPosts.length > 0) {
+      setCurrentSlide(
+        (prev) => (prev - 1 + fbPosts.length) % fbPosts.length,
+      );
     }
   };
 
+  const showMapCanvas = Boolean(navData) || showExploreMap;
+  const mountMap = mode === "maps" && (showMapCanvas || isNavLoading);
+
   return (
     <div
-      className="kiosk-mode relative text-on-background w-full h-screen overflow-hidden flex flex-col select-none bg-[#f4f7fb] dark:bg-black"
-      style={{ fontFamily: "Inter, sans-serif", touchAction: "manipulation" }}
+      className="kiosk-mode relative text-on-background w-full h-screen overflow-hidden flex flex-col select-none bg-neutral-100 dark:bg-black"
+      style={{
+        touchAction: "manipulation",
+        fontFamily: "var(--font-jakarta), sans-serif",
+      }}
     >
-      {/* Subtle Material You Premium Background */}
-      <div className="absolute inset-0 -z-20 pointer-events-none overflow-hidden">
-        {/* Ambient Glowing Blobs - Hidden in true dark mode */}
-        <div className="absolute -top-[20%] -left-[10%] w-[60%] h-[60%] bg-primary-container/40 dark:hidden rounded-full kiosk-ambient-blur pointer-events-none" />
-        <div className="absolute -bottom-[20%] -right-[10%] w-[60%] h-[60%] bg-tertiary-container/40 dark:hidden rounded-full kiosk-ambient-blur pointer-events-none" />
-      </div>
-
-      {/* Main Content Wrapper (must be above background) */}
       <div className="relative z-10 w-full h-full flex flex-col">
-        {/* Top App Bar */}
-        <header className="bg-transparent flex-shrink-0 w-full flex justify-between items-center px-6 h-[60px] z-20">
-          <div className="text-[26px] font-black tracking-[-0.04em] text-black dark:text-white flex items-center gap-3">
+        {/* Thin top bar */}
+        <header className="flex-shrink-0 w-full flex justify-between items-center px-5 h-[52px] z-20">
+          <div className="text-[22px] font-black tracking-tight text-black dark:text-white">
             NEma
-            {NLU_MODE && (
-              <span className="text-[11px] font-bold tracking-wide uppercase px-2 py-0.5 rounded-full bg-amber-500 text-black">
-                NLU
-              </span>
-            )}
           </div>
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => setIsUploadModalOpen(true)}
-              className="border border-black/15 dark:border-white/15 hover:bg-black/5 dark:hover:bg-white/5 transition-colors rounded-full px-5 py-2 flex items-center justify-center text-black dark:text-white text-[13px] font-semibold gap-2 active:scale-95"
+          <div className="flex items-center gap-3">
+            <span className="text-[16px] font-semibold tabular-nums text-black/70 dark:text-white/70">
+              {time || "—"}
+            </span>
+            <PopButton
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-2.5 rounded-full border border-black/10 dark:border-white/15 text-black dark:text-white"
+              aria-label="Settings"
             >
-              <UploadCloud className="w-4 h-4" />
-              Upload Poster
-            </button>
-            {isConnected && (
-              <div className="border border-black/15 dark:border-white/15 text-black/60 dark:text-white/60 px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-black/40 dark:bg-white/40 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-black/70 dark:bg-white/70"></span>
-                </span>
-                Connected
-              </div>
-            )}
-            <button
-              onClick={() => {
-                 const states = [null, 'where-to', 'chat', 'mic', 'news'] as any;
-                 const nextIdx = (states.indexOf(glowingSection) + 1) % states.length;
-                 setGlowingSection(states[nextIdx]);
-              }}
-              className="border border-black/15 dark:border-white/15 hover:bg-black/5 dark:hover:bg-white/5 transition-colors rounded-full px-5 py-2 flex items-center justify-center text-black dark:text-white text-[13px] font-semibold gap-2 active:scale-95"
-            >
-              Glow: {glowingSection || 'Off'}
-            </button>
-            <button
-              onClick={() => setIsColorModalOpen(true)}
-              className="border border-black/15 dark:border-white/15 hover:bg-black/5 dark:hover:bg-white/5 transition-colors rounded-full p-2.5 flex items-center justify-center text-black dark:text-white active:scale-95"
-              aria-label="Open settings"
-            >
-              <Settings className="w-[22px] h-[22px]" />
-            </button>
-            <ThemeToggle />
+              <Settings className="w-5 h-5" />
+            </PopButton>
           </div>
         </header>
 
-        {/* Main Content Area - Bento Grid */}
-        <main className="flex-1 px-3 pt-0 pb-3 min-h-0 flex flex-col">
-          <div className="flex gap-3 flex-1 min-h-0 pb-1">
-            {/* Left Column: Clock & Faculty News — expands when poster is focused */}
-            <motion.div
-              layout
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0, width: focusedEvent ? "65%" : "20%" }}
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="flex flex-col gap-2 h-full min-h-0 flex-shrink-0 min-w-0"
-            >
-              {/* Clock & Weather Card */}
-              {!focusedEvent && (
-                <div className="kiosk-clock-card bg-[#d3e3fd] text-[#041e49] dark:bg-[#0a0a0a] dark:text-white rounded-[32px] px-4 py-10 pt-12 flex flex-col items-center justify-center relative flex-shrink-0 transition-transform hover:scale-[1.02]">
-                {weather ? (
-                  <div className="absolute top-3 right-4 flex items-center opacity-80 text-primary">
-                    <span className="material-symbols-outlined text-[24px] fill-current">
-                      {weather.icon}
-                    </span>
-                  </div>
-                ) : (
-                  <span className="material-symbols-outlined absolute top-3 right-4 text-[24px] opacity-20 fill-current">
-                    light_mode
+        {/* Main stage */}
+        <main className="flex-1 min-h-0 px-3 pb-2 flex flex-col relative">
+          {/* NAV / EXPLORE MAP overlay */}
+          {mode === "maps" && mountMap ? (
+            <div className="flex-1 min-h-0 rounded-[28px] overflow-hidden bg-neutral-900 relative">
+              {isNavLoading ? (
+                <div className="flex h-full items-center justify-center flex-col gap-3 text-white">
+                  <span className="material-symbols-outlined animate-spin text-5xl">
+                    navigation
                   </span>
-                )}
-                <div className="w-full px-1">
-                  <div className="kiosk-clock-time">{time || "10:42"}</div>
+                  <p className="font-semibold text-[16px]">Calculating route…</p>
                 </div>
-                <div className="kiosk-clock-date mt-1 font-semibold opacity-80 w-full px-1">
-                  {dateStr || "Thursday, June 4"}
-                </div>
-                </div>
-              )}
-
-              <div className="relative h-full flex flex-col min-h-0">
-                <SiriGlow active={glowingSection === 'news'} />
-                <div className={`z-10 rounded-[32px] h-full flex flex-col min-h-0 overflow-hidden relative ${focusedEvent ? "bg-[#f0f4f9] dark:bg-[#121212]" : "bg-[#ffe7e3] dark:bg-[#050505]"}`}>
-                {focusedEvent ? (
-                  /* Full poster view */
-                  <>
-                    {/* Poster image fills top */}
-                    <div className="relative flex-1 min-h-0">
-                      <img
-                        src={focusedEvent.full_picture}
-                        alt={focusedEvent.message}
-                        className="w-full h-full object-contain bg-black/5 dark:bg-black/40"
-                      />
-                      {/* Back button */}
-                      <button
-                        onClick={() => setFocusedEvent(null)}
-                        className="absolute top-3 left-3 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full px-3 py-1.5 text-[12px] font-bold flex items-center gap-1.5 transition-colors backdrop-blur-sm"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">
-                          arrow_back
-                        </span>
-                        Back
-                      </button>
+              ) : navData ? (
+                <>
+                  <div className="absolute top-4 left-4 right-4 z-20 flex justify-between items-center bg-black/60 backdrop-blur-sm rounded-full px-5 py-3">
+                    <div className="flex items-center gap-3 text-white">
+                      <div className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse" />
+                      <span className="text-lg font-bold truncate">
+                        {navData.destination}
+                      </span>
                     </div>
-                    {/* Event details below image */}
-                    <div className="flex-shrink-0 p-5 bg-white/60 dark:bg-black/40 backdrop-blur-lg border-t border-white/20 dark:border-white/5">
-                      <p className="text-on-surface font-semibold text-[16px] leading-snug mb-1">
-                        {focusedEvent.message}
-                      </p>
-                      {focusedEvent.description && (
-                        <p className="text-on-surface/75 text-[13px] leading-relaxed line-clamp-3 mb-3">
-                          {focusedEvent.description}
-                        </p>
-                      )}
-                      <div className="flex flex-wrap gap-2">
-                        {focusedEvent.extracted_date && (
-                          <span className="bg-primary/10 text-primary border border-primary/20 px-2.5 py-1 rounded-full text-[11px] font-semibold">
-                            📅 {focusedEvent.extracted_date}
-                          </span>
-                        )}
-                        {focusedEvent.extracted_location && (
-                          <span className="bg-primary/10 text-primary border border-primary/20 px-2.5 py-1 rounded-full text-[11px] font-semibold">
-                            📍 {focusedEvent.extracted_location}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  /* Normal news list */
-                  <>
-                    {/* Header */}
-                    <div className="flex-shrink-0 px-5 pt-5 pb-3">
-                      <h2 className="text-[24px] leading-[32px] tracking-[-0.02em] text-on-surface font-bold flex-shrink-0">
-                        Faculty News
-                      </h2>
-                    </div>
-
-                    {/* Category color map */}
-                    <div className="flex-1 flex flex-col gap-3 overflow-hidden px-4 pb-5">
-                      {localPosts.slice(0, 3).map((post, i) => {
-                        const categoryColors: Record<string, string> = {
-                          events: "bg-violet-500",
-                          competitions: "bg-orange-500",
-                          posts: "bg-teal-500",
-                        };
-                        const accent =
-                          categoryColors[post.category] ||
-                          "bg-primary";
-                        return (
-                          <button
-                            key={post.id}
-                            className="w-full text-left rounded-2xl overflow-hidden cursor-pointer active:scale-[0.97] transition-transform focus:outline-none"
-                            onClick={() => handleNewsClick(post)}
-                          >
-                            {/* Card: image thumbnail + text side by side */}
-                            <div className="flex bg-white/50 dark:bg-black/20 hover:bg-white/70 dark:hover:bg-black/40 border border-white/20 dark:border-white/5 backdrop-blur-sm transition-all duration-200">
-                              {/* Thumbnail */}
-                              <div className="relative w-[80px] flex-shrink-0 overflow-hidden">
-                                <img
-                                  src={post.full_picture}
-                                  alt={post.message}
-                                  className="w-full h-full object-cover min-h-[80px]"
-                                />
-                                {/* Gradient accent bar on left edge */}
-                                <div
-                                  className={`absolute inset-y-0 left-0 w-1 ${accent}`}
-                                />
-                              </div>
-                              {/* Text content */}
-                              <div className="flex-1 p-3 min-w-0">
-                                <div className="flex items-center gap-1.5 mb-1.5">
-                                  <span
-                                    className={`inline-block w-2 h-2 rounded-full ${accent} flex-shrink-0`}
-                                  />
-                                  <span className="text-[10px] font-bold uppercase tracking-[0.12em] opacity-70">
-                                    {post.category.replace(/s$/, "")}
-                                  </span>
-                                  {post.extracted_date && (
-                                    <span className="ml-auto text-[10px] font-semibold opacity-50 flex-shrink-0">
-                                      {post.extracted_date.substring(0, 6)}
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-[14px] font-semibold text-on-surface leading-tight line-clamp-2">
-                                  {post.message}
-                                </p>
-                                {post.description && (
-                                  <p className="text-[12px] text-on-surface/60 mt-1 line-clamp-1">
-                                    {post.description}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                      {localPosts.length === 0 && (
-                        <div className="flex-1 flex flex-col items-center justify-center gap-3 opacity-50">
-                          <span className="material-symbols-outlined text-5xl">
-                            newspaper
-                          </span>
-                          <p className="text-[14px] italic text-center">
-                            No recent news.
-                            <br />
-                            Upload a poster to get started.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-              </div>
-            </motion.div>
-
-            {/* Middle Column: Events Carousel & Microphone — flex-1 fills freed space */}
-            <motion.div layout initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 30, delay: 0.1 }} className="flex-1 h-full min-h-0 flex flex-col gap-2 min-w-0">
-              <div className="bg-[#e6f4ea] dark:bg-[#050505] rounded-[32px] flex-1 overflow-hidden relative flex flex-col min-h-0">
-                {isNavLoading ? (
-                  <div className="flex-1 flex items-center justify-center flex-col gap-4 bg-surface-container rounded-[32px]">
-                    <span className="material-symbols-outlined animate-spin text-primary text-5xl">navigation</span>
-                    <p className="text-on-surface-variant font-semibold text-[15px]">Calculating route...</p>
-                  </div>
-                ) : isNavigating ? (
-                  <div className="flex-1 flex flex-col relative h-full bg-surface-container rounded-[32px] overflow-hidden">
-                    <div className="absolute top-4 left-6 right-6 z-20 flex justify-between items-center bg-surface-container-highest border-none rounded-full px-6 py-3 shadow-md">
-                      <div className="flex items-center gap-3 text-on-surface">
-                        <div className="w-3 h-3 bg-primary rounded-full animate-pulse" />
-                        <span className="text-on-surface text-lg font-bold">
-                          Navigating to: {navData.destination}
-                        </span>
-                      </div>
-                      <button
-                        onClick={() => { setNavData(null); setIsMapExpanded(false); }}
-                        className="text-on-surface-variant hover:text-on-surface text-2xl font-bold transition-colors"
-                      >
-                        &times;
-                      </button>
-                    </div>
-                    <Suspense
-                      fallback={
-                        <div className="flex h-full items-center justify-center text-white/50 animate-pulse">
-                          Loading 3D Map...
-                        </div>
-                      }
-                    >
-                      <NavigationMap
-                        path={navData.path_coords || navData.path}
-                        path_ids={navData.path_ids}
-                        nodes={navData.nodes}
-                        buildings={navData.buildings}
-                        destination={navData.destination}
-                        isManualExpanded={true}
-                        onClose={() => { setNavData(null); setIsMapExpanded(false); }}
-                      />
-                    </Suspense>
-                  </div>
-                ) : isMapExpanded ? (
-                  <div className="flex-1 flex flex-col relative h-full bg-surface-container rounded-[32px] overflow-hidden">
-                    <button
-                      onClick={() => setIsMapExpanded(false)}
-                      className="absolute top-6 right-6 z-20 w-12 h-12 flex items-center justify-center bg-surface-variant/90 backdrop-blur-sm border border-outline-variant/30 rounded-full text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest hover:scale-105 active:scale-95 text-3xl font-light transition-all shadow-md"
-                      aria-label="Close Map"
+                    <PopButton
+                      onClick={closeNav}
+                      className="text-white/80 hover:text-white text-2xl font-bold px-2"
                     >
                       &times;
-                    </button>
-                    <Suspense fallback={<div className="flex h-full items-center justify-center text-white/50 animate-pulse">Loading Map...</div>}>
-                      {homeMapData && (
-                        <NavigationMap
-                          nodes={homeMapData.nodes}
-                          buildings={homeMapData.buildings}
-                          edges={homeMapData.edges}
-                          isStandalone={true}
-                          hideFloorSwitcher={false}
-                          onNodeClick={handleNavigateToLocation}
-                        />
-                      )}
-                    </Suspense>
+                    </PopButton>
                   </div>
-                ) : (isConnected && !isAgentInitializing) ? (
-                  <div className="flex-1 flex flex-col relative h-full bg-transparent pt-4">
-
-                    <ScrollArea
-                      ref={scrollAreaRef}
-                      className="flex-1 px-4 relative z-10"
-                    >
-                      <ChatTranscript
-                        messages={messages}
-                        transcriptions={transcriptions}
-                        stagingText={stagingText}
-                        isLoading={false}
-                        className="space-y-4 pb-4"
-                      />
-                    </ScrollArea>
+                  <Suspense
+                    fallback={
+                      <div className="flex h-full items-center justify-center text-white/50">
+                        Loading map…
+                      </div>
+                    }
+                  >
+                    <NavigationMap
+                      path={navData.path_coords || navData.path}
+                      path_ids={navData.path_ids}
+                      nodes={navData.nodes}
+                      buildings={navData.buildings}
+                      destination={navData.destination}
+                      isManualExpanded={true}
+                      onClose={closeNav}
+                    />
+                  </Suspense>
+                </>
+              ) : showExploreMap && exploreMapData ? (
+                <>
+                  <PopButton
+                    onClick={() => setShowExploreMap(false)}
+                    className="absolute top-4 right-4 z-20 w-12 h-12 flex items-center justify-center bg-black/50 rounded-full text-white text-3xl"
+                    aria-label="Close map"
+                  >
+                    &times;
+                  </PopButton>
+                  <Suspense
+                    fallback={
+                      <div className="flex h-full items-center justify-center text-white/50">
+                        Loading map…
+                      </div>
+                    }
+                  >
+                    <NavigationMap
+                      nodes={exploreMapData.nodes}
+                      buildings={exploreMapData.buildings}
+                      edges={exploreMapData.edges}
+                      isStandalone={true}
+                      onNodeClick={handleNavigateToLocation}
+                    />
+                  </Suspense>
+                </>
+              ) : null}
+            </div>
+          ) : mode === "maps" ? (
+            /* Maps hub — category buttons only (no WebGL until route/explore) */
+            <div className="flex-1 min-h-0 rounded-[28px] bg-white dark:bg-neutral-950 border border-black/5 dark:border-white/10 p-6 flex flex-col">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-[28px] font-bold text-neutral-900 dark:text-white">
+                  Where to?
+                </h2>
+                <PopButton
+                  onClick={goIdle}
+                  aria-label="Close"
+                  className="w-11 h-11 rounded-full border border-black/10 dark:border-white/15 flex items-center justify-center text-neutral-700 dark:text-white/80"
+                >
+                  <span className="material-symbols-outlined text-[22px]">
+                    close
+                  </span>
+                </PopButton>
+              </div>
+              <p className="text-[16px] text-neutral-600 dark:text-white/60 mb-6">
+                Pick a category, then choose a room.
+              </p>
+              <div className="flex flex-col gap-3 mt-auto">
+                <PopButton
+                  className={CAT_BTN}
+                  onClick={() => handleCategoryClick("Lecture Halls", "lecture")}
+                >
+                  <span className="material-symbols-outlined text-[28px]">
+                    school
+                  </span>
+                  Lecture Halls
+                </PopButton>
+                <PopButton
+                  className={CAT_BTN}
+                  onClick={() => handleCategoryClick("Laboratory", "lab")}
+                >
+                  <span className="material-symbols-outlined text-[28px]">
+                    science
+                  </span>
+                  Laboratory
+                </PopButton>
+                <PopButton
+                  className={CAT_BTN}
+                  onClick={() => handleCategoryClick("Offices & More", "office")}
+                >
+                  <span className="material-symbols-outlined text-[28px]">
+                    apartment
+                  </span>
+                  Offices &amp; More
+                </PopButton>
+                <PopButton
+                  className={`${CAT_BTN} opacity-80`}
+                  onClick={() => {
+                    void ensureMapsData().then(() => setShowExploreMap(true));
+                  }}
+                >
+                  <span className="material-symbols-outlined text-[28px]">
+                    map
+                  </span>
+                  Explore map
+                </PopButton>
+              </div>
+            </div>
+          ) : mode === "talk" ? (
+            <div className="flex-1 min-h-0 rounded-[28px] bg-white dark:bg-neutral-950 border border-black/5 dark:border-white/10 flex flex-col items-center justify-center gap-6 px-6 relative">
+              <PopButton
+                onClick={goIdle}
+                aria-label="Close"
+                className="absolute top-4 right-4 w-11 h-11 rounded-full border border-black/10 dark:border-white/15 flex items-center justify-center text-neutral-700 dark:text-white/80"
+              >
+                <span className="material-symbols-outlined text-[22px]">
+                  close
+                </span>
+              </PopButton>
+              <p className="text-[24px] font-semibold text-center text-neutral-800 dark:text-white/90 max-w-lg min-h-[3rem] px-4">
+                {talkCaption.isUser ? (
+                  <span className="opacity-70">You: </span>
+                ) : null}
+                {talkCaption.text}
+              </p>
+              {!isConnected && (
+                <p className="text-[15px] text-neutral-500 dark:text-white/50">
+                  Ask about events or directions
+                </p>
+              )}
+            </div>
+          ) : mode === "events" && focusedEvent ? (
+            /* Focused poster with category + meta */
+            <div className="flex-1 min-h-0 rounded-[28px] overflow-hidden bg-neutral-900 flex flex-col relative">
+              <PopButton
+                onClick={() => setFocusedEvent(null)}
+                aria-label="Close"
+                className="absolute top-4 right-4 z-10 w-11 h-11 bg-black/50 text-white rounded-full flex items-center justify-center"
+              >
+                <span className="material-symbols-outlined text-[22px]">
+                  close
+                </span>
+              </PopButton>
+              <div className="flex-1 min-h-0">
+                <img
+                  src={focusedEvent.full_picture}
+                  alt={focusedEvent.message}
+                  className="w-full h-full object-contain"
+                />
+              </div>
+              <div className="shrink-0 p-5 bg-black/80 text-white space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${
+                      eventCategoryMeta(focusedEvent.category).chip
+                    }`}
+                  >
+                    {eventCategoryMeta(focusedEvent.category).label}
+                  </span>
+                  {focusedEvent.extracted_date && (
+                    <span className="text-[12px] font-semibold opacity-80">
+                      {focusedEvent.extracted_date}
+                      {focusedEvent.extracted_time
+                        ? ` · ${focusedEvent.extracted_time}`
+                        : ""}
+                    </span>
+                  )}
+                  {focusedEvent.extracted_location && (
+                    <span className="text-[12px] opacity-70">
+                      {focusedEvent.extracted_location}
+                    </span>
+                  )}
+                </div>
+                <p className="font-semibold text-[20px] leading-tight">
+                  {focusedEvent.message}
+                </p>
+                {focusedEvent.description && (
+                  <p className="text-[14px] opacity-80 line-clamp-3">
+                    {focusedEvent.description}
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : mode === "events" && eventCategory ? (
+            /* Category list — picked Competitions / Events / Announcements */
+            <div className="flex-1 min-h-0 rounded-[28px] bg-white dark:bg-neutral-950 border border-black/5 dark:border-white/10 flex flex-col">
+              <div className="shrink-0 flex items-center justify-between px-5 pt-5 pb-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span
+                    className={`w-3 h-3 rounded-full shrink-0 ${
+                      eventCategoryMeta(eventCategory).accent
+                    }`}
+                  />
+                  <h2 className="text-[26px] font-bold text-neutral-900 dark:text-white truncate">
+                    {eventCategory === "competitions"
+                      ? "Competitions"
+                      : eventCategory === "events"
+                        ? "Campus Events"
+                        : "Announcements"}
+                  </h2>
+                </div>
+                <PopButton
+                  onClick={() => setEventCategory(null)}
+                  aria-label="Close"
+                  className="w-11 h-11 rounded-full border border-black/10 dark:border-white/15 flex items-center justify-center text-neutral-700 dark:text-white/80"
+                >
+                  <span className="material-symbols-outlined text-[22px]">
+                    close
+                  </span>
+                </PopButton>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
+                {categoryEventPosts.length === 0 ? (
+                  <div className="h-full min-h-[200px] flex flex-col items-center justify-center gap-2 opacity-50">
+                    <span className="material-symbols-outlined text-4xl">
+                      newspaper
+                    </span>
+                    <p className="text-[15px] text-center">
+                      Nothing here yet. Upload a poster to add one.
+                    </p>
                   </div>
                 ) : (
-                  <div
-                    className="absolute inset-0 z-0 flex flex-col"
-                    onTouchStart={onTouchStart}
-                    onTouchMove={onTouchMove}
-                    onTouchEnd={onTouchEnd}
-                  >
-                    <div className="absolute inset-0 z-0 bg-secondary-container bg-black">
-                      {fbPosts.length > 0 ? (
-                        fbPosts.map((post, index) => (
-                          <img
-                            key={post.id}
-                            alt="Facebook Post"
-                            className={`absolute inset-0 w-full h-full object-cover transition-all duration-1000 ease-in-out ${index === currentSlide ? "opacity-100 scale-100 blur-none" : "opacity-0 scale-[1.05] blur-[4px]"}`}
-                            src={post.full_picture}
-                          />
-                        ))
-                      ) : (
-                        <div className="absolute inset-0 w-full h-full bg-surface-variant/80 animate-breathe"></div>
-                      )}
-                    </div>
-                    <div className="relative z-10 p-6 flex flex-col h-full bg-gradient-to-t from-black/80 via-black/30 to-transparent text-white">
-                      <div className="flex-1 w-full relative">
-                        {fbPosts.length > 0 ? (
-                          fbPosts.map((post, index) => (
-                            <div
-                              key={post.id}
-                              className={`absolute bottom-2 left-0 w-full flex flex-col justify-end transition-all duration-1000 ease-in-out ${
-                                index === currentSlide
-                                  ? "opacity-100 translate-y-0 blur-none scale-100 pointer-events-auto"
-                                  : "opacity-0 translate-y-3 blur-[4px] scale-[0.98] pointer-events-none"
-                              }`}
-                            >
-                              <h3 className="text-[20px] font-normal leading-tight mb-2 line-clamp-3 opacity-90">
-                                {post.message}
-                              </h3>
-
-                              {post.description && (
-                                <p className="text-[14px] opacity-80 mb-2 line-clamp-2">
-                                  {post.description}
-                                </p>
-                              )}
-
-                              {post.extracted_date && (
-                                <p className="text-[13px] font-semibold text-indigo-300 mb-1">
-                                  📅 {post.extracted_date}{" "}
-                                  {post.extracted_time
-                                    ? `• ${post.extracted_time}`
-                                    : ""}
-                                </p>
-                              )}
-
-                              {post.extracted_location && (
-                                <p className="text-[13px] font-semibold text-purple-300 mb-3">
-                                  📍 {post.extracted_location}
-                                </p>
-                              )}
-
-                              <p className="text-[11px] opacity-60">
-                                Posted on:{" "}
-                                {new Date(
-                                  post.created_time,
-                                ).toLocaleDateString()}
-                              </p>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="space-y-3 animate-breathe opacity-60 absolute bottom-2 left-0 w-full">
-                            <div className="h-7 bg-white/30 rounded-md w-3/4"></div>
-                            <div className="h-5 bg-white/30 rounded-md w-1/2"></div>
-                            <div className="h-4 bg-white/30 rounded-md w-1/4 mt-4"></div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    {/* Carousel Indicators */}
-                    {fbPosts.length > 1 && (
-                      <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-2 z-20">
-                        {fbPosts.map((_, idx) => (
-                          <div
-                            key={idx}
-                            onClick={() => setCurrentSlide(idx)}
-                            className={`w-2.5 h-2.5 rounded-full cursor-pointer transition-all ${idx === currentSlide ? "bg-on-secondary scale-110" : "bg-on-secondary/50 hover:bg-on-secondary/80 scale-100"}`}
-                          ></div>
-                        ))}
-                      </div>
-                    )}
-                    {/* Facebook Logo Watermark */}
-                    {fbPosts.length > 0 && !fbPosts[currentSlide]?.isLocal && (
-                      <div className="absolute bottom-4 right-4 z-20 text-[#1877F2] bg-white rounded-full p-[2px] flex items-center justify-center pointer-events-none">
-                        <svg
-                          viewBox="0 0 24 24"
-                          fill="currentColor"
-                          className="w-7 h-7"
+                  <div className="grid grid-cols-2 gap-3">
+                    {categoryEventPosts.map((post) => {
+                      const meta = eventCategoryMeta(post.category);
+                      return (
+                        <PopButton
+                          key={post.id}
+                          type="button"
+                          onClick={() => handlePosterTap(post)}
+                          className="text-left rounded-2xl overflow-hidden border border-black/5 dark:border-white/10 bg-neutral-50 dark:bg-white/5 flex flex-col min-h-[200px]"
                         >
-                          <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.469h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.469h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
-                        </svg>
-                      </div>
-                    )}
+                          <div className="relative w-full aspect-[4/3] shrink-0 overflow-hidden bg-neutral-200 dark:bg-neutral-800">
+                            <img
+                              src={post.full_picture}
+                              alt=""
+                              className="w-full h-full object-cover"
+                            />
+                            <div
+                              className={`absolute top-0 left-0 right-0 h-1 ${meta.accent}`}
+                            />
+                          </div>
+                          <div className="flex-1 p-3 min-w-0 flex flex-col">
+                            {post.extracted_date && (
+                              <p className="text-[11px] font-semibold opacity-50 mb-1 line-clamp-1">
+                                {post.extracted_date}
+                                {post.extracted_location
+                                  ? ` · ${post.extracted_location}`
+                                  : ""}
+                              </p>
+                            )}
+                            <p className="text-[15px] font-semibold text-neutral-900 dark:text-white leading-tight line-clamp-2">
+                              {post.message}
+                            </p>
+                            {post.description && (
+                              <p className="text-[12px] text-neutral-500 dark:text-white/50 mt-1 line-clamp-2">
+                                {post.description}
+                              </p>
+                            )}
+                          </div>
+                        </PopButton>
+                      );
+                    })}
                   </div>
                 )}
               </div>
-              {/* Microphone Action Area */}
-              <div className="relative flex-shrink-0 min-h-[112px] h-auto rounded-[32px] w-full">
-                <SiriGlow active={glowingSection === 'mic' || isThinking} />
-                <div
-                  className={`z-10 h-full py-4 flex items-center justify-center rounded-[32px] relative px-4 overflow-hidden transition-all duration-300 ${isConnected ? "bg-primary-container dark:bg-primary-container" : "bg-[#f0f4f9] dark:bg-[#1a2235]"}`}
-                  style={{
-                    boxShadow: isConnected
-                      ? `0 0 ${maxVolume * 40}px rgba(var(--tw-colors-primary-rgb), ${maxVolume * 0.3})`
-                      : undefined,
-                  }}
+            </div>
+          ) : mode === "events" ? (
+            /* Events hub — same pattern as Maps: pick a category first */
+            <div className="flex-1 min-h-0 rounded-[28px] bg-white dark:bg-neutral-950 border border-black/5 dark:border-white/10 p-6 flex flex-col">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-[28px] font-bold text-neutral-900 dark:text-white">
+                  What&apos;s on?
+                </h2>
+                <PopButton
+                  onClick={goIdle}
+                  aria-label="Close"
+                  className="w-11 h-11 rounded-full border border-black/10 dark:border-white/15 flex items-center justify-center text-neutral-700 dark:text-white/80"
                 >
-                <div className="w-full flex justify-center items-center text-center font-extrabold text-black dark:text-white tracking-tight leading-[1.2] min-h-[64px] relative z-0 pl-4 pr-20 pointer-events-none">
-                  {!isConnected ? (
-                    <div className="relative w-full overflow-hidden flex items-center justify-center h-full min-h-[64px] pointer-events-none">
-                      {STANDBY_PROMPTS.map((prompt, index) => (
-                        <div
-                          key={index}
-                          className={`absolute inset-0 flex items-center justify-center text-center transition-all duration-1000 ease-in-out text-[28px] pointer-events-none ${
-                            currentPromptIndex === index
-                              ? "opacity-100 translate-y-0 blur-none scale-100"
-                              : "opacity-0 translate-y-3 blur-[4px] scale-[0.98]"
-                          }`}
-                        >
-                          {prompt}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="w-full flex justify-center break-words leading-[1.2] max-w-xl text-center text-[21px] pointer-events-none">
-                      {stagingText ||
-                        (agentState === "speaking" || agentState === "thinking"
-                          ? [...messages]
-                              .reverse()
-                              .find((m: any) => m.role === "assistant")
-                              ?.content ||
-                            (agentState === "thinking" ? "Thinking…" : "")
-                          : "")}
-                    </div>
-                  )}
-                </div>
-                <div className="absolute right-4 z-[9999] flex items-center justify-center">
-                  {/* Premium Voice Amplitude Halo — only when connected */}
-                  {isConnected && (
-                    <div
-                      className="absolute inset-0 rounded-full blur-[12px] pointer-events-none transition-all duration-[50ms] ease-linear bg-primary/40 dark:bg-white/30"
-                      style={{
-                        transform: `scale(${1 + maxVolume * 1.2})`,
-                        opacity: Math.max(0.2, pulseOpacity ?? 0),
-                      }}
-                    />
-                  )}
-                  {/* Plain button in NLU mode so clicks cannot be swallowed by overlays/motion */}
-                  {NLU_MODE ? (
-                    <button
-                      type="button"
-                      id="nlu-mic-button"
-                      aria-label={isConnected ? "Stop voice" : "Start voice"}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        console.log("[Kiosk] NATIVE mic button click");
-                        void handleMicClick();
-                      }}
-                      className={`relative z-[9999] w-[72px] h-[72px] rounded-full flex items-center justify-center border-none shadow-lg cursor-pointer active:scale-95 transition-transform ${
-                        isConnecting
-                          ? "bg-amber-500 text-white animate-pulse"
-                          : isConnected
-                            ? "bg-red-600 text-white"
-                            : "bg-black dark:bg-white text-white dark:text-black"
-                      }`}
-                    >
-                      <span className="material-symbols-outlined text-4xl">
-                        {isConnected ? "mic_off" : "mic"}
-                      </span>
-                    </button>
-                  ) : (
-                    <GeminiMorphButton
-                      isAnimating={isConnecting}
-                      isConnected={isConnected}
-                      onClick={handleMicClick}
-                    />
-                  )}
-                </div>
+                  <span className="material-symbols-outlined text-[22px]">
+                    close
+                  </span>
+                </PopButton>
               </div>
+              <p className="text-[16px] text-neutral-600 dark:text-white/60 mb-6">
+                Pick a category, then open a poster.
+              </p>
+              <div className="flex flex-col gap-3 mt-auto">
+                <PopButton
+                  type="button"
+                  className={CAT_BTN}
+                  onClick={() => setEventCategory("competitions")}
+                >
+                  <span
+                    className={`w-3 h-3 rounded-full ${EVENT_CATEGORY_META.competitions.accent}`}
+                  />
+                  <span className="material-symbols-outlined text-[28px]">
+                    emoji_events
+                  </span>
+                  Competitions
+                  <span className="ml-auto text-[15px] font-semibold opacity-50">
+                    {eventCategoryCounts.competitions}
+                  </span>
+                </PopButton>
+                <PopButton
+                  type="button"
+                  className={CAT_BTN}
+                  onClick={() => setEventCategory("events")}
+                >
+                  <span
+                    className={`w-3 h-3 rounded-full ${EVENT_CATEGORY_META.events.accent}`}
+                  />
+                  <span className="material-symbols-outlined text-[28px]">
+                    celebration
+                  </span>
+                  Campus Events
+                  <span className="ml-auto text-[15px] font-semibold opacity-50">
+                    {eventCategoryCounts.events}
+                  </span>
+                </PopButton>
+                <PopButton
+                  type="button"
+                  className={CAT_BTN}
+                  onClick={() => setEventCategory("posts")}
+                >
+                  <span
+                    className={`w-3 h-3 rounded-full ${EVENT_CATEGORY_META.posts.accent}`}
+                  />
+                  <span className="material-symbols-outlined text-[28px]">
+                    campaign
+                  </span>
+                  Announcements
+                  <span className="ml-auto text-[15px] font-semibold opacity-50">
+                    {eventCategoryCounts.posts}
+                  </span>
+                </PopButton>
               </div>
-            </motion.div>
-
-            {/* Right Column: Navigation — collapses when poster is focused or map is active */}
-            <motion.div
-              layout
-              initial={{ opacity: 0, y: 20 }}
-              animate={{
-                opacity: focusedEvent || isMapExpanded || isNavigating ? 0 : 1,
-                y: 0,
-                width: focusedEvent || isMapExpanded || isNavigating ? "0px" : "20%",
-              }}
-              transition={{ type: "spring", stiffness: 300, damping: 30, delay: 0.2 }}
-              className="flex flex-col gap-2 h-full min-h-0 flex-shrink-0"
-            >
-              {/* Where to? Card — multi-floor NavigationMap with category modal */}
-              <div className="relative flex-1 flex flex-col min-h-0">
-                <SiriGlow active={glowingSection === "where-to"} />
-                <div className="z-10 bg-[#f3edf7] dark:bg-[#050505] rounded-[32px] p-5 flex-1 flex flex-col relative overflow-hidden min-h-0">
-                  <h2 className="text-[24px] leading-[32px] tracking-[-0.02em] text-on-surface mb-2 font-bold flex-shrink-0">
-                    Where to?
-                  </h2>
-
-                  {/* Mini map preview — tap to expand */}
-                  <AnimatePresence>
-                    {!isNavigating && !isMapExpanded && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0, marginBottom: 0 }}
-                        animate={{ opacity: 1, height: 180, marginBottom: 8 }}
-                        exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-                        className="w-full rounded-2xl overflow-hidden relative bg-black/10 mt-2 shadow-inner border border-outline/20 flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-primary transition-all group"
-                        onClick={() => setIsMapExpanded(true)}
-                      >
-                        {homeMapData ? (
-                          <div className="absolute inset-0">
-                            <Suspense
-                              fallback={
-                                <div className="w-full h-full flex items-center justify-center">
-                                  <span className="material-symbols-outlined animate-spin text-primary opacity-50">
-                                    refresh
-                                  </span>
-                                </div>
-                              }
-                            >
-                              <NavigationMap
-                                nodes={homeMapData.nodes}
-                                buildings={homeMapData.buildings}
-                                edges={homeMapData.edges}
-                                isStandalone={true}
-                                hideFloorSwitcher={true}
-                                onNodeClick={handleNavigateToLocation}
-                              />
-                            </Suspense>
-                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center cursor-pointer">
-                              <span className="material-symbols-outlined text-white opacity-0 group-hover:opacity-100 transition-opacity text-4xl drop-shadow-md">
-                                open_in_full
-                              </span>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <span className="material-symbols-outlined animate-spin text-primary opacity-50">
-                              refresh
-                            </span>
-                          </div>
-                        )}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-
-                  {/* Category quick-nav buttons */}
-                  <div className="flex flex-col gap-2 mt-auto w-full flex-shrink-0">
-                    <button
-                      onClick={() => handleCategoryClick("Lecture Halls", "lecture")}
-                      className="bg-primary text-on-primary rounded-full h-[46px] w-full text-[15px] flex items-center justify-center gap-3 hover:bg-surface-tint transition-colors active:scale-95 shadow-md font-bold flex-shrink-0"
-                    >
-                      <span className="material-symbols-outlined text-xl">school</span>
-                      Lecture Halls
-                    </button>
-                    <button
-                      onClick={() => handleCategoryClick("Laboratory", "lab")}
-                      className="bg-surface-variant text-on-surface-variant rounded-full h-[46px] w-full text-[15px] flex items-center justify-center gap-3 hover:bg-surface-container-highest transition-colors active:scale-95 shadow-sm border border-outline-variant font-bold flex-shrink-0"
-                    >
-                      <span className="material-symbols-outlined text-xl">science</span>
-                      Laboratory
-                    </button>
-                    <button
-                      onClick={() => handleCategoryClick("Offices & More", "office")}
-                      className="bg-surface-variant text-on-surface-variant rounded-full h-[46px] w-full text-[15px] flex items-center justify-center gap-3 hover:bg-surface-container-highest transition-colors active:scale-95 shadow-sm border border-outline-variant font-bold flex-shrink-0"
-                    >
-                      <span className="material-symbols-outlined text-xl">apartment</span>
-                      Offices &amp; More
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        </main>
-
-        {/* Locations Category Modal */}
-        <AnimatePresence>
-          {locationsModalCategory && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end justify-center"
-              onClick={() => setLocationsModalCategory(null)}
-            >
-              <motion.div
-                initial={{ y: "100%" }}
-                animate={{ y: 0 }}
-                exit={{ y: "100%" }}
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                className="bg-surface text-on-surface w-full max-w-xl rounded-t-3xl p-6 max-h-[70vh] overflow-y-auto"
-                onClick={(e) => e.stopPropagation()}
+            </div>
+          ) : (
+            /* Idle — two-zone: featured banner + always-visible "What's New" rail */
+            <div className="flex-1 min-h-0 flex gap-3">
+              {/* Featured banner (attract loop) */}
+              <div
+                className="flex-1 min-w-0 rounded-[28px] overflow-hidden relative bg-neutral-800"
+                onTouchStart={onTouchStart}
+                onTouchMove={onTouchMove}
+                onTouchEnd={onTouchEnd}
               >
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-xl font-bold">{locationsModalCategory}</h3>
-                  <button
-                    onClick={() => setLocationsModalCategory(null)}
-                    className="text-on-surface-variant hover:text-on-surface bg-surface-variant/50 hover:bg-surface-variant p-2 rounded-full transition-colors"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-                {filteredLocations.length === 0 ? (
-                  <p className="text-center text-on-surface-variant py-8">
-                    No rooms found in this category.
-                  </p>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    {filteredLocations.map((loc) => (
-                      <button
-                        key={`${loc.floor}-${loc.id}`}
-                        onClick={() => handleNavigateToLocation(loc.label)}
-                        className="bg-surface-container hover:bg-surface-container-highest text-on-surface border border-outline-variant/30 rounded-2xl h-[52px] w-full text-[15px] flex items-center justify-between px-5 gap-3 transition-all active:scale-[0.98] font-semibold"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="material-symbols-outlined text-[20px] text-primary opacity-70">
-                            navigation
+                {fbPosts.length > 0 ? (
+                  fbPosts.map((post, index) => (
+                    <PopButton
+                      key={post.id}
+                      type="button"
+                      className={`absolute inset-0 w-full h-full transition-opacity duration-700 ${
+                        index === currentSlide
+                          ? "opacity-100 pointer-events-auto"
+                          : "opacity-0 pointer-events-none"
+                      }`}
+                      onClick={() => handlePosterTap(post)}
+                    >
+                      <img
+                        alt=""
+                        className="absolute inset-0 w-full h-full object-cover"
+                        src={post.full_picture}
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                      <div className="absolute bottom-0 left-0 right-0 p-6 text-left text-white">
+                        {post.category && (
+                          <span
+                            className={`inline-block text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full mb-2 ${
+                              eventCategoryMeta(post.category).chip
+                            }`}
+                          >
+                            {eventCategoryMeta(post.category).label}
                           </span>
-                          <span className="truncate">{loc.label}</span>
-                        </div>
-                        <span className="text-[11px] font-bold text-on-surface-variant opacity-60 flex-shrink-0">
-                          {(loc.floor as string).replace("floor_", "Floor ")}
-                        </span>
-                      </button>
+                        )}
+                        <p className="text-[24px] font-bold leading-tight line-clamp-2">
+                          {post.message}
+                        </p>
+                        {post.extracted_date && (
+                          <p className="text-[14px] mt-2 opacity-80">
+                            {post.extracted_date}
+                            {post.extracted_location
+                              ? ` · ${post.extracted_location}`
+                              : ""}
+                          </p>
+                        )}
+                      </div>
+                    </PopButton>
+                  ))
+                ) : (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70 gap-3 px-8 text-center">
+                    <span className="material-symbols-outlined text-5xl opacity-40">
+                      campaign
+                    </span>
+                    <p className="text-[20px] font-semibold">
+                      Welcome to the Faculty of IT
+                    </p>
+                    <p className="text-[15px] opacity-70">
+                      Tap Maps for directions, or Talk to ask NEma
+                    </p>
+                  </div>
+                )}
+                {fbPosts.length > 1 && (
+                  <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-2 z-10 pointer-events-none">
+                    {fbPosts.map((_, idx) => (
+                      <div
+                        key={idx}
+                        className={`h-1.5 rounded-full transition-all ${
+                          idx === currentSlide
+                            ? "w-6 bg-white"
+                            : "w-1.5 bg-white/40"
+                        }`}
+                      />
                     ))}
                   </div>
                 )}
-              </motion.div>
-            </motion.div>
+              </div>
+
+              {/* What's New rail — newest first, always visible */}
+              <div className="w-[300px] shrink-0 rounded-[28px] bg-white dark:bg-neutral-950 border border-black/5 dark:border-white/10 flex flex-col overflow-hidden">
+                <div className="shrink-0 px-4 pt-4 pb-2 flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <h2 className="text-[18px] font-bold text-neutral-900 dark:text-white">
+                    What&apos;s New
+                  </h2>
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 space-y-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                  {latestPosts.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center gap-2 opacity-40 py-8 text-center">
+                      <span className="material-symbols-outlined text-4xl">
+                        newspaper
+                      </span>
+                      <p className="text-[13px]">No posters yet</p>
+                    </div>
+                  ) : (
+                    latestPosts.slice(0, 8).map((post) => {
+                      const meta = eventCategoryMeta(post.category);
+                      return (
+                        <PopButton
+                          key={post.id}
+                          type="button"
+                          onClick={() => handlePosterTap(post)}
+                          className="w-full text-left rounded-2xl overflow-hidden border border-black/5 dark:border-white/10 bg-neutral-50 dark:bg-white/5"
+                        >
+                          <div className="flex">
+                            <div className="relative w-[64px] shrink-0 overflow-hidden bg-neutral-200 dark:bg-neutral-800">
+                              <img
+                                src={post.full_picture}
+                                alt=""
+                                className="w-full h-full object-cover min-h-[64px]"
+                              />
+                              <div
+                                className={`absolute inset-y-0 left-0 w-1 ${meta.accent}`}
+                              />
+                            </div>
+                            <div className="flex-1 p-2.5 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <span
+                                  className={`inline-block w-2 h-2 rounded-full shrink-0 ${meta.accent}`}
+                                />
+                                <span className="text-[10px] font-bold uppercase tracking-wider opacity-60">
+                                  {meta.label}
+                                </span>
+                              </div>
+                              <p className="text-[13px] font-semibold text-neutral-900 dark:text-white leading-tight line-clamp-2">
+                                {post.message}
+                              </p>
+                              {post.extracted_date && (
+                                <p className="text-[11px] text-neutral-500 dark:text-white/50 mt-0.5 line-clamp-1">
+                                  {post.extracted_date}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </PopButton>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
           )}
-        </AnimatePresence>
+        </main>
 
-        {/* Upload Poster QR Modal */}
-        {isUploadModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-surface text-on-surface p-8 rounded-3xl max-w-md w-full relative animate-in zoom-in-95 duration-200">
-              <button
-                onClick={() => setIsUploadModalOpen(false)}
-                className="absolute top-4 right-4 text-on-surface-variant hover:text-on-surface bg-surface-variant/50 hover:bg-surface-variant p-2 rounded-full transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-              <div className="flex flex-col items-center text-center space-y-6">
-                <div className="bg-primary/10 p-4 rounded-full">
-                  <UploadCloud className="w-8 h-8 text-primary" />
-                </div>
-                <div>
-                  <h2 className="text-2xl font-bold mb-2">Upload a Poster</h2>
-                  <p className="text-on-surface-variant">
-                    Scan this QR code with your phone to quickly upload an event
-                    poster to the Kiosk.
-                  </p>
-                </div>
-                <div className="bg-white p-4 rounded-2xl">
-                  <QRCodeSVG value={qrUrl} size={200} />
-                </div>
-                <p className="text-sm font-medium opacity-60">
-                  or visit
-                  <br />
-                  <span className="text-primary">{qrUrl}</span>
-                </p>
-              </div>
+        {/* Bottom mode dock — 10.1" touch targets, mic in the middle */}
+        <nav className="flex-shrink-0 px-3 pb-3 pt-1">
+          <div className="flex gap-2">
+            <PopButton
+              type="button"
+              className={`${DOCK_BTN} ${mode === "events" ? DOCK_BTN_ACTIVE : DOCK_BTN_IDLE}`}
+              onClick={openEvents}
+            >
+              <span className="material-symbols-outlined text-[26px]">
+                campaign
+              </span>
+              Events
+            </PopButton>
+            <div className="flex-1 min-h-[72px] flex items-center justify-center">
+              <GeminiMorphButton
+                size={64}
+                isAnimating={
+                  isConnecting || isAgentInitializing || isConnected || isThinking
+                }
+                isConnected={isConnected}
+                onClick={() => {
+                  if (mode !== "talk") {
+                    openTalk();
+                    if (!isConnected) void handleMicClick();
+                  } else {
+                    void handleMicClick();
+                  }
+                }}
+              />
             </div>
+            <PopButton
+              type="button"
+              className={`${DOCK_BTN} ${mode === "maps" ? DOCK_BTN_ACTIVE : DOCK_BTN_IDLE}`}
+              onClick={openMaps}
+            >
+              <span className="material-symbols-outlined text-[26px]">map</span>
+              Maps
+            </PopButton>
           </div>
-        )}
-
-        {isColorModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-surface text-on-surface p-8 rounded-3xl max-w-md w-full relative animate-in zoom-in-95 duration-200">
-              <button
-                onClick={() => setIsColorModalOpen(false)}
-                className="absolute top-4 right-4 text-on-surface-variant hover:text-on-surface bg-surface-variant/50 hover:bg-surface-variant p-2 rounded-full transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-              <div className="flex flex-col items-center text-center space-y-6">
-                <div>
-                  <h2 className="text-2xl font-bold mb-2">Customize Eyes</h2>
-                  <p className="text-on-surface-variant">
-                    Select a color to change the robot's eye color and UI theme.
-                  </p>
-                </div>
-                <div className="grid grid-cols-3 gap-4 w-full">
-                  {[
-                    { name: "White", eyeTheme: "white", uiTheme: "", color: "bg-white border-gray-200" },
-                    { name: "Pistachio", eyeTheme: "pistachio", uiTheme: "pistachio", color: "bg-[#93c572]" },
-                    { name: "Coral", eyeTheme: "coral", uiTheme: "coral", color: "bg-[#ff7f50]" },
-                    { name: "Red", eyeTheme: "red", uiTheme: "", color: "bg-red-500 border-red-600" },
-                    { name: "Green", eyeTheme: "green", uiTheme: "", color: "bg-green-500 border-green-600" },
-                    { name: "Blue", eyeTheme: "blue", uiTheme: "", color: "bg-blue-500 border-blue-600" },
-                    { name: "Yellow", eyeTheme: "yellow", uiTheme: "", color: "bg-yellow-400 border-yellow-500" },
-                    { name: "Cyan", eyeTheme: "cyan", uiTheme: "", color: "bg-cyan-400 border-cyan-500" },
-                    { name: "Magenta", eyeTheme: "purple", uiTheme: "", color: "bg-fuchsia-500 border-fuchsia-600" },
-                  ].map((c) => (
-                    <button
-                      key={c.name}
-                      onClick={() => {
-                        applyEyeColor(c.eyeTheme, c.uiTheme);
-                        setIsColorModalOpen(false);
-                      }}
-                      className={`h-12 rounded-xl flex items-center justify-center font-bold transition-transform active:scale-95 border ${c.color} ${c.name === 'White' || c.name === 'Yellow' || c.name === 'Cyan' ? 'text-black' : 'text-white'}`}
-                    >
-                      {c.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* LiveKit-only: NLU mode returns null inside ImageDisplay (no SessionProvider). */}
-        <ImageDisplay ignoreNavigation={true} />
+        </nav>
       </div>
 
+      {/* Locations category sheet */}
+      <AnimatePresence>
+        {locationsModalCategory && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/50 flex items-end justify-center"
+            onClick={() => setLocationsModalCategory(null)}
+          >
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", stiffness: 320, damping: 32 }}
+              className="bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white w-full max-w-2xl rounded-t-3xl p-6 max-h-[70vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-[22px] font-bold">
+                  {locationsModalCategory}
+                </h3>
+                <PopButton
+                  onClick={() => setLocationsModalCategory(null)}
+                  className="p-2 rounded-full bg-black/5 dark:bg-white/10"
+                >
+                  <X className="w-5 h-5" />
+                </PopButton>
+              </div>
+              {filteredLocations.length === 0 ? (
+                <p className="text-center py-8 opacity-60">
+                  No rooms found in this category.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {filteredLocations.map((loc) => (
+                    <PopButton
+                      key={`${loc.floor}-${loc.id}`}
+                      onClick={() => handleNavigateToLocation(loc.label)}
+                      className="min-h-[56px] bg-neutral-100 dark:bg-white/10 rounded-2xl w-full text-[16px] flex items-center justify-between px-5 font-semibold"
+                    >
+                      <span className="truncate text-left">{loc.label}</span>
+                      <span className="text-[12px] opacity-50 flex-shrink-0 ml-3">
+                        {(loc.floor as string).replace("floor_", "Floor ")}
+                      </span>
+                    </PopButton>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Settings sheet */}
+      <AnimatePresence>
+        {isSettingsOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/50 flex items-end justify-center"
+            onClick={() => setIsSettingsOpen(false)}
+          >
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", stiffness: 320, damping: 32 }}
+              className="bg-white dark:bg-neutral-900 w-full max-w-md rounded-t-3xl p-6 space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-[20px] font-bold">Settings</h3>
+                <PopButton
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="p-2 rounded-full bg-black/5 dark:bg-white/10"
+                >
+                  <X className="w-5 h-5" />
+                </PopButton>
+              </div>
+              {NLU_MODE && (
+                <p className="text-[12px] font-bold uppercase tracking-wide text-amber-600">
+                  NLU mode
+                </p>
+              )}
+              <div className="flex items-center justify-between py-2">
+                <span className="font-semibold">Theme</span>
+                <ThemeToggle />
+              </div>
+              <PopButton
+                onClick={() => {
+                  setIsSettingsOpen(false);
+                  setIsUploadModalOpen(true);
+                }}
+                className={`${CAT_BTN} text-[16px]`}
+              >
+                <UploadCloud className="w-5 h-5" />
+                Upload poster
+              </PopButton>
+              <PopButton
+                onClick={() => {
+                  setIsSettingsOpen(false);
+                  setIsColorModalOpen(true);
+                }}
+                className={`${CAT_BTN} text-[16px]`}
+              >
+                Eye / UI colors
+              </PopButton>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Upload QR */}
+      {isUploadModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-white dark:bg-neutral-900 p-8 rounded-3xl max-w-md w-full relative mx-4">
+            <PopButton
+              onClick={() => setIsUploadModalOpen(false)}
+              className="absolute top-4 right-4 p-2 rounded-full bg-black/5 dark:bg-white/10"
+            >
+              <X className="w-5 h-5" />
+            </PopButton>
+            <div className="flex flex-col items-center text-center space-y-5">
+              <UploadCloud className="w-8 h-8" />
+              <h2 className="text-2xl font-bold">Upload a Poster</h2>
+              <div className="bg-white p-4 rounded-2xl">
+                <QRCodeSVG value={qrUrl || "http://localhost:3000/upload-portal"} size={180} />
+              </div>
+              <p className="text-sm opacity-60 break-all">{qrUrl}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Color picker (compact) */}
+      {isColorModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-white dark:bg-neutral-900 p-6 rounded-3xl max-w-sm w-full mx-4 space-y-3">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-bold">Colors</h2>
+              <PopButton onClick={() => setIsColorModalOpen(false)}>
+                <X className="w-5 h-5" />
+              </PopButton>
+            </div>
+            {[
+              { label: "Default", eye: "default", ui: "" },
+              { label: "Blue", eye: "blue", ui: "blue" },
+              { label: "Green", eye: "green", ui: "green" },
+              { label: "Amber", eye: "amber", ui: "amber" },
+            ].map((c) => (
+              <PopButton
+                key={c.label}
+                className={CAT_BTN + " text-[16px]"}
+                onClick={() => {
+                  void applyEyeColor(c.eye, c.ui);
+                  setIsColorModalOpen(false);
+                }}
+              >
+                {c.label}
+              </PopButton>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!NLU_MODE && <ImageDisplay ignoreNavigation={true} />}
     </div>
   );
 }

@@ -638,7 +638,7 @@ class AnimationRunner:
                     if abs(arms[i] - targets[i]) > 2.0:
                         moved = True
                         
-                self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=False)
+                self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=True)
                 time.sleep(dt)
                 if not moved:
                     break
@@ -653,7 +653,7 @@ class AnimationRunner:
                 if abs(arms[i] - targets[i]) > 2.0 or abs(vels[i]) > 5.0:
                     moved = True
                     
-            self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=False)
+            self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=True)
             time.sleep(dt)
             if not moved:
                 break

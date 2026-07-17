@@ -4,10 +4,13 @@ Runs the camera with face detection (YuNet) and hand detection (MediaPipe),
 streams annotated MJPEG to a web server accessible from any browser.
 
 Features:
-  - Live camera quality / resolution tuning
+  - WASD keyboard controls for manual head pan/tilt
+  - JK keyboard controls for base rotation
+  - Face & hand detection with live toggles
   - Servo deadzone adjustments (pan/tilt)
-  - Face & hand detection toggles and thresholds
-  - MJPEG stream with detection overlays (bounding boxes, landmarks, crosshairs)
+  - Hi/Bye/Talk arm animations with speed control
+  - Text command box to trigger hi/bye/talk
+  - MJPEG stream with detection overlays
   - JSON API for current detection state
 
 Usage:
@@ -25,6 +28,7 @@ import io
 import json
 import math
 import os
+import random
 import sys
 import socketserver
 import threading
@@ -70,6 +74,17 @@ def _cfg(data, *keys, default=None):
     return cur
 
 
+# ── Arm pose presets ─────────────────────────────────────────────────────────
+
+def _load_presets(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+ARM_PRESETS_PATH = APP_DIR / "tests" / "arm_pose_presets.json"
+
+
 # ── Tunable parameters (shared across threads) ──────────────────────────────
 
 class TuneState:
@@ -98,7 +113,7 @@ class TuneState:
         self.stream_res_w = int(_cfg(stream, "res", default=[640, 360])[0])
         self.stream_res_h = int(_cfg(stream, "res", default=[640, 360])[1])
 
-        # Servo deadzones
+        # Servo
         self.deadzone_x = float(servo.get("deadzone_x", 0.05))
         self.deadzone_y = float(servo.get("deadzone_y", 0.06))
         self.pan_center = float(servo.get("pan_center", 100.0))
@@ -110,7 +125,7 @@ class TuneState:
         self.tilt_min = float(servo.get("tilt_min", 40.0))
         self.tilt_max = float(servo.get("tilt_max", 150.0))
 
-        # Servo tuning parameters
+        # Servo tuning
         self.servo_enabled = False
         self.pan_p_gain = 4.0
         self.tilt_p_gain = 3.0
@@ -118,6 +133,19 @@ class TuneState:
         # Detection toggles
         self.face_detection_enabled = True
         self.hand_detection_enabled = True
+        self.face_tracking_enabled = True
+        self.hand_tracking_enabled = True
+
+        # Gesture toggles
+        self.hi_gesture_enabled = True
+        self.bye_gesture_enabled = True
+        self.talk_gesture_enabled = True
+
+        # Animation speeds (seconds per frame)
+        self.hi_speed = 0.15
+        self.bye_speed = 0.15
+        self.talk_speed = 0.4
+        self.base_rotate_deg = 15.0
 
         # Stats (read-only from detection thread)
         self.face_detected = False
@@ -131,10 +159,20 @@ class TuneState:
         self.track_kind = "none"
         self.fps_actual = 0.0
         self.detect_ms = 0.0
-        
-        # Read-only from servo thread
+
+        # Servo state
         self.current_pan = self.pan_center
         self.current_tilt = self.tilt_center
+
+        # Manual control deltas (set by keyboard, consumed by servo thread)
+        self.manual_pan_delta = 0.0
+        self.manual_tilt_delta = 0.0
+        self.manual_mode = False
+        self.manual_step = 2.0
+
+        # Animation state
+        self.animation_active = ""
+        self.animation_log = ""
 
     def get(self, key: str):
         with self._lock:
@@ -175,7 +213,7 @@ class DetectionThread(threading.Thread):
         super().__init__(name="DetectionThread")
         self.tune = tune
         self.cfg = cfg
-        self.latest_frame = None  # annotated JPEG bytes
+        self.latest_frame = None
         self._frame_lock = threading.Lock()
         cam_cfg = _cfg(cfg, "camera", default={}) or {}
         self._face_model_path = str(APP_DIR / cam_cfg.get("face_model_path", "face_detection_yunet_2023mar.onnx"))
@@ -185,16 +223,12 @@ class DetectionThread(threading.Thread):
             return self.latest_frame
 
     def run(self):
-        # ── Init camera ──────────────────────────────────────────────────
         cam = self._init_camera()
         if cam is None:
             print("[DetectionThread] Camera unavailable — exiting.")
             return
 
-        # ── Init face detector ───────────────────────────────────────────
         detector = self._init_face_detector()
-
-        # ── Init hand detector ───────────────────────────────────────────
         hand_detector = HandDetector(max_num_hands=2)
 
         print("[DetectionThread] Started — capturing and detecting.")
@@ -225,7 +259,6 @@ class DetectionThread(threading.Thread):
             face_norm_x = 0.0
             face_norm_y = 0.0
             face_count = 0
-            face_candidates = []
             hand_detected = False
             hand_norm_x = 0.0
             hand_norm_y = 0.0
@@ -249,7 +282,8 @@ class DetectionThread(threading.Thread):
                         face_norm_x = cx * 2.0 - 1.0
                         face_norm_y = cy * 2.0 - 1.0
                         face_detected = True
-                        track_kind = "face"
+                        if self.tune.get("face_tracking_enabled"):
+                            track_kind = "face"
 
                         # Draw all face boxes
                         for idx, f in enumerate(ranked):
@@ -259,8 +293,6 @@ class DetectionThread(threading.Thread):
                             label = f"face{idx} ({float(f[14]):.2f})" if len(f) > 14 else f"face{idx}"
                             cv2.putText(frame, label, (bx, max(12, by - 4)),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
-
-                            # Draw landmarks if available
                             if len(f) >= 14:
                                 for li in range(4, 14, 2):
                                     lx, ly = int(f[li]), int(f[li + 1])
@@ -280,7 +312,7 @@ class DetectionThread(threading.Thread):
                         hand_norm_y = (hand_cy / detect_h) * 2.0 - 1.0
                         hand_detected = True
                         hand_side = best_hand.physical_side
-                        if not face_detected:
+                        if not face_detected and self.tune.get("hand_tracking_enabled"):
                             track_kind = "hand"
                     for hand in hands:
                         draw_skeleton(frame, hand, is_active=(hand.physical_side == hand_side))
@@ -293,16 +325,13 @@ class DetectionThread(threading.Thread):
             cy_px = h_frame // 2
             dz_half_w = int(dz_x * w_frame * 0.5)
             dz_half_h = int(dz_y * h_frame * 0.5)
-            # Draw deadzone rectangle (red dashed-like)
             cv2.rectangle(frame,
                           (cx_px - dz_half_w, cy_px - dz_half_h),
                           (cx_px + dz_half_w, cy_px + dz_half_h),
                           (0, 0, 255), 1)
-            # Draw center crosshair
             cv2.line(frame, (cx_px - 15, cy_px), (cx_px + 15, cy_px), (255, 255, 255), 1)
             cv2.line(frame, (cx_px, cy_px - 15), (cx_px, cy_px + 15), (255, 255, 255), 1)
 
-            # Draw face target dot
             if face_detected:
                 fx_px = int((face_norm_x + 1.0) * 0.5 * w_frame)
                 fy_px = int((face_norm_y + 1.0) * 0.5 * h_frame)
@@ -321,8 +350,16 @@ class DetectionThread(threading.Thread):
                         (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
             cv2.putText(frame, f"Detect: {detect_ms:.0f}ms  FPS: {self.tune.get('fps_actual'):.1f}",
                         (10, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
-            cv2.putText(frame, f"DetRes: {detect_w}x{detect_h}  DZ: {dz_x:.3f}/{dz_y:.3f}",
-                        (10, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
+
+            anim = self.tune.get("animation_active")
+            if anim:
+                cv2.putText(frame, f"ANIM: {anim.upper()}", (10, h_frame - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
+
+            manual = self.tune.get("manual_mode")
+            if manual:
+                cv2.putText(frame, "MANUAL (WASD)", (w_frame - 200, 25),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 100, 100), 2)
 
             # ── Resize for stream ────────────────────────────────────────
             stream_w = self.tune.get("stream_res_w")
@@ -331,7 +368,6 @@ class DetectionThread(threading.Thread):
             if self.tune.get("swap_rb"):
                 stream_frame = cv2.cvtColor(stream_frame, cv2.COLOR_BGR2RGB)
 
-            # Encode JPEG
             quality = self.tune.get("jpeg_quality")
             if Image is not None:
                 img = Image.fromarray(stream_frame)
@@ -345,7 +381,6 @@ class DetectionThread(threading.Thread):
             with self._frame_lock:
                 self.latest_frame = jpg
 
-            # ── Update tune state stats ──────────────────────────────────
             fps_counter += 1
             elapsed = time.perf_counter() - fps_timer
             if elapsed >= 1.0:
@@ -366,13 +401,10 @@ class DetectionThread(threading.Thread):
                 "detect_ms": detect_ms,
             })
 
-            # ── Frame rate throttle ──────────────────────────────────────
             frame_time = 1.0 / max(1, vision_fps)
             spent = time.perf_counter() - t0
             if spent < frame_time:
                 time.sleep(frame_time - spent)
-
-    # ── Camera init ──────────────────────────────────────────────────────
 
     def _init_camera(self):
         try:
@@ -420,32 +452,50 @@ class DetectionThread(threading.Thread):
 
 class ServoThread(threading.Thread):
     """Drives the Arduino servo link based on current track coordinates."""
-    
+
     daemon = True
-    
+
     def __init__(self, tune: TuneState, link: ArduinoServoLink | None):
         super().__init__(name="ServoThread")
         self.tune = tune
         self.link = link
         self.pan = self.tune.get("pan_center")
         self.tilt = self.tune.get("tilt_center")
-        
+
     def run(self):
         if self.link is None or not self.link.connected:
             print("[ServoThread] No servo link. Simulation mode only.")
-            
+
         print(f"[ServoThread] Started. Initial center: pan={self.pan:.1f}, tilt={self.tilt:.1f}")
-        
+
         while True:
-            time.sleep(0.04)  # ~25 Hz update rate
-            
+            time.sleep(0.04)  # ~25 Hz
+
             if not self.tune.get("servo_enabled"):
                 continue
-                
+
+            # ── Manual WASD control ──────────────────────────────────────
+            pan_delta = self.tune.get("manual_pan_delta")
+            tilt_delta = self.tune.get("manual_tilt_delta")
+            manual_mode = self.tune.get("manual_mode")
+
+            if manual_mode and (abs(pan_delta) > 0.001 or abs(tilt_delta) > 0.001):
+                step = self.tune.get("manual_step")
+                self.pan += pan_delta * step
+                self.tilt += tilt_delta * step
+                self.pan = max(self.tune.get("pan_min"), min(self.tune.get("pan_max"), self.pan))
+                self.tilt = max(self.tune.get("tilt_min"), min(self.tune.get("tilt_max"), self.tilt))
+                self.tune.set("current_pan", self.pan)
+                self.tune.set("current_tilt", self.tilt)
+                if self.link is not None and self.link.connected:
+                    self.link.write_angles(self.pan, self.tilt, force=True)
+                continue
+
+            # ── Auto tracking ────────────────────────────────────────────
             track_kind = self.tune.get("track_kind")
             if track_kind == "none":
                 continue
-                
+
             if track_kind == "face":
                 norm_x = self.tune.get("face_norm_x")
                 norm_y = self.tune.get("face_norm_y")
@@ -454,38 +504,176 @@ class ServoThread(threading.Thread):
                 norm_y = self.tune.get("hand_norm_y")
             else:
                 continue
-                
+
             dz_x = self.tune.get("deadzone_x")
             dz_y = self.tune.get("deadzone_y")
-            
+
             error_x = 0.0
             error_y = 0.0
-            
+
             if abs(norm_x) > dz_x:
                 error_x = norm_x - (dz_x if norm_x > 0 else -dz_x)
             if abs(norm_y) > dz_y:
                 error_y = norm_y - (dz_y if norm_y > 0 else -dz_y)
-                
-            # Basic P controller
+
             p_gain = self.tune.get("pan_p_gain")
             t_gain = self.tune.get("tilt_p_gain")
-            
+
             delta_pan = error_x * p_gain * self.tune.get("pan_sign")
             delta_tilt = error_y * t_gain * self.tune.get("tilt_sign")
-            
+
             self.pan += delta_pan
             self.tilt += delta_tilt
-            
-            # Clamp limits
+
             self.pan = max(self.tune.get("pan_min"), min(self.tune.get("pan_max"), self.pan))
             self.tilt = max(self.tune.get("tilt_min"), min(self.tune.get("tilt_max"), self.tilt))
-            
+
             self.tune.set("current_pan", self.pan)
             self.tune.set("current_tilt", self.tilt)
-            
+
             if self.link is not None and self.link.connected:
-                # Use force=False so it only sends if it changed significantly
                 self.link.write_angles(self.pan, self.tilt, force=False)
+
+
+# ── Animation thread ─────────────────────────────────────────────────────────
+
+class AnimationRunner:
+    """Plays arm animations using ArduinoServoLink."""
+
+    def __init__(self, tune: TuneState, link: ArduinoServoLink | None):
+        self.tune = tune
+        self.link = link
+        self._presets = _load_presets(ARM_PRESETS_PATH)
+        self._lock = threading.Lock()
+
+    def play(self, command: str) -> str:
+        """Play an animation by name. Returns status string."""
+        if self.link is None or not self.link.connected:
+            return "No servo link connected"
+        if not self.link.has_arm_firmware():
+            return "No arm firmware on ESP32"
+
+        with self._lock:
+            if command == "hi":
+                return self._play_hi()
+            elif command == "bye":
+                return self._play_bye()
+            elif command == "talk":
+                return self._play_talk()
+            elif command == "home":
+                return self._play_home()
+            else:
+                return f"Unknown command: {command}"
+
+    def _play_hi(self):
+        self.tune.set("animation_active", "hi")
+        speed = self.tune.get("hi_speed")
+        poses = self._presets.get("poses", {})
+        hi_poses = [poses.get(f"hi{i}") for i in range(1, 5) if poses.get(f"hi{i}")]
+        home = poses.get("home", {"a0": 47, "a1": 65, "a2": 54, "a3": 76})
+
+        if not hi_poses:
+            self.tune.set("animation_active", "")
+            return "No hi poses found"
+
+        # Optional base rotate
+        base_deg = self.tune.get("base_rotate_deg")
+        if base_deg > 0:
+            try:
+                self.link.write_base_step_spin(base_deg, timeout_sec=3.0)
+            except Exception:
+                pass
+
+        # Play hi sequence
+        for pose in hi_poses:
+            self.link.write_arms(pose["a0"], pose["a1"], pose["a2"], pose["a3"], force=True)
+            time.sleep(speed)
+
+        # Hold the last pose briefly
+        time.sleep(0.3)
+
+        # Return home
+        self.link.write_arms(home["a0"], home["a1"], home["a2"], home["a3"], force=True)
+        time.sleep(0.3)
+
+        # Rotate back
+        if base_deg > 0:
+            try:
+                self.link.write_base_step_spin(-base_deg, timeout_sec=3.0)
+            except Exception:
+                pass
+
+        self.tune.set("animation_active", "")
+        return "Hi wave complete"
+
+    def _play_bye(self):
+        self.tune.set("animation_active", "bye")
+        speed = self.tune.get("bye_speed")
+        anims = self._presets.get("animations", {})
+        bye_names = [k for k in anims if k.startswith("bye")]
+        if not bye_names:
+            self.tune.set("animation_active", "")
+            return "No bye animations found"
+
+        chosen = random.choice(bye_names)
+        frames = anims[chosen].get("frames", [])
+
+        # Optional base rotate
+        base_deg = self.tune.get("base_rotate_deg")
+        if base_deg > 0:
+            try:
+                self.link.write_base_step_spin(-base_deg, timeout_sec=3.0)
+            except Exception:
+                pass
+
+        for frame in frames:
+            self.link.write_arms(frame["a0"], frame["a1"], frame["a2"], frame["a3"], force=True)
+            time.sleep(speed)
+
+        # Rotate back
+        if base_deg > 0:
+            try:
+                self.link.write_base_step_spin(base_deg, timeout_sec=3.0)
+            except Exception:
+                pass
+
+        self.tune.set("animation_active", "")
+        return f"Bye wave ({chosen}) complete"
+
+    def _play_talk(self):
+        self.tune.set("animation_active", "talk")
+        speed = self.tune.get("talk_speed")
+        poses = self._presets.get("poses", {})
+        talk_poses = [poses.get(f"talk{i}") for i in range(1, 11) if poses.get(f"talk{i}")]
+        home = poses.get("home", {"a0": 47, "a1": 65, "a2": 54, "a3": 76})
+
+        if not talk_poses:
+            self.tune.set("animation_active", "")
+            return "No talk poses found"
+
+        # Pick 4-6 random talk poses
+        count = min(len(talk_poses), random.randint(4, 6))
+        sequence = random.sample(talk_poses, count)
+
+        for pose in sequence:
+            self.link.write_arms(pose["a0"], pose["a1"], pose["a2"], pose["a3"], force=True)
+            time.sleep(speed)
+
+        # Return home
+        self.link.write_arms(home["a0"], home["a1"], home["a2"], home["a3"], force=True)
+        time.sleep(0.3)
+
+        self.tune.set("animation_active", "")
+        return "Talk gesture complete"
+
+    def _play_home(self):
+        self.tune.set("animation_active", "home")
+        poses = self._presets.get("poses", {})
+        home = poses.get("home", {"a0": 47, "a1": 65, "a2": 54, "a3": 76})
+        self.link.write_arms(home["a0"], home["a1"], home["a2"], home["a3"], force=True)
+        time.sleep(0.5)
+        self.tune.set("animation_active", "")
+        return "Returned to home pose"
 
 
 # ── Web dashboard HTML ───────────────────────────────────────────────────────
@@ -495,7 +683,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Face + Hand Detection Tuner</title>
+<title>Robot Control Dashboard</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -506,147 +694,75 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
   .header {
     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-    padding: 12px 24px;
+    padding: 10px 20px;
     border-bottom: 2px solid #0f3460;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
   }
-  .header h1 {
-    font-size: 1.3em;
-    background: linear-gradient(90deg, #e94560, #0f3460);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-  .status-bar {
-    display: flex; gap: 16px; font-size: 0.85em;
-  }
-  .status-bar .pill {
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-weight: 600;
-  }
-  .pill.face-on  { background: #0f3460; color: #4fc3f7; }
-  .pill.face-off { background: #333; color: #666; }
-  .pill.hand-on  { background: #1b5e20; color: #66bb6a; }
-  .pill.hand-off { background: #333; color: #666; }
+  .header h1 { font-size: 1.2em; background: linear-gradient(90deg, #e94560, #0f3460);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .status-bar { display: flex; gap: 10px; font-size: 0.8em; }
+  .pill { padding: 3px 10px; border-radius: 10px; font-weight: 600; }
+  .pill.on { background: #0f3460; color: #4fc3f7; }
+  .pill.off { background: #333; color: #666; }
+  .pill.anim { background: #b71c1c; color: #ff8a80; animation: pulse 0.5s infinite alternate; }
+  @keyframes pulse { to { opacity: 0.6; } }
 
-  .main {
-    display: grid;
-    grid-template-columns: 1fr 380px;
-    gap: 16px;
-    padding: 16px;
-    max-width: 1400px;
-    margin: 0 auto;
-  }
-  @media (max-width: 900px) {
-    .main { grid-template-columns: 1fr; }
-  }
+  .main { display: grid; grid-template-columns: 1fr 400px; gap: 12px; padding: 12px; max-width: 1500px; margin: 0 auto; }
+  @media (max-width: 900px) { .main { grid-template-columns: 1fr; } }
 
-  .stream-box {
-    background: #111;
-    border-radius: 12px;
-    overflow: hidden;
-    border: 1px solid #222;
-  }
-  .stream-box img {
-    width: 100%;
-    height: auto;
-    display: block;
-  }
+  .stream-box { background: #111; border-radius: 10px; overflow: hidden; border: 1px solid #222; }
+  .stream-box img { width: 100%; height: auto; display: block; }
 
-  .panel {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .card {
-    background: #14141f;
-    border: 1px solid #222;
-    border-radius: 10px;
-    padding: 16px;
-  }
-  .card h3 {
-    font-size: 0.9em;
-    color: #e94560;
-    margin-bottom: 10px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .slider-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-  .slider-row label {
-    flex: 0 0 140px;
-    font-size: 0.82em;
-    color: #aaa;
-  }
-  .slider-row input[type=range] {
-    flex: 1;
-    accent-color: #e94560;
-  }
-  .slider-row .val {
-    flex: 0 0 60px;
-    text-align: right;
-    font-size: 0.82em;
-    color: #4fc3f7;
-    font-family: monospace;
-  }
-  .toggle-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 8px;
-  }
-  .toggle-row label { font-size: 0.85em; color: #ccc; }
-  .toggle-row input[type=checkbox] {
-    width: 18px; height: 18px; accent-color: #e94560;
-  }
+  .panel { display: flex; flex-direction: column; gap: 10px; max-height: 90vh; overflow-y: auto; }
+  .card { background: #14141f; border: 1px solid #222; border-radius: 8px; padding: 12px; }
+  .card h3 { font-size: 0.85em; color: #e94560; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+  .slider-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .slider-row label { flex: 0 0 120px; font-size: 0.78em; color: #aaa; }
+  .slider-row input[type=range] { flex: 1; accent-color: #e94560; }
+  .slider-row .val { flex: 0 0 50px; text-align: right; font-size: 0.78em; color: #4fc3f7; font-family: monospace; }
+  .toggle-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+  .toggle-row label { font-size: 0.8em; color: #ccc; }
+  .toggle-row input[type=checkbox] { width: 16px; height: 16px; accent-color: #e94560; }
 
-  .stats-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-  }
-  .stat {
-    background: #1a1a2e;
-    padding: 8px 10px;
-    border-radius: 6px;
-    font-size: 0.8em;
-  }
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .stat { background: #1a1a2e; padding: 6px 8px; border-radius: 5px; font-size: 0.75em; }
   .stat .label { color: #888; }
   .stat .value { color: #4fc3f7; font-family: monospace; font-weight: 600; }
 
-  .btn {
-    padding: 8px 16px;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 0.85em;
-    transition: all 0.2s;
-  }
-  .btn-apply {
-    background: linear-gradient(135deg, #e94560, #c0392b);
-    color: #fff;
-  }
-  .btn-apply:hover { filter: brightness(1.2); }
-  .btn-reset {
-    background: #333;
-    color: #aaa;
-  }
-  .btn-reset:hover { background: #444; }
+  .cmd-row { display: flex; gap: 6px; margin-top: 6px; }
+  .cmd-input { flex: 1; background: #1a1a2e; border: 1px solid #333; color: #fff; padding: 8px 10px;
+    border-radius: 6px; font-size: 0.85em; }
+  .cmd-input:focus { outline: none; border-color: #e94560; }
+
+  .btn { padding: 7px 14px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;
+    font-size: 0.8em; transition: all 0.15s; }
+  .btn-send { background: linear-gradient(135deg, #e94560, #c0392b); color: #fff; }
+  .btn-send:hover { filter: brightness(1.2); }
+  .btn-action { background: #1a5276; color: #85c1e9; }
+  .btn-action:hover { background: #1f618d; }
+  .btn-warn { background: #7b241c; color: #f5b7b1; }
+  .btn-warn:hover { background: #922b21; }
+
+  .btn-group { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+
+  .kbd { display: inline-block; padding: 2px 7px; background: #2c2c3e; border: 1px solid #444;
+    border-radius: 4px; font-family: monospace; font-size: 0.8em; color: #4fc3f7; min-width: 24px; text-align: center; }
+  .kbd.active { background: #e94560; color: #fff; border-color: #e94560; }
+
+  .keys-grid { display: grid; grid-template-columns: repeat(3, 36px); gap: 3px; justify-content: center; margin: 6px 0; }
+  .keys-grid .placeholder { visibility: hidden; }
+
+  .log-box { background: #0a0a0f; border: 1px solid #222; border-radius: 6px; padding: 8px;
+    font-family: monospace; font-size: 0.72em; color: #66bb6a; max-height: 80px; overflow-y: auto; }
 </style>
 </head>
 <body>
 <div class="header">
-  <h1>🎯 Face + Hand Detection Tuner</h1>
+  <h1>🤖 Robot Control Dashboard</h1>
   <div class="status-bar">
-    <span id="pill-face" class="pill face-off">FACE: --</span>
-    <span id="pill-hand" class="pill hand-off">HAND: --</span>
+    <span id="pill-face" class="pill off">FACE: --</span>
+    <span id="pill-hand" class="pill off">HAND: --</span>
+    <span id="pill-anim" class="pill off">ANIM: --</span>
     <span id="pill-fps" class="pill" style="background:#222;color:#aaa">FPS: --</span>
   </div>
 </div>
@@ -657,99 +773,107 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="panel">
-    <!-- Detection Toggles -->
+    <!-- Manual Controls -->
     <div class="card">
-      <h3>Detection</h3>
+      <h3>🎮 Manual Controls</h3>
       <div class="toggle-row">
         <input type="checkbox" id="servo_enabled">
-        <label for="servo_enabled">Enable Hardware Servos (Warning: Moves Robot)</label>
+        <label for="servo_enabled">Enable Servos (⚠ Moves Robot)</label>
       </div>
-      <div class="toggle-row">
-        <input type="checkbox" id="face_detection_enabled" checked>
-        <label for="face_detection_enabled">Face Detection (YuNet)</label>
+      <div style="display:flex;gap:20px;align-items:flex-start;margin-top:8px">
+        <div style="text-align:center">
+          <div style="font-size:0.75em;color:#888;margin-bottom:4px">Head (WASD)</div>
+          <div class="keys-grid">
+            <div class="placeholder"></div>
+            <span class="kbd" id="k_w">W</span>
+            <div class="placeholder"></div>
+            <span class="kbd" id="k_a">A</span>
+            <span class="kbd" id="k_s">S</span>
+            <span class="kbd" id="k_d">D</span>
+          </div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:0.75em;color:#888;margin-bottom:4px">Base (J/K)</div>
+          <div style="display:flex;gap:3px;justify-content:center;margin-top:3px">
+            <span class="kbd" id="k_j">J ←</span>
+            <span class="kbd" id="k_k">K →</span>
+          </div>
+        </div>
       </div>
-      <div class="toggle-row">
-        <input type="checkbox" id="hand_detection_enabled" checked>
-        <label for="hand_detection_enabled">Hand Detection (MediaPipe)</label>
+      <div class="slider-row" style="margin-top:8px">
+        <label>Step Size</label>
+        <input type="range" id="manual_step" min="0.5" max="8.0" step="0.5">
+        <span class="val" id="v_manual_step"></span>
       </div>
+    </div>
+
+    <!-- Detection Toggles -->
+    <div class="card">
+      <h3>👁 Detection & Tracking</h3>
+      <div class="toggle-row"><input type="checkbox" id="face_detection_enabled" checked><label>Face Detection</label></div>
+      <div class="toggle-row"><input type="checkbox" id="hand_detection_enabled" checked><label>Hand Detection</label></div>
+      <div class="toggle-row"><input type="checkbox" id="face_tracking_enabled" checked><label>Face Tracking (servo follows face)</label></div>
+      <div class="toggle-row"><input type="checkbox" id="hand_tracking_enabled" checked><label>Hand Tracking (servo follows hand)</label></div>
+    </div>
+
+    <!-- Gestures & Animations -->
+    <div class="card">
+      <h3>🤚 Gestures & Animations</h3>
+      <div class="toggle-row"><input type="checkbox" id="hi_gesture_enabled" checked><label>Hi Wave</label></div>
+      <div class="toggle-row"><input type="checkbox" id="bye_gesture_enabled" checked><label>Bye Wave</label></div>
+      <div class="toggle-row"><input type="checkbox" id="talk_gesture_enabled" checked><label>Talk Gesture</label></div>
+
+      <div class="slider-row"><label>Hi Speed</label><input type="range" id="hi_speed" min="0.05" max="0.5" step="0.01"><span class="val" id="v_hi_speed"></span></div>
+      <div class="slider-row"><label>Bye Speed</label><input type="range" id="bye_speed" min="0.05" max="0.5" step="0.01"><span class="val" id="v_bye_speed"></span></div>
+      <div class="slider-row"><label>Talk Speed</label><input type="range" id="talk_speed" min="0.1" max="1.0" step="0.05"><span class="val" id="v_talk_speed"></span></div>
+      <div class="slider-row"><label>Base Rotate °</label><input type="range" id="base_rotate_deg" min="0" max="45" step="1"><span class="val" id="v_base_rotate_deg"></span></div>
+
+      <div class="btn-group">
+        <button class="btn btn-action" onclick="sendCmd('hi')">👋 Hi</button>
+        <button class="btn btn-action" onclick="sendCmd('bye')">🙋 Bye</button>
+        <button class="btn btn-action" onclick="sendCmd('talk')">💬 Talk</button>
+        <button class="btn btn-warn" onclick="sendCmd('home')">🏠 Home</button>
+      </div>
+
+      <div class="cmd-row" style="margin-top:8px">
+        <input type="text" class="cmd-input" id="cmd-box" placeholder="Type command: hi, bye, talk, home..." 
+               onkeydown="if(event.key==='Enter'){sendCmd(this.value);this.value=''}">
+        <button class="btn btn-send" onclick="sendCmd(document.getElementById('cmd-box').value);document.getElementById('cmd-box').value=''">Send</button>
+      </div>
+
+      <div class="log-box" id="anim-log">Ready.</div>
     </div>
 
     <!-- Camera Quality -->
     <div class="card">
-      <h3>Camera Quality</h3>
-      <div class="slider-row">
-        <label>Detect Width</label>
-        <input type="range" id="detect_res_w" min="160" max="1920" step="160">
-        <span class="val" id="v_detect_res_w"></span>
-      </div>
-      <div class="slider-row">
-        <label>Detect Height</label>
-        <input type="range" id="detect_res_h" min="90" max="1080" step="90">
-        <span class="val" id="v_detect_res_h"></span>
-      </div>
-      <div class="slider-row">
-        <label>JPEG Quality</label>
-        <input type="range" id="jpeg_quality" min="10" max="100" step="5">
-        <span class="val" id="v_jpeg_quality"></span>
-      </div>
-      <div class="slider-row">
-        <label>Vision FPS</label>
-        <input type="range" id="vision_fps" min="1" max="30" step="1">
-        <span class="val" id="v_vision_fps"></span>
-      </div>
-      <div class="slider-row">
-        <label>Stream Width</label>
-        <input type="range" id="stream_res_w" min="160" max="1280" step="160">
-        <span class="val" id="v_stream_res_w"></span>
-      </div>
-      <div class="slider-row">
-        <label>Stream Height</label>
-        <input type="range" id="stream_res_h" min="90" max="720" step="90">
-        <span class="val" id="v_stream_res_h"></span>
-      </div>
-      <div class="slider-row">
-        <label>Confidence</label>
-        <input type="range" id="confidence_threshold" min="0.1" max="0.95" step="0.05">
-        <span class="val" id="v_confidence_threshold"></span>
-      </div>
+      <h3>📷 Camera</h3>
+      <div class="slider-row"><label>Detect W</label><input type="range" id="detect_res_w" min="160" max="1920" step="160"><span class="val" id="v_detect_res_w"></span></div>
+      <div class="slider-row"><label>Detect H</label><input type="range" id="detect_res_h" min="90" max="1080" step="90"><span class="val" id="v_detect_res_h"></span></div>
+      <div class="slider-row"><label>JPEG Quality</label><input type="range" id="jpeg_quality" min="10" max="100" step="5"><span class="val" id="v_jpeg_quality"></span></div>
+      <div class="slider-row"><label>Vision FPS</label><input type="range" id="vision_fps" min="1" max="30" step="1"><span class="val" id="v_vision_fps"></span></div>
+      <div class="slider-row"><label>Confidence</label><input type="range" id="confidence_threshold" min="0.1" max="0.95" step="0.05"><span class="val" id="v_confidence_threshold"></span></div>
     </div>
 
     <!-- Servo Deadzones -->
     <div class="card">
-      <h3>Servo Deadzones</h3>
-      <div class="slider-row">
-        <label>Deadzone X</label>
-        <input type="range" id="deadzone_x" min="0" max="0.2" step="0.005">
-        <span class="val" id="v_deadzone_x"></span>
-      </div>
-      <div class="slider-row">
-        <label>Deadzone Y</label>
-        <input type="range" id="deadzone_y" min="0" max="0.2" step="0.005">
-        <span class="val" id="v_deadzone_y"></span>
-      </div>
-      <div class="slider-row">
-        <label>Pan Gain (Speed)</label>
-        <input type="range" id="pan_p_gain" min="0.1" max="10.0" step="0.1">
-        <span class="val" id="v_pan_p_gain"></span>
-      </div>
-      <div class="slider-row">
-        <label>Tilt Gain (Speed)</label>
-        <input type="range" id="tilt_p_gain" min="0.1" max="10.0" step="0.1">
-        <span class="val" id="v_tilt_p_gain"></span>
-      </div>
+      <h3>⚙ Servo Tuning</h3>
+      <div class="slider-row"><label>Deadzone X</label><input type="range" id="deadzone_x" min="0" max="0.2" step="0.005"><span class="val" id="v_deadzone_x"></span></div>
+      <div class="slider-row"><label>Deadzone Y</label><input type="range" id="deadzone_y" min="0" max="0.2" step="0.005"><span class="val" id="v_deadzone_y"></span></div>
+      <div class="slider-row"><label>Pan Gain</label><input type="range" id="pan_p_gain" min="0.1" max="10.0" step="0.1"><span class="val" id="v_pan_p_gain"></span></div>
+      <div class="slider-row"><label>Tilt Gain</label><input type="range" id="tilt_p_gain" min="0.1" max="10.0" step="0.1"><span class="val" id="v_tilt_p_gain"></span></div>
     </div>
 
     <!-- Live Stats -->
     <div class="card">
-      <h3>Live Stats</h3>
+      <h3>📊 Live Stats</h3>
       <div class="stats-grid">
         <div class="stat"><span class="label">Face X:</span> <span class="value" id="s_face_x">--</span></div>
         <div class="stat"><span class="label">Face Y:</span> <span class="value" id="s_face_y">--</span></div>
         <div class="stat"><span class="label">Faces:</span> <span class="value" id="s_faces">--</span></div>
         <div class="stat"><span class="label">Track:</span> <span class="value" id="s_track">--</span></div>
         <div class="stat"><span class="label">Hand:</span> <span class="value" id="s_hand">--</span></div>
-        <div class="stat"><span class="label">Detect ms:</span> <span class="value" id="s_detect">--</span></div>
-        <div class="stat" style="grid-column: span 2"><span class="label">Servo Cmd:</span> <span class="value" id="s_servo">--</span></div>
+        <div class="stat"><span class="label">Detect:</span> <span class="value" id="s_detect">--</span></div>
+        <div class="stat" style="grid-column:span 2"><span class="label">Servo:</span> <span class="value" id="s_servo">--</span></div>
       </div>
     </div>
   </div>
@@ -757,22 +881,22 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 <script>
 const SLIDERS = [
-  'detect_res_w', 'detect_res_h', 'jpeg_quality', 'vision_fps',
-  'stream_res_w', 'stream_res_h', 'confidence_threshold',
-  'deadzone_x', 'deadzone_y', 'pan_p_gain', 'tilt_p_gain'
+  'detect_res_w','detect_res_h','jpeg_quality','vision_fps','confidence_threshold',
+  'deadzone_x','deadzone_y','pan_p_gain','tilt_p_gain','manual_step',
+  'hi_speed','bye_speed','talk_speed','base_rotate_deg'
 ];
-const TOGGLES = ['face_detection_enabled', 'hand_detection_enabled', 'servo_enabled'];
+const TOGGLES = [
+  'face_detection_enabled','hand_detection_enabled','face_tracking_enabled','hand_tracking_enabled',
+  'hi_gesture_enabled','bye_gesture_enabled','talk_gesture_enabled','servo_enabled'
+];
 
-// Init: fetch state and populate UI
+// ── Init ────────────────────────────────────────────────────────────────────
 async function init() {
   const resp = await fetch('/api/state');
   const state = await resp.json();
   for (const id of SLIDERS) {
     const el = document.getElementById(id);
-    if (el && state[id] !== undefined) {
-      el.value = state[id];
-      document.getElementById('v_' + id).textContent = state[id];
-    }
+    if (el && state[id] !== undefined) { el.value = state[id]; document.getElementById('v_'+id).textContent = state[id]; }
   }
   for (const id of TOGGLES) {
     const el = document.getElementById(id);
@@ -780,35 +904,73 @@ async function init() {
   }
 }
 
-// Send changes on slider input
+// ── Slider events ───────────────────────────────────────────────────────────
 for (const id of SLIDERS) {
   const el = document.getElementById(id);
   if (!el) continue;
-  el.addEventListener('input', () => {
-    document.getElementById('v_' + id).textContent = el.value;
-  });
+  el.addEventListener('input', () => { document.getElementById('v_'+id).textContent = el.value; });
   el.addEventListener('change', async () => {
-    await fetch('/api/tune', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({[id]: el.value})
-    });
+    await fetch('/api/tune', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({[id]:el.value}) });
   });
 }
-
 for (const id of TOGGLES) {
   const el = document.getElementById(id);
   if (!el) continue;
   el.addEventListener('change', async () => {
-    await fetch('/api/tune', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({[id]: el.checked})
-    });
+    await fetch('/api/tune', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({[id]:el.checked}) });
   });
 }
 
-// Poll live stats
+// ── Keyboard controls ───────────────────────────────────────────────────────
+const keyState = {};
+const keyMap = {w:'k_w', a:'k_a', s:'k_s', d:'k_d', j:'k_j', k:'k_k'};
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;  // don't hijack text input
+  const key = e.key.toLowerCase();
+  if (keyMap[key] && !keyState[key]) {
+    keyState[key] = true;
+    document.getElementById(keyMap[key])?.classList.add('active');
+    sendKey(key, true);
+  }
+});
+
+document.addEventListener('keyup', e => {
+  const key = e.key.toLowerCase();
+  if (keyMap[key]) {
+    keyState[key] = false;
+    document.getElementById(keyMap[key])?.classList.remove('active');
+    sendKey(key, false);
+  }
+});
+
+async function sendKey(key, pressed) {
+  await fetch('/api/key', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({key: key, pressed: pressed})
+  });
+}
+
+// ── Send command ────────────────────────────────────────────────────────────
+async function sendCmd(cmd) {
+  cmd = cmd.trim().toLowerCase();
+  if (!cmd) return;
+  const log = document.getElementById('anim-log');
+  log.textContent += '\\n> ' + cmd + '...';
+  log.scrollTop = log.scrollHeight;
+  try {
+    const resp = await fetch('/api/command', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({cmd: cmd})
+    });
+    const data = await resp.json();
+    log.textContent += '\\n  ' + (data.result || data.error || 'done');
+    log.scrollTop = log.scrollHeight;
+  } catch(e) { log.textContent += '\\n  ERROR: ' + e; }
+}
+
+// ── Poll stats ──────────────────────────────────────────────────────────────
 setInterval(async () => {
   try {
     const resp = await fetch('/api/state');
@@ -818,23 +980,32 @@ setInterval(async () => {
     document.getElementById('s_faces').textContent = s.face_count;
     document.getElementById('s_track').textContent = s.track_kind;
     document.getElementById('s_hand').textContent = s.hand_detected ? s.hand_side : 'No';
-    document.getElementById('s_detect').textContent = s.detect_ms.toFixed(1);
-    
+    document.getElementById('s_detect').textContent = s.detect_ms.toFixed(1) + 'ms';
+
     if (s.servo_enabled) {
-      document.getElementById('s_servo').textContent = `Pan ${s.current_pan.toFixed(1)} / Tilt ${s.current_tilt.toFixed(1)}`;
+      document.getElementById('s_servo').textContent = 'P:' + s.current_pan.toFixed(1) + ' T:' + s.current_tilt.toFixed(1);
       document.getElementById('s_servo').style.color = '#ff6b6b';
     } else {
-      document.getElementById('s_servo').textContent = 'DISABLED';
+      document.getElementById('s_servo').textContent = 'OFF';
       document.getElementById('s_servo').style.color = '#666';
     }
 
     const pf = document.getElementById('pill-face');
-    pf.className = 'pill ' + (s.face_detected ? 'face-on' : 'face-off');
+    pf.className = 'pill ' + (s.face_detected ? 'on' : 'off');
     pf.textContent = 'FACE: ' + (s.face_detected ? s.face_count : 'NO');
 
     const ph = document.getElementById('pill-hand');
-    ph.className = 'pill ' + (s.hand_detected ? 'hand-on' : 'hand-off');
+    ph.className = 'pill ' + (s.hand_detected ? 'on' : 'off');
     ph.textContent = 'HAND: ' + (s.hand_detected ? s.hand_side : 'NO');
+
+    const pa = document.getElementById('pill-anim');
+    if (s.animation_active) {
+      pa.className = 'pill anim';
+      pa.textContent = 'ANIM: ' + s.animation_active.toUpperCase();
+    } else {
+      pa.className = 'pill off';
+      pa.textContent = 'ANIM: --';
+    }
 
     document.getElementById('pill-fps').textContent = 'FPS: ' + s.fps_actual.toFixed(1);
   } catch(e) {}
@@ -846,14 +1017,17 @@ init();
 </html>
 """
 
+
 # ── HTTP handler ─────────────────────────────────────────────────────────────
 
 class StreamHandler(BaseHTTPRequestHandler):
     tune: TuneState
     detection_thread: DetectionThread
+    animation_runner: AnimationRunner
+    link: ArduinoServoLink | None
 
     def log_message(self, format, *args):
-        return  # suppress logs
+        return
 
     def do_GET(self):
         if self.path in ("/", "/index.html"):
@@ -903,24 +1077,79 @@ class StreamHandler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self):
-        if self.path == "/api/tune":
-            length = int(self.headers.get("Content-Length", 0))
-            raw = self.rfile.read(length) if length > 0 else b"{}"
-            try:
-                payload = json.loads(raw.decode("utf-8"))
-            except json.JSONDecodeError:
-                self.send_error(400)
-                return
-            self.tune.update(payload)
-            snap = self.tune.snapshot()
-            body = json.dumps({"ok": True, "state": snap}).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length) if length > 0 else b"{}"
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError:
+            self._json(400, {"ok": False, "error": "bad json"})
             return
+
+        if self.path == "/api/tune":
+            self.tune.update(payload)
+            self._json(200, {"ok": True})
+            return
+
+        if self.path == "/api/key":
+            key = payload.get("key", "")
+            pressed = payload.get("pressed", False)
+            self._handle_key(key, pressed)
+            self._json(200, {"ok": True})
+            return
+
+        if self.path == "/api/command":
+            cmd = str(payload.get("cmd", "")).strip().lower()
+            if not cmd:
+                self._json(400, {"ok": False, "error": "empty command"})
+                return
+            # Run animation in background thread
+            def _run():
+                result = self.animation_runner.play(cmd)
+                self.tune.set("animation_log", result)
+            threading.Thread(target=_run, daemon=True).start()
+            self._json(200, {"ok": True, "result": f"Started: {cmd}"})
+            return
+
         self.send_error(404)
+
+    def _handle_key(self, key: str, pressed: bool):
+        pan_d = 0.0
+        tilt_d = 0.0
+
+        if key == "a":
+            pan_d = -1.0 if pressed else 0.0
+        elif key == "d":
+            pan_d = 1.0 if pressed else 0.0
+        elif key == "w":
+            tilt_d = -1.0 if pressed else 0.0
+        elif key == "s":
+            tilt_d = 1.0 if pressed else 0.0
+        elif key in ("j", "k"):
+            if pressed and self.link is not None and self.link.connected:
+                deg = self.tune.get("base_rotate_deg") or 15.0
+                if key == "j":
+                    deg = -deg
+                threading.Thread(
+                    target=lambda: self.link.write_base_step_spin(deg, timeout_sec=5.0),
+                    daemon=True
+                ).start()
+            return
+
+        if key in ("a", "d"):
+            self.tune.set("manual_pan_delta", pan_d)
+        elif key in ("w", "s"):
+            self.tune.set("manual_tilt_delta", tilt_d)
+
+        # Set manual mode if any WASD key held
+        self.tune.set("manual_mode", pressed)
+
+    def _json(self, code: int, data: dict):
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
 
 class ThreadingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
@@ -931,32 +1160,27 @@ class ThreadingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Face + Hand detection test with web tuner")
-    parser.add_argument("--config", type=str, default=None,
-                        help="Config YAML path (default: config.yaml)")
-    parser.add_argument("--port", type=int, default=9090,
-                        help="Web server port (default: 9090)")
-    parser.add_argument("--host", type=str, default="0.0.0.0",
-                        help="Bind host (default: 0.0.0.0 = all interfaces)")
-    parser.add_argument("--serial-port", type=str, default=None,
-                        help="ESP32 serial port (default: auto)")
-    parser.add_argument("--baud", type=int, default=None,
-                        help="ESP32 baud rate (default: from config)")
+    parser = argparse.ArgumentParser(description="Robot face/hand/servo test dashboard")
+    parser.add_argument("--config", type=str, default=None, help="Config YAML path")
+    parser.add_argument("--port", type=int, default=9090, help="Web server port (default: 9090)")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Bind host")
+    parser.add_argument("--serial-port", type=str, default=None, help="ESP32 serial port (auto)")
+    parser.add_argument("--baud", type=int, default=None, help="ESP32 baud rate")
     args = parser.parse_args()
 
     config_path = Path(args.config) if args.config else APP_DIR / "config.yaml"
     if not config_path.is_absolute():
         config_path = APP_DIR / config_path
     cfg = _load_yaml(config_path)
-    
+
     servo_cfg = cfg.get("servo", {}) or {}
     baud = args.baud if args.baud is not None else int(servo_cfg.get("baud", 115200))
     serial_port = args.serial_port or servo_cfg.get("port") or ""
 
     print(f"[Main] Config: {config_path}")
     print(f"[Main] Server: http://0.0.0.0:{args.port}/")
-    print(f"[Main] Access from any device on your network at http://<pi-ip>:{args.port}/")
-    
+    print(f"[Main] Access from any device: http://<pi-ip>:{args.port}/")
+
     print(f"[Main] Connecting to Arduino on {serial_port or 'auto'} @ {baud}...")
     link = ArduinoServoLink(port=serial_port, baud=baud)
     if not link.connect():
@@ -964,26 +1188,43 @@ def main():
         link = None
     else:
         print("[Main] Arduino connected!")
+        if link.has_arm_firmware():
+            print("[Main] Arm firmware detected — gestures available.")
+        else:
+            print("[Main] No arm firmware — gestures will not work.")
 
     tune = TuneState(cfg)
+
     det = DetectionThread(tune, cfg)
     det.start()
-    
+
     servo_thread = ServoThread(tune, link)
     servo_thread.start()
+
+    anim = AnimationRunner(tune, link)
 
     handler = type("BoundStreamHandler", (StreamHandler,), {
         "tune": tune,
         "detection_thread": det,
+        "animation_runner": anim,
+        "link": link,
     })
 
     server = ThreadingHTTPServer((args.host, args.port), handler)
-    print(f"[Main] Web server started on port {args.port}")
+    print(f"[Main] Dashboard live on port {args.port}")
+    print(f"[Main] Controls: WASD=head  J/K=base  Buttons/textbox=animations")
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n[Main] Shutting down...")
+        if link is not None and link.connected:
+            poses = _load_presets(ARM_PRESETS_PATH).get("poses", {})
+            home = poses.get("home")
+            if home:
+                link.write_arms(home["a0"], home["a1"], home["a2"], home["a3"], force=True)
+                time.sleep(0.3)
+            link.home_smooth(tune.get("pan_center"), tune.get("tilt_center"))
         server.shutdown()
         server.server_close()
 

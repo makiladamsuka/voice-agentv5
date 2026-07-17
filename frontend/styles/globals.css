@@ -261,6 +261,36 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Campus Calm — kiosk chrome tokens */
+  .kiosk-mode {
+    --kiosk-bg: #f4f6f8;
+    --kiosk-surface: #ffffff;
+    --kiosk-surface-muted: #f9fafb;
+    --kiosk-text: #111827;
+    --kiosk-muted: #6b7280;
+    --kiosk-border: #e5e7eb;
+    --kiosk-brand: #2563eb;
+    --kiosk-brand-fg: #ffffff;
+    --kiosk-success: #10b981;
+    --kiosk-danger: #ef4444;
+    --kiosk-cat-event: #7c3aed;
+    --kiosk-cat-comp: #ea580c;
+    --kiosk-cat-post: #0d9488;
+  }
+  .dark .kiosk-mode,
+  .kiosk-mode.dark {
+    --kiosk-bg: #0b0f14;
+    --kiosk-surface: #151a21;
+    --kiosk-surface-muted: #1a212b;
+    --kiosk-text: #f3f4f6;
+    --kiosk-muted: #9ca3af;
+    --kiosk-border: #2a313c;
+    --kiosk-brand: #60a5fa;
+    --kiosk-brand-fg: #0b0f14;
+    --kiosk-success: #34d399;
+    --kiosk-danger: #f87171;
+  }
   
   /* Material You Theming Overrides */
   [data-pixel-theme="pistachio"] {

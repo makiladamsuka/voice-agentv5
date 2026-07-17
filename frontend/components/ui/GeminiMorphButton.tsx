@@ -147,7 +147,7 @@ export function GeminiMorphButton({
       animate={{ scale: 1 }}
       whileTap={{ scale: 0.92 }}
       transition={M3_POP}
-      className="relative z-10 rounded-full flex items-center justify-center border-none shadow-lg bg-black dark:bg-white text-white dark:text-black"
+      className="relative z-10 rounded-full flex items-center justify-center border-none shadow-sm bg-black dark:bg-white text-white dark:text-black"
       style={{ width: size, height: size }}
     >
       <span className="material-symbols-outlined text-3xl fill-current">

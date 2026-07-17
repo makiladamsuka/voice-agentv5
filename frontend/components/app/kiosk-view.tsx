@@ -48,13 +48,17 @@ const NavigationMap = dynamic(() => import("@/components/app/isometric-map"), {
 type KioskMode = "idle" | "events" | "maps" | "talk";
 
 const DOCK_BTN =
-  "min-h-[72px] flex-1 rounded-2xl text-[18px] font-bold flex flex-col items-center justify-center gap-1 border";
+  "min-h-[64px] min-w-[96px] px-4 text-[15px] font-bold flex flex-col items-center justify-center gap-0.5 rounded-2xl border border-transparent";
 const DOCK_BTN_ACTIVE =
-  "bg-neutral-900 text-white border-neutral-900 dark:bg-white dark:text-black dark:border-white";
+  "bg-[var(--kiosk-brand)] text-[var(--kiosk-brand-fg)]";
 const DOCK_BTN_IDLE =
-  "bg-white/90 text-neutral-900 border-black/10 dark:bg-white/10 dark:text-white dark:border-white/15";
+  "bg-transparent text-[var(--kiosk-text)]";
 const CAT_BTN =
-  "min-h-[72px] w-full rounded-2xl text-[20px] font-bold flex items-center justify-center gap-3 border border-black/10 dark:border-white/15 bg-white/90 dark:bg-white/10 text-neutral-900 dark:text-white";
+  "min-h-[72px] w-full rounded-2xl text-[20px] font-bold flex items-center justify-center gap-3 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)]";
+const PANEL =
+  "rounded-[28px] bg-[var(--kiosk-surface)] border border-[var(--kiosk-border)]";
+const ICON_BTN =
+  "w-11 h-11 rounded-full border border-[var(--kiosk-border)] flex items-center justify-center text-[var(--kiosk-muted)]";
 
 const EVENT_CATEGORY_META: Record<
   string,
@@ -62,18 +66,18 @@ const EVENT_CATEGORY_META: Record<
 > = {
   events: {
     label: "Event",
-    accent: "bg-violet-500",
-    chip: "bg-violet-500/20 text-violet-100",
+    accent: "bg-[var(--kiosk-cat-event)]",
+    chip: "bg-[var(--kiosk-cat-event)]/20 text-[#EDE9FE]",
   },
   competitions: {
     label: "Competition",
-    accent: "bg-orange-500",
-    chip: "bg-orange-500/20 text-orange-100",
+    accent: "bg-[var(--kiosk-cat-comp)]",
+    chip: "bg-[var(--kiosk-cat-comp)]/20 text-[#FFEDD5]",
   },
   posts: {
     label: "Announcement",
-    accent: "bg-teal-500",
-    chip: "bg-teal-500/20 text-teal-100",
+    accent: "bg-[var(--kiosk-cat-post)]",
+    chip: "bg-[var(--kiosk-cat-post)]/20 text-[#CCFBF1]",
   },
 };
 
@@ -201,7 +205,6 @@ function KioskViewUI({
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [isColorModalOpen, setIsColorModalOpen] = useState(false);
   const [qrUrl, setQrUrl] = useState("");
   const [time, setTime] = useState("");
   const [pageVisible, setPageVisible] = useState(true);
@@ -263,7 +266,7 @@ function KioskViewUI({
   const [showExploreMap, setShowExploreMap] = useState(false);
 
   const applyEyeColor = useCallback(
-    async (eyeTheme: string, uiTheme: string) => {
+    async (colorName: string, uiTheme: string) => {
       if (uiTheme) {
         document.documentElement.setAttribute("data-pixel-theme", uiTheme);
       } else {
@@ -273,7 +276,7 @@ function KioskViewUI({
         await fetch("/api/eye-color", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ theme: eyeTheme }),
+          body: JSON.stringify({ theme: colorName }),
         });
       } catch (e) {
         console.error("Failed to set eye color:", e);
@@ -282,7 +285,10 @@ function KioskViewUI({
         try {
           room.localParticipant.publishData(
             new TextEncoder().encode(
-              JSON.stringify({ type: "theme_change", theme: eyeTheme }),
+              JSON.stringify({
+                type: "change_eye_color",
+                color: colorName,
+              }),
             ),
             { reliable: true },
           );
@@ -757,7 +763,7 @@ function KioskViewUI({
 
   return (
     <div
-      className="kiosk-mode relative text-on-background w-full h-screen overflow-hidden flex flex-col select-none bg-neutral-100 dark:bg-black"
+      className="kiosk-mode relative text-[var(--kiosk-text)] w-full h-screen overflow-hidden flex flex-col select-none bg-[var(--kiosk-bg)]"
       style={{
         touchAction: "manipulation",
         fontFamily: "var(--font-jakarta), sans-serif",
@@ -766,16 +772,24 @@ function KioskViewUI({
       <div className="relative z-10 w-full h-full flex flex-col">
         {/* Thin top bar */}
         <header className="flex-shrink-0 w-full flex justify-between items-center px-5 h-[52px] z-20">
-          <div className="text-[22px] font-black tracking-tight text-black dark:text-white">
+          <div className="text-[22px] font-black tracking-tight text-[var(--kiosk-text)]">
             NEma
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-[16px] font-semibold tabular-nums text-black/70 dark:text-white/70">
+          <div className="flex items-center gap-2">
+            <span className="text-[16px] font-semibold tabular-nums text-[var(--kiosk-muted)] mr-1">
               {time || "—"}
             </span>
             <PopButton
+              onClick={() => setIsUploadModalOpen(true)}
+              className="min-h-[40px] px-3.5 rounded-full border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] flex items-center gap-2 text-[14px] font-bold"
+              aria-label="Upload poster"
+            >
+              <UploadCloud className="w-4 h-4" />
+              Upload
+            </PopButton>
+            <PopButton
               onClick={() => setIsSettingsOpen(true)}
-              className="p-2.5 rounded-full border border-black/10 dark:border-white/15 text-black dark:text-white"
+              className="p-2.5 rounded-full border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)]"
               aria-label="Settings"
             >
               <Settings className="w-5 h-5" />
@@ -783,8 +797,8 @@ function KioskViewUI({
           </div>
         </header>
 
-        {/* Main stage */}
-        <main className="flex-1 min-h-0 px-3 pb-2 flex flex-col relative">
+        {/* Main stage — full stretch; floating dock overlays the bottom */}
+        <main className="flex-1 min-h-0 px-3 pb-3 flex flex-col relative overflow-hidden">
           {/* NAV / EXPLORE MAP overlay */}
           {mode === "maps" && mountMap ? (
             <div className="flex-1 min-h-0 rounded-[28px] overflow-hidden bg-neutral-900 relative">
@@ -799,7 +813,7 @@ function KioskViewUI({
                 <>
                   <div className="absolute top-4 left-4 right-4 z-20 flex justify-between items-center bg-black/60 backdrop-blur-sm rounded-full px-5 py-3">
                     <div className="flex items-center gap-3 text-white">
-                      <div className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse" />
+                      <div className="w-2.5 h-2.5 bg-[var(--kiosk-success)] rounded-full animate-pulse" />
                       <span className="text-lg font-bold truncate">
                         {navData.destination}
                       </span>
@@ -858,25 +872,25 @@ function KioskViewUI({
             </div>
           ) : mode === "maps" ? (
             /* Maps hub — category buttons only (no WebGL until route/explore) */
-            <div className="flex-1 min-h-0 rounded-[28px] bg-white dark:bg-neutral-950 border border-black/5 dark:border-white/10 p-6 flex flex-col">
+            <div className={`flex-1 min-h-0 ${PANEL} p-6 flex flex-col`}>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-[28px] font-bold text-neutral-900 dark:text-white">
+                <h2 className="text-[28px] font-bold text-[var(--kiosk-text)]">
                   Where to?
                 </h2>
                 <PopButton
                   onClick={goIdle}
                   aria-label="Close"
-                  className="w-11 h-11 rounded-full border border-black/10 dark:border-white/15 flex items-center justify-center text-neutral-700 dark:text-white/80"
+                  className={ICON_BTN}
                 >
                   <span className="material-symbols-outlined text-[22px]">
                     close
                   </span>
                 </PopButton>
               </div>
-              <p className="text-[16px] text-neutral-600 dark:text-white/60 mb-6">
+              <p className="text-[16px] text-[var(--kiosk-muted)] mb-6">
                 Pick a category, then choose a room.
               </p>
-              <div className="flex flex-col gap-3 mt-auto">
+              <div className="flex flex-col gap-3 mt-auto pb-24">
                 <PopButton
                   className={CAT_BTN}
                   onClick={() => handleCategoryClick("Lecture Halls", "lecture")}
@@ -918,24 +932,24 @@ function KioskViewUI({
               </div>
             </div>
           ) : mode === "talk" ? (
-            <div className="flex-1 min-h-0 rounded-[28px] bg-white dark:bg-neutral-950 border border-black/5 dark:border-white/10 flex flex-col items-center justify-center gap-6 px-6 relative">
+            <div className={`flex-1 min-h-0 ${PANEL} flex flex-col items-center justify-center gap-6 px-6 relative`}>
               <PopButton
                 onClick={goIdle}
                 aria-label="Close"
-                className="absolute top-4 right-4 w-11 h-11 rounded-full border border-black/10 dark:border-white/15 flex items-center justify-center text-neutral-700 dark:text-white/80"
+                className={`absolute top-4 right-4 ${ICON_BTN}`}
               >
                 <span className="material-symbols-outlined text-[22px]">
                   close
                 </span>
               </PopButton>
-              <p className="text-[24px] font-semibold text-center text-neutral-800 dark:text-white/90 max-w-lg min-h-[3rem] px-4">
+              <p className="text-[24px] font-semibold text-center text-[var(--kiosk-text)] max-w-lg min-h-[3rem] px-4">
                 {talkCaption.isUser ? (
                   <span className="opacity-70">You: </span>
                 ) : null}
                 {talkCaption.text}
               </p>
               {!isConnected && (
-                <p className="text-[15px] text-neutral-500 dark:text-white/50">
+                <p className="text-[15px] text-[var(--kiosk-muted)]">
                   Ask about events or directions
                 </p>
               )}
@@ -994,7 +1008,7 @@ function KioskViewUI({
             </div>
           ) : mode === "events" && eventCategory ? (
             /* Category list — picked Competitions / Events / Announcements */
-            <div className="flex-1 min-h-0 rounded-[28px] bg-white dark:bg-neutral-950 border border-black/5 dark:border-white/10 flex flex-col">
+            <div className={`flex-1 min-h-0 ${PANEL} flex flex-col`}>
               <div className="shrink-0 flex items-center justify-between px-5 pt-5 pb-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <span
@@ -1002,7 +1016,7 @@ function KioskViewUI({
                       eventCategoryMeta(eventCategory).accent
                     }`}
                   />
-                  <h2 className="text-[26px] font-bold text-neutral-900 dark:text-white truncate">
+                  <h2 className="text-[26px] font-bold text-[var(--kiosk-text)] truncate">
                     {eventCategory === "competitions"
                       ? "Competitions"
                       : eventCategory === "events"
@@ -1013,14 +1027,14 @@ function KioskViewUI({
                 <PopButton
                   onClick={() => setEventCategory(null)}
                   aria-label="Close"
-                  className="w-11 h-11 rounded-full border border-black/10 dark:border-white/15 flex items-center justify-center text-neutral-700 dark:text-white/80"
+                  className={ICON_BTN}
                 >
                   <span className="material-symbols-outlined text-[22px]">
                     close
                   </span>
                 </PopButton>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-28">
                 {categoryEventPosts.length === 0 ? (
                   <div className="h-full min-h-[200px] flex flex-col items-center justify-center gap-2 opacity-50">
                     <span className="material-symbols-outlined text-4xl">
@@ -1039,9 +1053,9 @@ function KioskViewUI({
                           key={post.id}
                           type="button"
                           onClick={() => handlePosterTap(post)}
-                          className="text-left rounded-2xl overflow-hidden border border-black/5 dark:border-white/10 bg-neutral-50 dark:bg-white/5 flex flex-col min-h-[200px]"
+                          className="text-left rounded-2xl overflow-hidden border border-[var(--kiosk-border)] bg-[var(--kiosk-surface-muted)] flex flex-col min-h-[200px]"
                         >
-                          <div className="relative w-full aspect-[4/3] shrink-0 overflow-hidden bg-neutral-200 dark:bg-neutral-800">
+                          <div className="relative w-full aspect-[4/3] shrink-0 overflow-hidden bg-[var(--kiosk-border)]">
                             <img
                               src={post.full_picture}
                               alt=""
@@ -1053,18 +1067,18 @@ function KioskViewUI({
                           </div>
                           <div className="flex-1 p-3 min-w-0 flex flex-col">
                             {post.extracted_date && (
-                              <p className="text-[11px] font-semibold opacity-50 mb-1 line-clamp-1">
+                              <p className="text-[11px] font-semibold text-[var(--kiosk-muted)] mb-1 line-clamp-1">
                                 {post.extracted_date}
                                 {post.extracted_location
                                   ? ` · ${post.extracted_location}`
                                   : ""}
                               </p>
                             )}
-                            <p className="text-[15px] font-semibold text-neutral-900 dark:text-white leading-tight line-clamp-2">
+                            <p className="text-[15px] font-semibold text-[var(--kiosk-text)] leading-tight line-clamp-2">
                               {post.message}
                             </p>
                             {post.description && (
-                              <p className="text-[12px] text-neutral-500 dark:text-white/50 mt-1 line-clamp-2">
+                              <p className="text-[12px] text-[var(--kiosk-muted)] mt-1 line-clamp-2">
                                 {post.description}
                               </p>
                             )}
@@ -1078,25 +1092,25 @@ function KioskViewUI({
             </div>
           ) : mode === "events" ? (
             /* Events hub — same pattern as Maps: pick a category first */
-            <div className="flex-1 min-h-0 rounded-[28px] bg-white dark:bg-neutral-950 border border-black/5 dark:border-white/10 p-6 flex flex-col">
+            <div className={`flex-1 min-h-0 ${PANEL} p-6 flex flex-col`}>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-[28px] font-bold text-neutral-900 dark:text-white">
+                <h2 className="text-[28px] font-bold text-[var(--kiosk-text)]">
                   What&apos;s on?
                 </h2>
                 <PopButton
                   onClick={goIdle}
                   aria-label="Close"
-                  className="w-11 h-11 rounded-full border border-black/10 dark:border-white/15 flex items-center justify-center text-neutral-700 dark:text-white/80"
+                  className={ICON_BTN}
                 >
                   <span className="material-symbols-outlined text-[22px]">
                     close
                   </span>
                 </PopButton>
               </div>
-              <p className="text-[16px] text-neutral-600 dark:text-white/60 mb-6">
+              <p className="text-[16px] text-[var(--kiosk-muted)] mb-6">
                 Pick a category, then open a poster.
               </p>
-              <div className="flex flex-col gap-3 mt-auto">
+              <div className="flex flex-col gap-3 mt-auto pb-24">
                 <PopButton
                   type="button"
                   className={CAT_BTN}
@@ -1150,7 +1164,7 @@ function KioskViewUI({
           ) : (
             /* Idle — two-zone: featured banner + always-visible "What's New" rail */
             <div className="flex-1 min-h-0 flex gap-3">
-              {/* Featured banner (attract loop) */}
+              {/* Featured banner — image-first; caption/dots clear of floating island */}
               <div
                 className="flex-1 min-w-0 rounded-[28px] overflow-hidden relative bg-neutral-800"
                 onTouchStart={onTouchStart}
@@ -1158,47 +1172,79 @@ function KioskViewUI({
                 onTouchEnd={onTouchEnd}
               >
                 {fbPosts.length > 0 ? (
-                  fbPosts.map((post, index) => (
-                    <PopButton
-                      key={post.id}
-                      type="button"
-                      className={`absolute inset-0 w-full h-full transition-opacity duration-700 ${
-                        index === currentSlide
-                          ? "opacity-100 pointer-events-auto"
-                          : "opacity-0 pointer-events-none"
-                      }`}
-                      onClick={() => handlePosterTap(post)}
-                    >
-                      <img
-                        alt=""
-                        className="absolute inset-0 w-full h-full object-cover"
-                        src={post.full_picture}
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                      <div className="absolute bottom-0 left-0 right-0 p-6 text-left text-white">
-                        {post.category && (
-                          <span
-                            className={`inline-block text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full mb-2 ${
-                              eventCategoryMeta(post.category).chip
-                            }`}
-                          >
-                            {eventCategoryMeta(post.category).label}
-                          </span>
-                        )}
-                        <p className="text-[24px] font-bold leading-tight line-clamp-2">
-                          {post.message}
-                        </p>
-                        {post.extracted_date && (
-                          <p className="text-[14px] mt-2 opacity-80">
-                            {post.extracted_date}
-                            {post.extracted_location
-                              ? ` · ${post.extracted_location}`
-                              : ""}
+                  <>
+                    {fbPosts.map((post, index) => (
+                      <PopButton
+                        key={post.id}
+                        type="button"
+                        className={`absolute inset-0 w-full h-full transition-opacity duration-700 ${
+                          index === currentSlide
+                            ? "opacity-100 pointer-events-auto"
+                            : "opacity-0 pointer-events-none"
+                        }`}
+                        onClick={() => handlePosterTap(post)}
+                      >
+                        <img
+                          alt=""
+                          className="absolute inset-0 w-full h-full object-cover"
+                          src={post.full_picture}
+                        />
+                      </PopButton>
+                    ))}
+                    {/* Soft vignette for text legibility — no card/box */}
+                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-transparent" />
+
+                    {/* Featured caption — open text, no frosted box */}
+                    {(() => {
+                      const post = fbPosts[currentSlide % fbPosts.length];
+                      if (!post) return null;
+                      const meta = eventCategoryMeta(post.category);
+                      return (
+                        <div className="pointer-events-none absolute top-5 left-5 right-28 z-10 text-white">
+                          <div className="flex items-center gap-2 mb-1.5">
+                            {post.category && (
+                              <>
+                                <span
+                                  className={`inline-block w-2 h-2 rounded-full shrink-0 ${meta.accent}`}
+                                />
+                                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/85 drop-shadow">
+                                  {meta.label}
+                                </span>
+                              </>
+                            )}
+                            {(post.extracted_date ||
+                              post.extracted_location) && (
+                              <span className="text-[11px] font-medium text-white/70 drop-shadow">
+                                ·{" "}
+                                {[post.extracted_date, post.extracted_location]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[20px] font-bold leading-snug line-clamp-2 drop-shadow-[0_2px_8px_rgba(0,0,0,0.65)]">
+                            {post.message}
                           </p>
-                        )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Vertical slide rail — left edge, clear of island */}
+                    {fbPosts.length > 1 && (
+                      <div className="absolute left-3 top-1/2 -translate-y-1/2 z-10 flex flex-col gap-2 pointer-events-none">
+                        {fbPosts.map((_, idx) => (
+                          <div
+                            key={idx}
+                            className={`rounded-full transition-all ${
+                              idx === currentSlide
+                                ? "w-2 h-6 bg-white"
+                                : "w-2 h-2 bg-white/45"
+                            }`}
+                          />
+                        ))}
                       </div>
-                    </PopButton>
-                  ))
+                    )}
+                  </>
                 ) : (
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70 gap-3 px-8 text-center">
                     <span className="material-symbols-outlined text-5xl opacity-40">
@@ -1212,33 +1258,19 @@ function KioskViewUI({
                     </p>
                   </div>
                 )}
-                {fbPosts.length > 1 && (
-                  <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-2 z-10 pointer-events-none">
-                    {fbPosts.map((_, idx) => (
-                      <div
-                        key={idx}
-                        className={`h-1.5 rounded-full transition-all ${
-                          idx === currentSlide
-                            ? "w-6 bg-white"
-                            : "w-1.5 bg-white/40"
-                        }`}
-                      />
-                    ))}
-                  </div>
-                )}
               </div>
 
-              {/* What's New rail — newest first, always visible */}
-              <div className="w-[300px] shrink-0 rounded-[28px] bg-white dark:bg-neutral-950 border border-black/5 dark:border-white/10 flex flex-col overflow-hidden">
+              {/* What's New rail — newest first */}
+              <div className={`w-[300px] shrink-0 ${PANEL} flex flex-col overflow-hidden`}>
                 <div className="shrink-0 px-4 pt-4 pb-2 flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <h2 className="text-[18px] font-bold text-neutral-900 dark:text-white">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[var(--kiosk-success)] animate-pulse" />
+                  <h2 className="text-[18px] font-bold text-[var(--kiosk-text)]">
                     What&apos;s New
                   </h2>
                 </div>
-                <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 space-y-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-28 space-y-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                   {latestPosts.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center gap-2 opacity-40 py-8 text-center">
+                    <div className="h-full flex flex-col items-center justify-center gap-2 text-[var(--kiosk-muted)] py-8 text-center">
                       <span className="material-symbols-outlined text-4xl">
                         newspaper
                       </span>
@@ -1252,10 +1284,10 @@ function KioskViewUI({
                           key={post.id}
                           type="button"
                           onClick={() => handlePosterTap(post)}
-                          className="w-full text-left rounded-2xl overflow-hidden border border-black/5 dark:border-white/10 bg-neutral-50 dark:bg-white/5"
+                          className="w-full text-left rounded-2xl overflow-hidden border border-[var(--kiosk-border)] bg-[var(--kiosk-surface-muted)]"
                         >
                           <div className="flex">
-                            <div className="relative w-[64px] shrink-0 overflow-hidden bg-neutral-200 dark:bg-neutral-800">
+                            <div className="relative w-[64px] shrink-0 overflow-hidden bg-[var(--kiosk-border)]">
                               <img
                                 src={post.full_picture}
                                 alt=""
@@ -1270,15 +1302,15 @@ function KioskViewUI({
                                 <span
                                   className={`inline-block w-2 h-2 rounded-full shrink-0 ${meta.accent}`}
                                 />
-                                <span className="text-[10px] font-bold uppercase tracking-wider opacity-60">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--kiosk-muted)]">
                                   {meta.label}
                                 </span>
                               </div>
-                              <p className="text-[13px] font-semibold text-neutral-900 dark:text-white leading-tight line-clamp-2">
+                              <p className="text-[13px] font-semibold text-[var(--kiosk-text)] leading-tight line-clamp-2">
                                 {post.message}
                               </p>
                               {post.extracted_date && (
-                                <p className="text-[11px] text-neutral-500 dark:text-white/50 mt-0.5 line-clamp-1">
+                                <p className="text-[11px] text-[var(--kiosk-muted)] mt-0.5 line-clamp-1">
                                   {post.extracted_date}
                                 </p>
                               )}
@@ -1294,24 +1326,29 @@ function KioskViewUI({
           )}
         </main>
 
-        {/* Bottom mode dock — 10.1" touch targets, mic in the middle */}
-        <nav className="flex-shrink-0 px-3 pb-3 pt-1">
-          <div className="flex gap-2">
+        {/* Floating island dock — overlays banner / What's New */}
+        <nav className="pointer-events-none absolute left-0 right-0 bottom-10 z-30 flex justify-center px-4">
+          <div className="pointer-events-auto flex items-center gap-1.5 rounded-[32px] bg-white/55 dark:bg-black/45 border border-white/40 dark:border-white/15 shadow-[0_12px_40px_rgba(0,0,0,0.22)] backdrop-blur-2xl supports-[backdrop-filter]:bg-white/40 dark:supports-[backdrop-filter]:bg-black/35 px-2 py-1.5">
             <PopButton
               type="button"
               className={`${DOCK_BTN} ${mode === "events" ? DOCK_BTN_ACTIVE : DOCK_BTN_IDLE}`}
               onClick={openEvents}
             >
-              <span className="material-symbols-outlined text-[26px]">
+              <span className="material-symbols-outlined text-[24px]">
                 campaign
               </span>
               Events
             </PopButton>
-            <div className="flex-1 min-h-[72px] flex items-center justify-center">
-              <GeminiMorphButton
-                size={64}
+
+            <div className="relative mx-1 flex items-center justify-center w-[88px] h-[72px]">
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
+                <GeminiMorphButton
+                  size={80}
                 isAnimating={
-                  isConnecting || isAgentInitializing || isConnected || isThinking
+                  isConnecting ||
+                  isAgentInitializing ||
+                  isConnected ||
+                  isThinking
                 }
                 isConnected={isConnected}
                 onClick={() => {
@@ -1323,13 +1360,15 @@ function KioskViewUI({
                   }
                 }}
               />
+              </div>
             </div>
+
             <PopButton
               type="button"
               className={`${DOCK_BTN} ${mode === "maps" ? DOCK_BTN_ACTIVE : DOCK_BTN_IDLE}`}
               onClick={openMaps}
             >
-              <span className="material-symbols-outlined text-[26px]">map</span>
+              <span className="material-symbols-outlined text-[24px]">map</span>
               Maps
             </PopButton>
           </div>
@@ -1351,7 +1390,7 @@ function KioskViewUI({
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
               transition={{ type: "spring", stiffness: 320, damping: 32 }}
-              className="bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white w-full max-w-2xl rounded-t-3xl p-6 max-h-[70vh] overflow-y-auto"
+              className="bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] w-full max-w-2xl rounded-t-3xl p-6 max-h-[70vh] overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between mb-4">
@@ -1375,7 +1414,7 @@ function KioskViewUI({
                     <PopButton
                       key={`${loc.floor}-${loc.id}`}
                       onClick={() => handleNavigateToLocation(loc.label)}
-                      className="min-h-[56px] bg-neutral-100 dark:bg-white/10 rounded-2xl w-full text-[16px] flex items-center justify-between px-5 font-semibold"
+                      className="min-h-[56px] bg-[var(--kiosk-surface-muted)] border border-[var(--kiosk-border)] rounded-2xl w-full text-[16px] flex items-center justify-between px-5 font-semibold"
                     >
                       <span className="truncate text-left">{loc.label}</span>
                       <span className="text-[12px] opacity-50 flex-shrink-0 ml-3">
@@ -1405,7 +1444,7 @@ function KioskViewUI({
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
               transition={{ type: "spring", stiffness: 320, damping: 32 }}
-              className="bg-white dark:bg-neutral-900 w-full max-w-md rounded-t-3xl p-6 space-y-4"
+              className="bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] w-full max-w-md rounded-t-3xl p-6 space-y-4"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between">
@@ -1426,25 +1465,46 @@ function KioskViewUI({
                 <span className="font-semibold">Theme</span>
                 <ThemeToggle />
               </div>
-              <PopButton
-                onClick={() => {
-                  setIsSettingsOpen(false);
-                  setIsUploadModalOpen(true);
-                }}
-                className={`${CAT_BTN} text-[16px]`}
-              >
-                <UploadCloud className="w-5 h-5" />
-                Upload poster
-              </PopButton>
-              <PopButton
-                onClick={() => {
-                  setIsSettingsOpen(false);
-                  setIsColorModalOpen(true);
-                }}
-                className={`${CAT_BTN} text-[16px]`}
-              >
-                Eye / UI colors
-              </PopButton>
+              <div className="py-2 space-y-3">
+                <span className="font-semibold">Eye color</span>
+                <div className="flex items-center gap-2.5 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                  {[
+                    { name: "White", eye: "white", ui: "", swatch: "bg-white" },
+                    {
+                      name: "Pistachio",
+                      eye: "pistachio",
+                      ui: "pistachio",
+                      swatch: "bg-[#93c572]",
+                    },
+                    {
+                      name: "Coral",
+                      eye: "coral",
+                      ui: "coral",
+                      swatch: "bg-[#ff7f50]",
+                    },
+                    { name: "Blue", eye: "blue", ui: "", swatch: "bg-[#2563EB]" },
+                    { name: "Green", eye: "green", ui: "", swatch: "bg-[#10B981]" },
+                    { name: "Cyan", eye: "cyan", ui: "", swatch: "bg-cyan-400" },
+                    { name: "Purple", eye: "purple", ui: "", swatch: "bg-[#7C3AED]" },
+                    { name: "Orange", eye: "orange", ui: "", swatch: "bg-[#EA580C]" },
+                    { name: "Yellow", eye: "yellow", ui: "", swatch: "bg-yellow-400" },
+                    { name: "Red", eye: "red", ui: "", swatch: "bg-[#EF4444]" },
+                  ].map((c) => (
+                    <PopButton
+                      key={c.name}
+                      onClick={() => {
+                        void applyEyeColor(c.eye, c.ui);
+                      }}
+                      className={`w-10 h-10 rounded-full shrink-0 shadow-sm ${c.swatch} ${
+                        c.name === "White"
+                          ? "border-2 border-[var(--kiosk-border)] ring-1 ring-[var(--kiosk-muted)]"
+                          : "border border-[var(--kiosk-border)]"
+                      }`}
+                      aria-label={`Change eye color to ${c.name}`}
+                    />
+                  ))}
+                </div>
+              </div>
             </motion.div>
           </motion.div>
         )}
@@ -1453,10 +1513,10 @@ function KioskViewUI({
       {/* Upload QR */}
       {isUploadModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-white dark:bg-neutral-900 p-8 rounded-3xl max-w-md w-full relative mx-4">
+          <div className="bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] p-8 rounded-3xl max-w-md w-full relative mx-4">
             <PopButton
               onClick={() => setIsUploadModalOpen(false)}
-              className="absolute top-4 right-4 p-2 rounded-full bg-black/5 dark:bg-white/10"
+              className="absolute top-4 right-4 p-2 rounded-full bg-[var(--kiosk-surface-muted)]"
             >
               <X className="w-5 h-5" />
             </PopButton>
@@ -1468,37 +1528,6 @@ function KioskViewUI({
               </div>
               <p className="text-sm opacity-60 break-all">{qrUrl}</p>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Color picker (compact) */}
-      {isColorModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-white dark:bg-neutral-900 p-6 rounded-3xl max-w-sm w-full mx-4 space-y-3">
-            <div className="flex justify-between items-center">
-              <h2 className="text-xl font-bold">Colors</h2>
-              <PopButton onClick={() => setIsColorModalOpen(false)}>
-                <X className="w-5 h-5" />
-              </PopButton>
-            </div>
-            {[
-              { label: "Default", eye: "default", ui: "" },
-              { label: "Blue", eye: "blue", ui: "blue" },
-              { label: "Green", eye: "green", ui: "green" },
-              { label: "Amber", eye: "amber", ui: "amber" },
-            ].map((c) => (
-              <PopButton
-                key={c.label}
-                className={CAT_BTN + " text-[16px]"}
-                onClick={() => {
-                  void applyEyeColor(c.eye, c.ui);
-                  setIsColorModalOpen(false);
-                }}
-              >
-                {c.label}
-              </PopButton>
-            ))}
           </div>
         </div>
       )}

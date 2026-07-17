@@ -606,7 +606,7 @@ class AnimationRunner:
             else:
                 return f"Unknown command: {command}"
 
-    def _play_elastic_sequence(self, sequence, speed_v, speed_h, home, hold_home_sec=0.0):
+    def _play_elastic_sequence(self, sequence, speed_v, speed_h, home, hold_home_sec=0.0, pose_duration=0.0):
         # Init state
         arms = [home["a0"], home["a1"], home["a2"], home["a3"]]
         vels = [0.0, 0.0, 0.0, 0.0]
@@ -630,6 +630,7 @@ class AnimationRunner:
             
             # Move elastically until target is reached (position error < 2.0)
             max_ticks = int(3.0 / dt)  # 3s max per pose to avoid infinite loops
+            ticks_taken = 0
             for _ in range(max_ticks):
                 moved = False
                 for i, p in enumerate([p_v, p_v, p_h, p_h]):
@@ -640,8 +641,20 @@ class AnimationRunner:
                         
                 self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=True)
                 time.sleep(dt)
+                ticks_taken += 1
                 if not moved:
                     break
+
+            # If pose_duration is set, hold the pose for the remaining time
+            if pose_duration > 0.0:
+                elapsed = ticks_taken * dt
+                if elapsed < pose_duration:
+                    remaining_ticks = int((pose_duration - elapsed) / dt)
+                    for _ in range(remaining_ticks):
+                        for i, p in enumerate([p_v, p_v, p_h, p_h]):
+                            arms[i], vels[i] = tick_toward(arms[i], vels[i], targets[i], dt, lo=0, hi=180, params=p)
+                        self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=True)
+                        time.sleep(dt)
 
         if hold_home_sec > 0.0:
             hold_ticks = int(hold_home_sec / dt)
@@ -770,10 +783,9 @@ class AnimationRunner:
         self.tune.set("animation_active", "home")
         poses = self._presets.get("poses", {})
         home = poses.get("home", {"a0": 47, "a1": 65, "a2": 54, "a3": 76})
-        self.link.write_arms(home["a0"], home["a1"], home["a2"], home["a3"], force=True)
-        time.sleep(0.5)
+        self._play_elastic_sequence([], speed_v=1.0, speed_h=1.0, home=home, hold_home_sec=0.5)
         self.tune.set("animation_active", "")
-        return "Returned to home pose"
+        return "Returned to home pose (elastic)"
 
 
 # ── Web dashboard HTML ───────────────────────────────────────────────────────

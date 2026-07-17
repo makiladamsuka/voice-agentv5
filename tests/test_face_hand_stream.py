@@ -1218,7 +1218,8 @@ class StreamHandler(BaseHTTPRequestHandler):
             if "launch_kiosk" in payload and payload["launch_kiosk"] == 1 and self.tune.get("launch_kiosk") != 1:
                 import subprocess
                 try:
-                    subprocess.Popen(["bash", "script/launch-kiosk.sh"])
+                    script_path = APP_DIR / "scripts" / "launch-kiosk-stack.sh"
+                    subprocess.Popen(["bash", str(script_path)])
                 except Exception as e:
                     print("Failed to launch kiosk script:", e)
             self.tune.update(payload)

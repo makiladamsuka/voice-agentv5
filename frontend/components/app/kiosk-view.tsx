@@ -57,6 +57,7 @@ const CAT_BTN =
   "min-h-[72px] w-full rounded-2xl text-[20px] font-bold flex items-center justify-center gap-3 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)]";
 const PANEL =
   "rounded-[28px] bg-[var(--kiosk-surface)] border border-[var(--kiosk-border)]";
+const PAGE_PAD = "p-4";
 const ICON_BTN =
   "w-11 h-11 rounded-full border border-[var(--kiosk-border)] flex items-center justify-center text-[var(--kiosk-muted)]";
 
@@ -800,9 +801,9 @@ function KioskViewUI({
         fontFamily: "var(--font-jakarta), sans-serif",
       }}
     >
-      <div className="relative z-10 w-full h-full flex flex-col">
+      <div className={`relative z-10 w-full h-full flex flex-col ${PAGE_PAD}`}>
         {/* Thin top bar */}
-        <header className="flex-shrink-0 w-full flex justify-between items-center px-5 h-[52px] z-20">
+        <header className="flex-shrink-0 w-full flex justify-between items-center h-[52px] z-20">
           <div className="text-[22px] font-black tracking-tight text-[var(--kiosk-text)]">
             NEma
           </div>
@@ -829,7 +830,7 @@ function KioskViewUI({
         </header>
 
         {/* Main stage — full stretch; floating dock overlays the bottom */}
-        <main className="flex-1 min-h-0 px-3 pb-3 flex flex-col relative overflow-hidden">
+        <main className="flex-1 min-h-0 flex flex-col relative overflow-hidden">
           {/* NAV / EXPLORE MAP overlay */}
           {mode === "maps" && mountMap ? (
             <div className={`flex-1 min-h-0 ${PANEL} overflow-hidden relative bg-[var(--kiosk-surface-muted)]`}>
@@ -1360,7 +1361,7 @@ function KioskViewUI({
         </main>
 
         {/* Floating island dock — overlays banner / What's New */}
-        <nav className="pointer-events-none absolute left-0 right-0 bottom-10 z-30 flex justify-center px-4">
+        <nav className="pointer-events-none absolute left-0 right-0 bottom-4 z-30 flex justify-center">
           <div className="pointer-events-auto flex items-center gap-1.5 rounded-[32px] bg-white/55 dark:bg-black/45 border border-white/40 dark:border-white/15 shadow-[0_12px_40px_rgba(0,0,0,0.22)] backdrop-blur-2xl supports-[backdrop-filter]:bg-white/40 dark:supports-[backdrop-filter]:bg-black/35 px-2 py-1.5">
             <PopButton
               type="button"

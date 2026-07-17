@@ -606,7 +606,7 @@ class AnimationRunner:
             else:
                 return f"Unknown command: {command}"
 
-    def _play_elastic_sequence(self, sequence, speed_v, speed_h, home, pose_duration=0.5):
+    def _play_elastic_sequence(self, sequence, speed_v, speed_h, home, hold_home_sec=0.0):
         # Init state
         arms = [home["a0"], home["a1"], home["a2"], home["a3"]]
         vels = [0.0, 0.0, 0.0, 0.0]
@@ -643,6 +643,14 @@ class AnimationRunner:
                 if not moved:
                     break
 
+        if hold_home_sec > 0.0:
+            hold_ticks = int(hold_home_sec / dt)
+            for _ in range(hold_ticks):
+                for i, p in enumerate([p_v, p_v, p_h, p_h]):
+                    arms[i], vels[i] = tick_toward(arms[i], vels[i], targets[i], dt, lo=0, hi=180, params=p)
+                self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=True)
+                time.sleep(dt)
+
         # Return home elastically
         targets = [home["a0"], home["a1"], home["a2"], home["a3"]]
         max_ticks = int(3.0 / dt)
@@ -658,43 +666,10 @@ class AnimationRunner:
             if not moved:
                 break
 
-    def _play_smooth_sequence(self, sequence, speed, home):
-        current = [home["a0"], home["a1"], home["a2"], home["a3"]]
-        pose_duration = max(0.2, 0.8 / max(0.1, speed))
-        dt = 0.03
-        
-        for target_pose in sequence:
-            targets = [target_pose["a0"], target_pose["a1"], target_pose["a2"], target_pose["a3"]]
-            start = list(current)
-            steps = int(pose_duration / dt)
-            
-            for i in range(1, steps + 1):
-                t = i / steps
-                # Cubic ease-in-out (acceleration and deceleration)
-                eased = t * t * (3.0 - 2.0 * t)
-                for j in range(4):
-                    current[j] = start[j] + (targets[j] - start[j]) * eased
-                self.link.write_arms(current[0], current[1], current[2], current[3], force=True)
-                time.sleep(dt)
-
-        # Return home smoothly
-        start = list(current)
-        targets = [home["a0"], home["a1"], home["a2"], home["a3"]]
-        steps = int(0.6 / dt)
-        for i in range(1, steps + 1):
-            t = i / steps
-            eased = t * t * (3.0 - 2.0 * t)
-            for j in range(4):
-                current[j] = start[j] + (targets[j] - start[j]) * eased
-            self.link.write_arms(current[0], current[1], current[2], current[3], force=True)
-            time.sleep(dt)
-
     def _play_hi(self):
         self.tune.set("animation_active", "hi")
-        # For smooth sequence, we'll just use the average of V and H speed
         speed_v = self.tune.get("hi_speed_v")
         speed_h = self.tune.get("hi_speed_h")
-        speed = (speed_v + speed_h) / 2.0
         
         poses = self._presets.get("poses", {})
         hi_poses = [poses.get(f"hi{i}") for i in range(1, 5) if poses.get(f"hi{i}")]
@@ -714,9 +689,10 @@ class AnimationRunner:
                     pass
             threading.Thread(target=_spin, daemon=True).start()
 
-        # Play a single randomly selected hi pose with smooth ease-in-out
+        # Play a single randomly selected hi pose elastically with 1-3s hold before returning home
         chosen_hi = random.choice(hi_poses)
-        self._play_smooth_sequence([chosen_hi], speed, home)
+        hold_time = random.uniform(1.0, 3.0)
+        self._play_elastic_sequence([chosen_hi], speed_v, speed_h, home, hold_home_sec=hold_time)
 
         # Rotate back (concurrent with returning home)
         if base_deg > 0:

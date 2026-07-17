@@ -627,22 +627,33 @@ class AnimationRunner:
         dt = 0.03
         for target_pose in sequence:
             targets = [target_pose["a0"], target_pose["a1"], target_pose["a2"], target_pose["a3"]]
-            # Move elastically until target is reached
+            
+            # Phase 1: Move elastically until target is reached (position error < 2.0)
             max_ticks = int(3.0 / dt)  # 3s max per pose to avoid infinite loops
+            ticks_taken = 0
             for _ in range(max_ticks):
                 moved = False
                 for i, p in enumerate([p_v, p_v, p_h, p_h]):
                     arms[i], vels[i] = tick_toward(arms[i], vels[i], targets[i], dt, lo=0, hi=180, params=p)
-                    if abs(arms[i] - targets[i]) > 2.0 or abs(vels[i]) > 5.0:
+                    # Only check position error, ignoring velocity to avoid oscillation stalls
+                    if abs(arms[i] - targets[i]) > 2.0:
                         moved = True
                         
                 self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=False)
                 time.sleep(dt)
+                ticks_taken += 1
                 if not moved:
                     break
                     
-            # Brief pause at the pose
-            time.sleep(0.1)
+            # Phase 2: Hold the pose for the remaining duration if it reached the target quickly
+            elapsed = ticks_taken * dt
+            if elapsed < pose_duration:
+                remaining_ticks = int((pose_duration - elapsed) / dt)
+                for _ in range(remaining_ticks):
+                    for i, p in enumerate([p_v, p_v, p_h, p_h]):
+                        arms[i], vels[i] = tick_toward(arms[i], vels[i], targets[i], dt, lo=0, hi=180, params=p)
+                    self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=False)
+                    time.sleep(dt)
 
         # Return home elastically
         targets = [home["a0"], home["a1"], home["a2"], home["a3"]]
@@ -671,23 +682,27 @@ class AnimationRunner:
             self.tune.set("animation_active", "")
             return "No hi poses found"
 
-        # Optional base rotate
+        # Optional base rotate (run in background so arms move concurrently)
         base_deg = self.tune.get("base_rotate_deg")
         if base_deg > 0:
-            try:
-                self.link.write_base_step_spin(base_deg, timeout_sec=3.0)
-            except Exception:
-                pass
+            def _spin():
+                try:
+                    self.link.write_base_step_spin(base_deg, timeout_sec=3.0)
+                except Exception:
+                    pass
+            threading.Thread(target=_spin, daemon=True).start()
 
         # Play hi sequence elastically
         self._play_elastic_sequence(hi_poses, speed_v, speed_h, home, pose_duration=0.5)
 
-        # Rotate back
+        # Rotate back (concurrent with returning home)
         if base_deg > 0:
-            try:
-                self.link.write_base_step_spin(-base_deg, timeout_sec=3.0)
-            except Exception:
-                pass
+            def _spin_back():
+                try:
+                    self.link.write_base_step_spin(-base_deg, timeout_sec=3.0)
+                except Exception:
+                    pass
+            threading.Thread(target=_spin_back, daemon=True).start()
 
         self.tune.set("animation_active", "")
         return "Hi wave complete (elastic)"
@@ -707,22 +722,26 @@ class AnimationRunner:
         poses = self._presets.get("poses", {})
         home = poses.get("home", {"a0": 47, "a1": 65, "a2": 54, "a3": 76})
 
-        # Optional base rotate
+        # Optional base rotate (run in background so arms move concurrently)
         base_deg = self.tune.get("base_rotate_deg")
         if base_deg > 0:
-            try:
-                self.link.write_base_step_spin(-base_deg, timeout_sec=3.0)
-            except Exception:
-                pass
+            def _spin():
+                try:
+                    self.link.write_base_step_spin(-base_deg, timeout_sec=3.0)
+                except Exception:
+                    pass
+            threading.Thread(target=_spin, daemon=True).start()
 
         self._play_elastic_sequence(frames, speed_v, speed_h, home, pose_duration=0.4)
 
         # Rotate back
         if base_deg > 0:
-            try:
-                self.link.write_base_step_spin(base_deg, timeout_sec=3.0)
-            except Exception:
-                pass
+            def _spin_back():
+                try:
+                    self.link.write_base_step_spin(base_deg, timeout_sec=3.0)
+                except Exception:
+                    pass
+            threading.Thread(target=_spin_back, daemon=True).start()
 
         self.tune.set("animation_active", "")
         return f"Bye wave ({chosen}) complete (elastic)"

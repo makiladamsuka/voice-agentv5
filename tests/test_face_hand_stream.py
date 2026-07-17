@@ -714,8 +714,9 @@ class AnimationRunner:
                     pass
             threading.Thread(target=_spin, daemon=True).start()
 
-        # Play hi sequence with smooth ease-in-out (acceleration/deceleration)
-        self._play_smooth_sequence(hi_poses, speed, home)
+        # Play a single randomly selected hi pose with smooth ease-in-out
+        chosen_hi = random.choice(hi_poses)
+        self._play_smooth_sequence([chosen_hi], speed, home)
 
         # Rotate back (concurrent with returning home)
         if base_deg > 0:

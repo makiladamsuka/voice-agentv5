@@ -593,8 +593,6 @@ class AnimationRunner:
         """Play an animation by name. Returns status string."""
         if self.link is None or not self.link.connected:
             return "No servo link connected"
-        if not self.link.has_arm_firmware():
-            return "No arm firmware on ESP32"
 
         with self._lock:
             if command == "hi":
@@ -629,24 +627,37 @@ class AnimationRunner:
         dt = 0.03
         for target_pose in sequence:
             targets = [target_pose["a0"], target_pose["a1"], target_pose["a2"], target_pose["a3"]]
-            # Hold each pose while moving elastically
-            for _ in range(int(pose_duration / dt)):
-                arms[0], vels[0] = tick_toward(arms[0], vels[0], targets[0], dt, lo=0, hi=180, params=p_v)
-                arms[1], vels[1] = tick_toward(arms[1], vels[1], targets[1], dt, lo=0, hi=180, params=p_v)
-                arms[2], vels[2] = tick_toward(arms[2], vels[2], targets[2], dt, lo=0, hi=180, params=p_h)
-                arms[3], vels[3] = tick_toward(arms[3], vels[3], targets[3], dt, lo=0, hi=180, params=p_h)
+            # Move elastically until target is reached
+            max_ticks = int(3.0 / dt)  # 3s max per pose to avoid infinite loops
+            for _ in range(max_ticks):
+                moved = False
+                for i, p in enumerate([p_v, p_v, p_h, p_h]):
+                    arms[i], vels[i] = tick_toward(arms[i], vels[i], targets[i], dt, lo=0, hi=180, params=p)
+                    if abs(arms[i] - targets[i]) > 2.0 or abs(vels[i]) > 5.0:
+                        moved = True
+                        
                 self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=False)
                 time.sleep(dt)
+                if not moved:
+                    break
+                    
+            # Brief pause at the pose
+            time.sleep(0.1)
 
         # Return home elastically
         targets = [home["a0"], home["a1"], home["a2"], home["a3"]]
-        for _ in range(int(0.6 / dt)):
-            arms[0], vels[0] = tick_toward(arms[0], vels[0], targets[0], dt, lo=0, hi=180, params=p_v)
-            arms[1], vels[1] = tick_toward(arms[1], vels[1], targets[1], dt, lo=0, hi=180, params=p_v)
-            arms[2], vels[2] = tick_toward(arms[2], vels[2], targets[2], dt, lo=0, hi=180, params=p_h)
-            arms[3], vels[3] = tick_toward(arms[3], vels[3], targets[3], dt, lo=0, hi=180, params=p_h)
+        max_ticks = int(3.0 / dt)
+        for _ in range(max_ticks):
+            moved = False
+            for i, p in enumerate([p_v, p_v, p_h, p_h]):
+                arms[i], vels[i] = tick_toward(arms[i], vels[i], targets[i], dt, lo=0, hi=180, params=p)
+                if abs(arms[i] - targets[i]) > 2.0 or abs(vels[i]) > 5.0:
+                    moved = True
+                    
             self.link.write_arms(arms[0], arms[1], arms[2], arms[3], force=False)
             time.sleep(dt)
+            if not moved:
+                break
 
     def _play_hi(self):
         self.tune.set("animation_active", "hi")

@@ -713,7 +713,15 @@ class ServoLoop:
             self._forward_return_active = False
 
         voice_active = state.get("voice_session_active", False)
+        
+        prev_voice_active = getattr(self, '_prev_voice_active', False)
+        if voice_active and not prev_voice_active:
+            print("\n[ServoLoop] Mic clicked -> Starting face tracking / search to freeze...")
+        self._prev_voice_active = voice_active
+
         if not voice_active:
+            if getattr(self, '_voice_locked', False):
+                print("[ServoLoop] Mic released -> Unlocking motors.")
             self._voice_locked = False
             self.bb.write(voice_locked_on_face=False)
         else:
@@ -722,11 +730,13 @@ class ServoLoop:
                 if not is_locked:
                     self._voice_locked = True
                     self.bb.write(voice_locked_on_face=True)
+                    print("\n[ServoLoop] Face is centered -> FREEZING MOTORS NOW (STOP)")
             elif not tracking_active:
                 if (now - self._last_face_ts) > 1.5:
                     if is_locked:
                         self._voice_locked = False
                         self.bb.write(voice_locked_on_face=False)
+                        print("\n[ServoLoop] Target lost for 1.5s -> UNFREEZING MOTORS (SEARCHING)")
 
         if not tracking_active:
             # Hold pose until main loop drops track after no_face_home_sec.

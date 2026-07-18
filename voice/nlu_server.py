@@ -76,6 +76,20 @@ def reload_nlu_runtime():
 
 # ── Starlette WebSocket application ──────────────────────────────────────────
 
+def get_dest_category(d: str) -> str:
+    dl = d.lower()
+    if "auditorium" in dl:
+        return "auditorium"
+    if "laboratory" in dl or "labratory" in dl or "lab" in dl:
+        return "laboratory"
+    if "lecture hall" in dl or "lecturehall" in dl or "lh" in dl:
+        return "lecture hall"
+    if "washroom" in dl or "toilet" in dl or "bathroom" in dl:
+        return "washroom"
+    if "office" in dl:
+        return "office"
+    return "location"
+
 async def _voice_ws_endpoint(websocket) -> None:
     """
     WebSocket endpoint for the browser voice agent.
@@ -98,6 +112,7 @@ async def _voice_ws_endpoint(websocket) -> None:
     
     speculative_cache = {}
     pending_ambiguity_category = None
+    last_discussed_category = None
     
     def _normalize_text(t: str) -> str:
         return t.lower().strip(" \t\r\n.,?!;:")
@@ -171,7 +186,25 @@ async def _voice_ws_endpoint(websocket) -> None:
                     )
 
                 if result:
+                    is_fallback = result.get("reply_text", "").startswith("I'm NEma")
+                    
+                    if is_fallback and not pending_ambiguity_category and last_discussed_category:
+                        retry_text = f"{last_discussed_category} {original_text}"
+                        print(f"  [Context retry] Retrying fallback query as: '{retry_text}'")
+                        runtime = _get_runtime()
+                        loop = asyncio.get_running_loop()
+                        retry_result = await loop.run_in_executor(
+                            None, _match_intent, runtime, retry_text
+                        )
+                        if retry_result and not retry_result.get("reply_text", "").startswith("I'm NEma"):
+                            result = retry_result
+                            speculative_cache[_normalize_text(original_text)] = result
+
                     pending_ambiguity_category = result.get("ambiguity_category")
+                    
+                    action = result.get("action", {})
+                    if action.get("action") == "navigate" and action.get("destination"):
+                        last_discussed_category = get_dest_category(action.get("destination"))
 
                 print(
                     f"[NLU] Reply: '{result.get('reply_text', '')[:80]}' "

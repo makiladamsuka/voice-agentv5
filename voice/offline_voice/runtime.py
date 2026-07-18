@@ -238,8 +238,80 @@ class IntentMatcher:
                 f"  [Matcher] domain={domain} d1={d1:.2f} d2={d2:.2f} "
                 f"margin={margin:.2f} ({top_intent} vs {second_intent})"
             )
-            # Two different intents too close together → ambiguous, abstain.
+            # Two different intents too close together → ambiguous, abstain or clarify.
             if second_intent != top_intent and margin < AMBIGUITY_MARGIN:
+                if d1 < threshold:
+                    intent1 = self.intents_map.get(top_intent)
+                    intent2 = self.intents_map.get(second_intent)
+                    if intent1 and intent2:
+                        dest1 = intent1.get("action", {}).get("destination")
+                        dest2 = intent2.get("action", {}).get("destination")
+                        if dest1 and dest2:
+                            def get_dest_category(d: str) -> str:
+                                dl = d.lower()
+                                if "auditorium" in dl:
+                                    return "auditorium"
+                                if "laboratory" in dl or "labratory" in dl or "lab" in dl:
+                                    return "laboratory"
+                                if "lecture hall" in dl or "lecturehall" in dl or "lh" in dl:
+                                    return "lecture hall"
+                                if "washroom" in dl or "toilet" in dl or "bathroom" in dl:
+                                    return "washroom"
+                                if "office" in dl:
+                                    return "office"
+                                return "location"
+
+                            cat1 = get_dest_category(dest1)
+                            cat2 = get_dest_category(dest2)
+                            category = cat1 if cat1 == cat2 else "location"
+
+                            clean_dest1 = dest1.replace("floor_", "Floor ")
+                            clean_dest2 = dest2.replace("floor_", "Floor ")
+
+                            # Find all matching destinations for this category
+                            matching_dests = []
+                            if category != "location":
+                                for item in self.intents_map.values():
+                                    action = item.get("action", {}) or {}
+                                    if action.get("action") == "navigate":
+                                        d = action.get("destination")
+                                        if d and get_dest_category(d) == category:
+                                            clean_d = d.replace("floor_", "Floor ")
+                                            if clean_d and clean_d[0].islower():
+                                                clean_d = clean_d[0].upper() + clean_d[1:]
+                                            if clean_d not in matching_dests:
+                                                matching_dests.append(clean_d)
+
+                            matching_dests.sort()
+
+                            if category != "location" and len(matching_dests) > 1:
+                                if len(matching_dests) <= 4:
+                                    if len(matching_dests) == 2:
+                                        options = f"{matching_dests[0]} or {matching_dests[1]}"
+                                    elif len(matching_dests) == 3:
+                                        options = f"{matching_dests[0]}, {matching_dests[1]}, or {matching_dests[2]}"
+                                    else:
+                                        options = f"{matching_dests[0]}, {matching_dests[1]}, {matching_dests[2]}, or {matching_dests[3]}"
+                                    response_text = f"Which {category} would you like to go to? {options}?"
+                                else:
+                                    c1 = clean_dest1[0].upper() + clean_dest1[1:] if clean_dest1 else ""
+                                    c2 = clean_dest2[0].upper() + clean_dest2[1:] if clean_dest2 else ""
+                                    response_text = f"Which {category} would you like to go to? {c1} or {c2}?"
+                            else:
+                                c1 = clean_dest1[0].upper() + clean_dest1[1:] if clean_dest1 else ""
+                                c2 = clean_dest2[0].upper() + clean_dest2[1:] if clean_dest2 else ""
+                                response_text = f"Did you mean {c1} or {c2}?"
+
+                            print(f"  [Matcher] Ambiguity clarification: {response_text}")
+                            return {
+                                "id": "ambiguous_clarification",
+                                "response_text": response_text,
+                                "audio_file": None,
+                                "action": {
+                                    "action": "speak",
+                                    "text": response_text
+                                }
+                            }
                 print("  [Matcher] Rejected: ambiguous top-2 candidates.")
                 return None
         else:

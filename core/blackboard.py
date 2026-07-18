@@ -158,6 +158,7 @@ class Blackboard:
 
     # ── Emotion (written by EmotionEngine) ───────────────────────────────────
     emotion: str = "idle"
+    voice_locked_on_face: bool = False
     emotion_intensity: float = 1.0
     manual_emotion: str = None     # set via terminal/API override
 

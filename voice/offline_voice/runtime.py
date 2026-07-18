@@ -310,7 +310,8 @@ class IntentMatcher:
                                 "action": {
                                     "action": "speak",
                                     "text": response_text
-                                }
+                                },
+                                "ambiguity_category": category
                             }
                 print("  [Matcher] Rejected: ambiguous top-2 candidates.")
                 return None

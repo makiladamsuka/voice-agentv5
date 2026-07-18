@@ -192,14 +192,14 @@ export function KioskView() {
   const handleMicClick = useCallback(async () => {
     if (isConnected) {
       end();
-      try { fetch("/api/mic-aborted", { method: "POST" }); } catch (e) {}
+      try { fetch("http://127.0.0.1:8080/api/mic-aborted", { method: "POST" }); } catch (e) {}
       // Brief settle so the backend can release the previous job before a
       // quick re-press races the old room's cleanup.
       await new Promise((r) => setTimeout(r, 400));
       return;
     }
     setIsConnecting(true);
-    try { fetch("/api/mic-clicked", { method: "POST" }); } catch (e) {}
+    try { fetch("http://127.0.0.1:8080/api/mic-clicked", { method: "POST" }); } catch (e) {}
     try {
       // start() resolves once the room connects; agent join can take longer.
       // Generous ceiling so slow token/room join on the Pi does not fake-fail
@@ -214,7 +214,7 @@ export function KioskView() {
     } catch (e) {
       console.error("Agent connection failed:", e);
       setIsConnecting(false);
-      try { fetch("/api/mic-aborted", { method: "POST" }); } catch (e) {}
+      try { fetch("http://127.0.0.1:8080/api/mic-aborted", { method: "POST" }); } catch (e) {}
     }
   }, [isConnected, startSession, end]);
 

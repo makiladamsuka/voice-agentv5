@@ -128,8 +128,8 @@ class TuneState:
 
         # Servo tuning
         self.servo_enabled = False
-        self.pan_p_gain = 4.0
-        self.tilt_p_gain = 3.0
+        self.pan_p_gain = 1.0
+        self.tilt_p_gain = 0.8
 
         # Detection toggles
         self.face_detection_enabled = True
@@ -143,12 +143,12 @@ class TuneState:
         self.talk_gesture_enabled = True
 
         # Animation speeds (seconds per frame or multipliers)
-        self.hi_speed_v = float(_cfg(cfg, "hi_gesture", "vertical_speed", default=1.0))
+        self.hi_speed_v = float(_cfg(cfg, "hi_gesture", "vertical_speed", default=0.9))
         self.hi_speed_h = float(_cfg(cfg, "hi_gesture", "horizontal_speed", default=1.5))
-        self.bye_speed_v = float(_cfg(cfg, "bye_gesture", "vertical_speed", default=1.0))
-        self.bye_speed_h = float(_cfg(cfg, "bye_gesture", "horizontal_speed", default=1.5))
-        self.talk_speed_v = float(_cfg(cfg, "talk_gesture", "vertical_speed", default=1.0))
-        self.talk_speed_h = float(_cfg(cfg, "talk_gesture", "horizontal_speed", default=1.5))
+        self.bye_speed_v = float(_cfg(cfg, "bye_gesture", "vertical_speed", default=0.7))
+        self.bye_speed_h = float(_cfg(cfg, "bye_gesture", "horizontal_speed", default=1.0))
+        self.talk_speed_v = float(_cfg(cfg, "talk_gesture", "vertical_speed", default=0.5))
+        self.talk_speed_h = float(_cfg(cfg, "talk_gesture", "horizontal_speed", default=0.5))
         self.base_rotate_deg = 15.0
 
         # Stats (read-only from detection thread)
@@ -606,10 +606,10 @@ class AnimationRunner:
             else:
                 return f"Unknown command: {command}"
 
-    def _play_elastic_sequence(self, sequence, speed_v, speed_h, home, hold_home_sec=0.0, pose_duration=0.0):
-        # Init state
+    def _play_elastic_sequence(self, sequence: list, speed_v: float, speed_h: float, home: dict, hold_home_sec: float = 0.0, pose_duration: float = 0.0):
         arms = [home["a0"], home["a1"], home["a2"], home["a3"]]
         vels = [0.0, 0.0, 0.0, 0.0]
+        targets = [home["a0"], home["a1"], home["a2"], home["a3"]]
         
         base_vel = 120.0
         base_accel = 300.0
@@ -1217,9 +1217,12 @@ class StreamHandler(BaseHTTPRequestHandler):
         if self.path == "/api/tune":
             if "launch_kiosk" in payload and payload["launch_kiosk"] == 1 and self.tune.get("launch_kiosk") != 1:
                 import subprocess
+                import os
                 try:
                     script_path = APP_DIR / "scripts" / "launch-kiosk-stack.sh"
-                    subprocess.Popen(["bash", str(script_path)])
+                    subprocess.Popen(["bash", str(script_path)], start_new_session=True)
+                    print("Launching Kiosk Stack and exiting test script to release serial port...")
+                    os._exit(0)
                 except Exception as e:
                     print("Failed to launch kiosk script:", e)
             self.tune.update(payload)

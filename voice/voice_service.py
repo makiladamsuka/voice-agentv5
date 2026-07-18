@@ -37,6 +37,7 @@ from voice.event_database import build_event_database
 from voice.greetings import generate_presence_greeting
 from voice.tools import TimeTools, SearchTools, ContentTools, AppearanceTools
 from core.eye_themes import resolve_eye_color
+from voice.sentiment import clear_conv_emotion, write_conv_emotion
 from voice.speaking_flag import write_speaking_flag, clear_speaking_flag
 
 if TYPE_CHECKING:
@@ -53,49 +54,6 @@ _global_event_db = None
 _active_session: AgentSession | None = None
 _session_generation = 0  # stale disconnect must not clear a newer reconnect
 _session_hello_done = False  # only auto-greet once per worker (not every mic reconnect)
-
-# ── VADER Sentiment ──────────────────────────────────────────────────────────
-try:
-    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-    _analyzer = SentimentIntensityAnalyzer()
-except ImportError:
-    _analyzer = None
-    print("[VoiceService] WARNING: vaderSentiment not installed — sentiment disabled")
-
-
-def _send_vader_emotion(text: str, is_agent: bool = False) -> None:
-    """Derive emotion from text via VADER and write to Blackboard."""
-    if _analyzer is None or _bb is None:
-        return
-    if not text or len(text.split()) < 2:
-        return
-
-    word_count = len(text.split())
-    comp = _analyzer.polarity_scores(text)["compound"]
-
-    emotion = "engaged"
-    if comp > 0.6:
-        emotion = "happy"
-    elif comp > 0.2:
-        emotion = "warm"
-    elif comp < -0.2:
-        if is_agent or "sorry" in text.lower():
-            emotion = "apologetic"
-        else:
-            emotion = "sad"
-    elif comp < -0.6:
-        emotion = "angry"
-
-    if -0.2 <= comp <= 0.2 and word_count > 10:
-        emotion = "engaged"
-    if comp > 0.3 and word_count > 15 and is_agent:
-        emotion = "proud"
-
-    _bb.write(conv_emotion=emotion)
-    print(
-        f"[Vader L2] {'Agent' if is_agent else 'User'} said: '{text[:30]}...' -> {comp:.2f} -> {emotion}"
-    )
-
 
 # ── Conversation state machine ─────────────────────────────────────────────
 
@@ -582,7 +540,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         _thinking_task = asyncio.create_task(_thinking_cycle(word_count))
 
         try:
-            _send_vader_emotion(text, is_agent=False)
+            write_conv_emotion(_bb, text, is_agent=False)
         except Exception:
             pass
 
@@ -614,7 +572,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         text = ev.item.text_content or ""
         if ev.item.role == "assistant" and text:
             try:
-                _send_vader_emotion(text, is_agent=True)
+                write_conv_emotion(_bb, text, is_agent=True)
             except Exception as e:
                 print(f"[VoiceService] Vader Error: {e}")
 

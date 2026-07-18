@@ -189,7 +189,7 @@ export function MicBlobOverlay({
             animate={{ opacity: 1, y: 0 }}
             className="mt-6 text-on-surface/70 text-[15px] font-semibold tracking-wide"
           >
-            {isConnected ? "Connected — starting…" : "Connecting…"}
+            {isConnected ? "Connected — starting…" : ""}
           </motion.div>
         </motion.div>
       )}

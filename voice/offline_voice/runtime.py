@@ -12,6 +12,8 @@ import chromadb
 from chromadb.utils import embedding_functions
 import speech_recognition as sr
 
+from voice.sentiment import write_conv_emotion
+
 try:
     import pygame
     pygame.mixer.init()
@@ -344,11 +346,13 @@ class OfflineVoiceRuntime:
     def process_text_input(self, text: str):
         """Processes a transcript, matches intent, updates Blackboard, and plays audio."""
         self.bb.write(conv_state="thinking", user_text=text)
+        write_conv_emotion(self.bb, text, is_agent=False, log_prefix="Vader NLU")
 
         # Tool routes (e.g. clock) bypass retrieval entirely
         if route_domain(text) == "tool_time":
             reply = get_time_reply()
             print(f"\n🕐 Tool: get_time → {reply}")
+            write_conv_emotion(self.bb, reply, is_agent=True, log_prefix="Vader NLU")
             self.bb.write(
                 conv_state="speaking",
                 agent_speaking=True,
@@ -364,12 +368,14 @@ class OfflineVoiceRuntime:
         
         if intent:
             print(f"\n✅ Match Found! Action: {intent['action']}")
-            
+            reply_text = intent.get("response_text", "")
+            write_conv_emotion(self.bb, reply_text, is_agent=True, log_prefix="Vader NLU")
+
             # 2. Write UI Action to Blackboard (Frontend updates screen instantly)
             self.bb.write(
                 conv_state="speaking", 
                 agent_speaking=True,
-                agent_text=intent.get("response_text", ""),
+                agent_text=reply_text,
                 current_action=intent.get("action", {})
             )
             
@@ -387,10 +393,12 @@ class OfflineVoiceRuntime:
                 
         else:
             print("\n❌ No match found. (Out of Domain)")
+            fallback_text = "I'm a campus guide! Try asking me about events or locations."
+            write_conv_emotion(self.bb, fallback_text, is_agent=True, log_prefix="Vader NLU")
             self.bb.write(
                 conv_state="speaking",
                 agent_speaking=True,
-                agent_text="I'm a campus guide! Try asking me about events or locations.",
+                agent_text=fallback_text,
                 current_action={}
             )
             audio_path = APP_DIR / "assets" / "audio_cache" / "intent_fallback.mp3"

@@ -27,6 +27,9 @@ from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
 
+from voice.sentiment import clear_conv_emotion, write_conv_emotion
+from core.speech_sync_service import get_speech_sync_service
+
 if TYPE_CHECKING:
     from core.blackboard import Blackboard
 
@@ -117,6 +120,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                 # Update blackboard — show "thinking" on robot face
                 if _bb is not None:
                     _bb.write(conv_state="thinking", user_speaking=False)
+                write_conv_emotion(_bb, user_text, is_agent=False, log_prefix="Vader NLU")
                 await websocket.send_text(
                     json.dumps({"type": "state", "conv_state": "thinking"})
                 )
@@ -133,25 +137,49 @@ async def _voice_ws_endpoint(websocket) -> None:
                     f"audio={result.get('audio_url')}"
                 )
 
-                # Write result to blackboard (only fields that exist on Blackboard)
-                if _bb is not None:
+                write_conv_emotion(
+                    _bb,
+                    result.get("reply_text", ""),
+                    is_agent=True,
+                    log_prefix="Vader NLU",
+                )
+
+                utterance_id = ""
+                duration_ms = 0
+                sync = get_speech_sync_service()
+                if sync is not None:
+                    utterance_id, duration_ms = sync.arm_utterance(
+                        reply_text=result.get("reply_text", ""),
+                        audio_path=result.get("audio_path"),
+                    )
+                elif _bb is not None:
                     _bb.write(conv_state="speaking", agent_speaking=True)
 
-                # Send result back to browser
                 await websocket.send_text(json.dumps({
                     "type": "response",
                     "reply_text": result["reply_text"],
                     "audio_url": result.get("audio_url"),
                     "action": result.get("action"),
+                    "utterance_id": utterance_id,
+                    "duration_ms": duration_ms,
                 }))
 
-                # Tell browser playback has started
                 await websocket.send_text(
                     json.dumps({"type": "state", "conv_state": "speaking"})
                 )
 
+            elif msg_type == "playback_start":
+                utterance_id = str(msg.get("utterance_id", "") or "")
+                sync = get_speech_sync_service()
+                if sync is not None:
+                    sync.begin_playback(utterance_id)
+                elif _bb is not None:
+                    _bb.write(conv_state="speaking", agent_speaking=True)
+
             elif msg_type == "tts_done":
-                # Browser finished playing TTS audio
+                sync = get_speech_sync_service()
+                if sync is not None:
+                    sync.end_playback()
                 if _bb is not None:
                     _bb.write(conv_state="listening", agent_speaking=False)
                 await websocket.send_text(
@@ -170,6 +198,9 @@ async def _voice_ws_endpoint(websocket) -> None:
         else:
             log.error(f"NLU WebSocket error: {exc}")
     finally:
+        sync = get_speech_sync_service()
+        if sync is not None:
+            sync.end_playback()
         if _bb is not None:
             _bb.write(
                 voice_session_active=False,
@@ -177,6 +208,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                 agent_speaking=False,
                 user_speaking=False,
             )
+            clear_conv_emotion(_bb)
 
 
 async def _health_endpoint(request) -> None:
@@ -213,14 +245,21 @@ def _match_intent(runtime, user_text: str) -> dict:
 
     audio_base = APP_DIR / "assets" / "audio_cache"
 
+    def _with_audio_path(payload: dict, audio_file: str | None) -> dict:
+        if audio_file and (audio_base / audio_file).exists():
+            payload["audio_path"] = str(audio_base / audio_file)
+        else:
+            payload["audio_path"] = None
+        return payload
+
     # ── Tool routes (dynamic replies, no retrieval) ──────────────────────────
     domain = route_domain(user_text)
     if domain == "tool_time":
-        return {
+        return _with_audio_path({
             "reply_text": get_time_reply(),
             "audio_url": None,  # browser Deepgram TTS speaks the dynamic text
             "action": {},
-        }
+        }, None)
 
     intent = runtime.matcher.match(user_text, domain=domain)
 
@@ -241,11 +280,11 @@ def _match_intent(runtime, user_text: str) -> dict:
             )
             audio_url = None
 
-        return {
+        return _with_audio_path({
             "reply_text": intent.get("response_text", ""),
             "audio_url": audio_url,
             "action": action,
-        }
+        }, audio_file if audio_url else None)
 
     # No intent matched — return fallback
     fallback_audio = "intent_fallback.mp3"
@@ -254,11 +293,11 @@ def _match_intent(runtime, user_text: str) -> dict:
         if (audio_base / fallback_audio).exists()
         else None
     )
-    return {
+    return _with_audio_path({
         "reply_text": "I'm NEma, your campus guide! Say hi, ask who I am, or ask about events and directions.",
         "audio_url": fallback_url,
         "action": {},
-    }
+    }, fallback_audio if fallback_url else None)
 
 
 def _navigate_response(destination: str) -> dict:

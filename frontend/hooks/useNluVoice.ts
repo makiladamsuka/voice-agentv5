@@ -47,6 +47,8 @@ export interface NluResponse {
   reply_text: string;
   audio_url: string | null;
   action: NluAction | null;
+  utterance_id?: string;
+  duration_ms?: number;
 }
 
 interface UseNluVoiceOptions {
@@ -121,8 +123,20 @@ export function useNluVoice({
     }
   }, []);
 
+  const sendPlaybackStart = useCallback((utteranceId: string) => {
+    if (!utteranceId || nluWs.current?.readyState !== WebSocket.OPEN) return;
+    nluWs.current.send(
+      JSON.stringify({ type: "playback_start", utterance_id: utteranceId }),
+    );
+  }, []);
+
   const playAudio = useCallback(
-    async (audioUrl: string | null, replyText: string) => {
+    async (
+      audioUrl: string | null,
+      replyText: string,
+      utteranceId?: string,
+      durationMs?: number,
+    ) => {
       console.log("[NluVoice] Playing reply:", replyText?.slice(0, 80), audioUrl);
       setVoiceState("speaking");
       stopCurrentAudio();
@@ -144,6 +158,7 @@ export function useNluVoice({
         audioRef.current = audio;
         try {
           await audio.play();
+          sendPlaybackStart(utteranceId ?? "");
           await new Promise<void>((resolve) => {
             audio.onended = () => resolve();
             audio.onerror = () => resolve();
@@ -160,6 +175,12 @@ export function useNluVoice({
       }
 
       if (!apiKey || !replyText) {
+        if (utteranceId) {
+          sendPlaybackStart(utteranceId);
+          await new Promise((r) =>
+            setTimeout(r, Math.max(800, durationMs ?? 2000)),
+          );
+        }
         if (nluWs.current?.readyState === WebSocket.OPEN) {
           nluWs.current.send(JSON.stringify({ type: "tts_done" }));
         }
@@ -187,6 +208,7 @@ export function useNluVoice({
         const audio = new Audio(url);
         audioRef.current = audio;
         await audio.play();
+        sendPlaybackStart(utteranceId ?? "");
         await new Promise<void>((resolve) => {
           audio.onended = () => {
             URL.revokeObjectURL(url);
@@ -203,7 +225,7 @@ export function useNluVoice({
       }
       resumeAfter();
     },
-    [apiKey, setVoiceState, stopCurrentAudio],
+    [apiKey, setVoiceState, stopCurrentAudio, sendPlaybackStart],
   );
 
   const sendTranscript = useCallback(
@@ -440,8 +462,15 @@ export function useNluVoice({
             reply_text: msg.reply_text,
             audio_url: msg.audio_url,
             action: msg.action,
+            utterance_id: msg.utterance_id,
+            duration_ms: msg.duration_ms,
           });
-          void playAudio(msg.audio_url, msg.reply_text);
+          void playAudio(
+            msg.audio_url,
+            msg.reply_text,
+            msg.utterance_id,
+            msg.duration_ms,
+          );
         } else if (msg.type === "state") {
           // Don't let server "listening" clobber local speaking/thinking mid-turn
           if (

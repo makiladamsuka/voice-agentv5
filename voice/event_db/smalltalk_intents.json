@@ -1,0 +1,150 @@
+[
+  {
+    "id": "smalltalk_greeting",
+    "utterances": [
+      "hi",
+      "hello",
+      "hey",
+      "hey there",
+      "hi there",
+      "hello there",
+      "good morning",
+      "good afternoon",
+      "good evening",
+      "hi robot",
+      "hello robot",
+      "hey NEma",
+      "hi NEma",
+      "hello friend",
+      "yo",
+      "what's up",
+      "sup"
+    ],
+    "response_text": "Hi! I'm NEma, your campus guide. Ask me about events, competitions, or where to go.",
+    "audio_file": "smalltalk_greeting.mp3",
+    "action": {}
+  },
+  {
+    "id": "smalltalk_who_are_you",
+    "utterances": [
+      "who are you",
+      "what are you",
+      "what is your name",
+      "what's your name",
+      "tell me about yourself",
+      "introduce yourself",
+      "who am I talking to",
+      "what kind of robot are you",
+      "are you a robot",
+      "are you an AI",
+      "what do you do",
+      "who is this"
+    ],
+    "response_text": "I'm NEma, a campus guide robot. I can tell you about campus events and help with directions.",
+    "audio_file": "smalltalk_who_are_you.mp3",
+    "action": {}
+  },
+  {
+    "id": "smalltalk_how_are_you",
+    "utterances": [
+      "how are you",
+      "how are you doing",
+      "how is it going",
+      "how's it going",
+      "how do you feel",
+      "are you ok",
+      "are you okay",
+      "you good",
+      "how have you been"
+    ],
+    "response_text": "I'm doing great, thanks for asking! How can I help you today?",
+    "audio_file": "smalltalk_how_are_you.mp3",
+    "action": {}
+  },
+  {
+    "id": "smalltalk_what_can_you_do",
+    "utterances": [
+      "what can you do",
+      "how can you help me",
+      "what do you know",
+      "help",
+      "help me",
+      "what can I ask you",
+      "what are your features",
+      "show me what you can do",
+      "what information do you have",
+      "can you help me"
+    ],
+    "response_text": "I can tell you about campus events and competitions, and help you find places around campus. Just ask!",
+    "audio_file": "smalltalk_what_can_you_do.mp3",
+    "action": {}
+  },
+  {
+    "id": "smalltalk_thanks",
+    "utterances": [
+      "thank you",
+      "thanks",
+      "thanks a lot",
+      "thank you so much",
+      "thanks for the help",
+      "appreciate it",
+      "cheers"
+    ],
+    "response_text": "You're welcome! Happy to help anytime.",
+    "audio_file": "smalltalk_thanks.mp3",
+    "action": {}
+  },
+  {
+    "id": "smalltalk_bye",
+    "utterances": [
+      "bye",
+      "goodbye",
+      "see you",
+      "see you later",
+      "talk to you later",
+      "catch you later",
+      "I'm leaving",
+      "have a good day",
+      "good night",
+      "bye bye"
+    ],
+    "response_text": "Goodbye! Come back anytime if you need help around campus.",
+    "audio_file": "smalltalk_bye.mp3",
+    "action": {}
+  },
+  {
+    "id": "smalltalk_are_you_there",
+    "utterances": [
+      "can you hear me",
+      "are you there",
+      "are you listening",
+      "hello can you hear me",
+      "is anyone there",
+      "you there",
+      "are you working",
+      "testing",
+      "test test"
+    ],
+    "response_text": "Yes, I'm here and listening! Ask me about events or directions.",
+    "audio_file": "smalltalk_are_you_there.mp3",
+    "action": {}
+  },
+  {
+    "id": "smalltalk_nice",
+    "utterances": [
+      "nice",
+      "cool",
+      "awesome",
+      "great",
+      "that's cool",
+      "that's great",
+      "interesting",
+      "okay",
+      "ok",
+      "alright"
+    ],
+    "response_text": "Glad you think so! Want to hear about an event, or need directions somewhere?",
+    "audio_file": "smalltalk_nice.mp3",
+    "action": {}
+  }
+]

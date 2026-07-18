@@ -384,6 +384,12 @@ def _should_start_debug_viz(debug_viz_cfg: dict) -> bool:
 
 
 def main():
+    compiled_db = APP_DIR / "voice" / "event_db" / "compiled_intents.json"
+    if not compiled_db.exists():
+        print("[Bootstrap] First run detected: Building knowledge base and downloading audio...")
+        import subprocess
+        subprocess.run([sys.executable, str(APP_DIR / "voice" / "compiler" / "intent_compiler.py")], cwd=str(APP_DIR))
+
     config_path = _resolve_config_path()
     cfg = _load_yaml(config_path)
     servo_cfg = cfg.get("servo", {}) or {}
@@ -757,6 +763,21 @@ def main():
     if voice_cfg.get("enabled", False):
         if nlu_mode:
             from voice.nlu_server import run_nlu_server
+            from core.speech_sync_service import SpeechSyncService
+
+            speech_sync_cfg = voice_cfg.get("speech_sync", {}) or {}
+            if speech_sync_cfg.get("enabled", True):
+                threads.append(
+                    threading.Thread(
+                        target=SpeechSyncService(
+                            bb,
+                            tick_hz=float(speech_sync_cfg.get("tick_hz", 50.0)),
+                        ).run,
+                        daemon=True,
+                        name="SpeechSync",
+                    )
+                )
+                print("[Bootstrap] SpeechSyncService enabled — NLU amplitude sync")
 
             # Preload the Wayfinder so navigate intents can return live paths
             # for the kiosk's 3D NavigationMap.

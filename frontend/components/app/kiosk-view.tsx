@@ -608,7 +608,6 @@ function KioskViewUI({
       return { text: String(lastTx.text).trim(), isUser: true };
     }
     if (isThinking) return { text: "Thinking…", isUser: false };
-    if (isAgentInitializing) return { text: "Connecting…", isUser: false };
     if (isConnected) return { text: "Listening…", isUser: false };
     return { text: "Tap the mic to talk", isUser: false };
   }, [

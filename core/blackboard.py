@@ -171,6 +171,13 @@ class Blackboard:
     conv_emotion: str = None                 # VADER-derived emotion (overrides surroundings when set)
     amplitude_fast: float = 0.0              # TTS RMS fast signal (syllable punches)
     amplitude_slow: float = 0.0              # TTS RMS slow signal (emotional momentum)
+    # Utterance clock (SpeechSyncService / NLU playback sync)
+    utterance_id: str = ""
+    utterance_start_ts: float = 0.0          # epoch when browser audio started
+    utterance_duration_ms: int = 0
+    utterance_elapsed_ms: int = 0
+    utterance_audio_path: str = ""           # cached MP3 path on disk, or ""
+    speech_sync_active: bool = False         # envelope player running
     user_speaking: bool = False              # True when user VAD triggers
     agent_speaking: bool = False             # True when agent TTS is playing
     local_speaker_active: bool = False       # Pi plays TTS locally — frontend should mute

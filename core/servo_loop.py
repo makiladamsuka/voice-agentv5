@@ -718,7 +718,7 @@ class ServoLoop:
             self.bb.write(voice_locked_on_face=False)
         else:
             is_locked = getattr(self, '_voice_locked', False)
-            if tracking_active and abs(self._pan_track_norm) <= self.pan_center_norm_x and abs(self._tilt_track_norm) <= self.tilt_center_norm_y:
+            if tracking_active and abs(self._pan_track_norm) <= self.pan_center_norm_x:
                 if not is_locked:
                     self._voice_locked = True
                     self.bb.write(voice_locked_on_face=True)

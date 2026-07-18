@@ -877,7 +877,8 @@ class BaseController:
                 time.sleep(loop_delay)
                 continue
 
-            if voice_active and self.freeze_base_during_voice:
+            voice_locked = self.bb.read("voice_locked_on_face").get("voice_locked_on_face", False)
+            if voice_active and self.freeze_base_during_voice and voice_locked:
                 if self.bb.read("base_step_ready")["base_step_ready"]:
                     self.bb.write(base_step_ready=False, base_comp_pan_deg=0.0)
                 time.sleep(loop_delay)

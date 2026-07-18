@@ -712,6 +712,22 @@ class ServoLoop:
             self._lss_active = False
             self._forward_return_active = False
 
+        voice_active = state.get("voice_session_active", False)
+        if not voice_active:
+            self._voice_locked = False
+            self.bb.write(voice_locked_on_face=False)
+        else:
+            is_locked = getattr(self, '_voice_locked', False)
+            if tracking_active and self._pan_center_band_active(norm_x) and abs(norm_y) <= self.tilt_center_norm_y:
+                if not is_locked:
+                    self._voice_locked = True
+                    self.bb.write(voice_locked_on_face=True)
+            elif not tracking_active:
+                if (now - self._last_face_ts) > 1.5:
+                    if is_locked:
+                        self._voice_locked = False
+                        self.bb.write(voice_locked_on_face=False)
+
         if not tracking_active:
             # Hold pose until main loop drops track after no_face_home_sec.
             return "track"
@@ -756,8 +772,10 @@ class ServoLoop:
             self._pan_pid.soften(0.15)
         self._prev_pan_err_x = pan_err_x
 
-        if self._pan_center_band_active(self._pan_track_norm):
-            # Face near frame center — hold pan (do not snap to pan_center).
+        is_locked = getattr(self, '_voice_locked', False)
+
+        if self._pan_center_band_active(self._pan_track_norm) or is_locked:
+            # Face near frame center or voice locked — hold pan (do not snap to pan_center).
             self._pan_pid.reset()
             pan_target = self._pan
         else:
@@ -807,9 +825,11 @@ class ServoLoop:
 
         # Tilt: face-relative on mechanical center (no IMU horizon during track).
         tilt_base = self.tilt_center
-        if abs(self._tilt_track_norm) <= self.tilt_center_norm_y:
+        is_locked = getattr(self, '_voice_locked', False)
+        
+        if abs(self._tilt_track_norm) <= self.tilt_center_norm_y or is_locked:
             self._tilt_pid.reset()
-            tilt_target = tilt_base
+            tilt_target = self._tilt if is_locked else tilt_base
         else:
             err_y = _apply_deadzone(self._tilt_track_norm, self.deadzone_y)
             tilt_corr = clamp(self._tilt_pid.tick(err_y, dt), -1.0, 1.0)

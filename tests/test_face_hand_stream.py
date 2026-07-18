@@ -473,6 +473,8 @@ class ServoThread(threading.Thread):
         self.a1 = 65.0
         self.a2 = 54.0
         self.a3 = 76.0
+        self.smooth_norm_x = 0.0
+        self.smooth_norm_y = 0.0
 
     def run(self):
         if self.link is None or not self.link.connected:
@@ -548,16 +550,21 @@ class ServoThread(threading.Thread):
             else:
                 continue
 
+            # Exponential smoothing to remove camera/bbox jitter (makes the head stable once found)
+            alpha = 0.15
+            self.smooth_norm_x += (norm_x - self.smooth_norm_x) * alpha
+            self.smooth_norm_y += (norm_y - self.smooth_norm_y) * alpha
+
             dz_x = self.tune.get("deadzone_x")
             dz_y = self.tune.get("deadzone_y")
 
             error_x = 0.0
             error_y = 0.0
 
-            if abs(norm_x) > dz_x:
-                error_x = norm_x - (dz_x if norm_x > 0 else -dz_x)
-            if abs(norm_y) > dz_y:
-                error_y = norm_y - (dz_y if norm_y > 0 else -dz_y)
+            if abs(self.smooth_norm_x) > dz_x:
+                error_x = self.smooth_norm_x - (dz_x if self.smooth_norm_x > 0 else -dz_x)
+            if abs(self.smooth_norm_y) > dz_y:
+                error_y = self.smooth_norm_y - (dz_y if self.smooth_norm_y > 0 else -dz_y)
 
             p_gain = self.tune.get("pan_p_gain")
             t_gain = self.tune.get("tilt_p_gain")

@@ -21,6 +21,8 @@ const nextConfig: NextConfig = {
       { source: "/api/weather", destination: `${kioskApi}/api/weather` },
       { source: "/api/eye-color", destination: `${kioskApi}/api/eye-color` },
       { source: "/api/voice-config", destination: `${kioskApi}/api/voice-config` },
+      { source: "/api/mic-clicked", destination: `${kioskApi}/api/mic-clicked` },
+      { source: "/api/mic-aborted", destination: `${kioskApi}/api/mic-aborted` },
     ];
   },
 };

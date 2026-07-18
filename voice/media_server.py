@@ -197,6 +197,18 @@ class MediaServer:
                         print(f"[MediaServer] trigger-index error: {exc}")
                         self._bytes_response(500, str(exc).encode(), "text/plain")
                     return
+                    
+                if path == "/api/mic-clicked":
+                    if media_server.blackboard is not None:
+                        media_server.blackboard.write(voice_session_active=True)
+                    self._json_response(200, {"success": True})
+                    return
+
+                if path == "/api/mic-aborted":
+                    if media_server.blackboard is not None:
+                        media_server.blackboard.write(voice_session_active=False)
+                    self._json_response(200, {"success": True})
+                    return
 
                 if path == "/api/eye-color":
                     try:

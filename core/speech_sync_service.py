@@ -88,6 +88,8 @@ class SpeechSyncService:
             self._active_id = self._armed_id
             self._active_envelope = self._armed_envelope
             self._start_ts = time.time()
+            self._armed_id = ""
+            self._armed_envelope = None
 
         self.bb.write(
             utterance_id=self._active_id,
@@ -107,8 +109,6 @@ class SpeechSyncService:
         with self._lock:
             self._active_id = ""
             self._active_envelope = None
-            self._armed_id = ""
-            self._armed_envelope = None
             self._start_ts = 0.0
 
         self.bb.write(

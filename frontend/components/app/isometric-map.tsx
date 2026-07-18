@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useMemo, useState, useEffect } from "react";
+import React, { useRef, useMemo, useState, useEffect, useCallback } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Line, Box, Grid, Text } from "@react-three/drei";
 import * as THREE from "three";
@@ -153,6 +153,66 @@ const getRoomTheme = (label: string) => {
   return { color: "#334155", icon: "📍" }; // default sleek slate
 };
 
+// Animated group container that makes the floor map drop from above or rise from below on change
+const AnimatedFloorGroup = ({
+  currentFloor,
+  destFloor,
+  children,
+}: {
+  currentFloor: string;
+  destFloor: string;
+  children: React.ReactNode;
+}) => {
+  const groupRef = useRef<THREE.Group>(null);
+  const lastFloorRef = useRef<string>(currentFloor);
+  
+  // Spring state refs
+  const velocityRef = useRef<number>(0);
+  const positionYRef = useRef<number>(0);
+
+  useFrame((_, delta) => {
+    if (groupRef.current) {
+      if (lastFloorRef.current && lastFloorRef.current !== currentFloor) {
+        const lastNum = parseInt(lastFloorRef.current.replace(/\D/g, "")) || 1;
+        const currentNum = parseInt(currentFloor.replace(/\D/g, "")) || 1;
+        
+        // Reset spring position and velocity on floor change so they always animate in
+        const startY = currentNum > lastNum ? 10 : -10;
+        groupRef.current.position.y = startY;
+        positionYRef.current = startY;
+        velocityRef.current = 0;
+      }
+      lastFloorRef.current = currentFloor;
+
+      // Only run physics equations if there is an active offset to animate
+      if (groupRef.current.position.y !== 0) {
+        const targetY = 0;
+        const tension = 180; // pulling force
+        const damping = 12; // Expressive overshoot bounce
+        const dt = Math.min(delta, 0.03); // cap delta time to avoid instability on frame drops
+
+        const displacement = positionYRef.current - targetY;
+        const springForce = -tension * displacement;
+        const dampingForce = -damping * velocityRef.current;
+        const acceleration = springForce + dampingForce;
+
+        velocityRef.current += acceleration * dt;
+        positionYRef.current += velocityRef.current * dt;
+
+        // Snap to zero if settled
+        if (Math.abs(positionYRef.current) < 0.001 && Math.abs(velocityRef.current) < 0.001) {
+          positionYRef.current = 0;
+          velocityRef.current = 0;
+        }
+
+        groupRef.current.position.y = positionYRef.current;
+      }
+    }
+  });
+
+  return <group ref={groupRef}>{children}</group>;
+};
+
 export default function NavigationMap({
   path = [],
   path_ids = [],
@@ -169,6 +229,14 @@ export default function NavigationMap({
   const [visible, setVisible] = useState(false);
   const [currentFloor, setCurrentFloor] = useState<string>("");
   const lastScrollRef = useRef<number>(0);
+  const [highlightedFloor, setHighlightedFloor] = useState<string | null>(null);
+  const animTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const cancelAnim = useCallback(() => {
+    animTimersRef.current.forEach(clearTimeout);
+    animTimersRef.current = [];
+    setHighlightedFloor(null);
+  }, []);
 
   const availableFloors = useMemo(() => {
     return Array.from(
@@ -218,6 +286,67 @@ export default function NavigationMap({
     }
   }, [onClose, isStandalone, isManualExpanded]);
 
+  const destNode = useMemo(() => {
+    return nodes.find(
+      (n: any) =>
+        n.label?.toLowerCase() === destination.toLowerCase() &&
+        n.type !== "waypoint",
+    );
+  }, [nodes, destination]);
+
+  const startFloorKey = useMemo(() => {
+    return floorSequence[0] || (availableFloors.length > 0 ? availableFloors[availableFloors.length - 1] : "floor_1");
+  }, [floorSequence, availableFloors]);
+
+  const destFloorKey = useMemo(() => {
+    return floorSequence[floorSequence.length - 1] || destNode?.floor || "floor_1";
+  }, [floorSequence, destNode]);
+
+  useEffect(() => {
+    if (nodes.length === 0) return;
+
+    const startNum = parseInt(startFloorKey.replace(/\D/g, "")) || 1;
+    const destNum = parseInt(destFloorKey.replace(/\D/g, "")) || 1;
+
+    // Clear any existing animation before starting a new one
+    cancelAnim();
+
+    // Map goes straight to the relevant destination floor on load
+    setCurrentFloor(destFloorKey);
+
+    // Initialize highlighted floor at start floor
+    setHighlightedFloor(startFloorKey);
+
+    if (startNum === destNum) return;
+
+    const sequence: { floor: string; delay: number }[] = [];
+    let currentDelay = 450; // Show starting highlighted button floor for 0.45 seconds
+
+    if (startNum < destNum) {
+      for (let f = startNum + 1; f <= destNum; f++) {
+        sequence.push({ floor: `floor_${f}`, delay: currentDelay });
+        currentDelay += 450; // Step highlight on each intermediate floor button
+      }
+    } else {
+      for (let f = startNum - 1; f >= destNum; f--) {
+        sequence.push({ floor: `floor_${f}`, delay: currentDelay });
+        currentDelay += 450; // Step highlight on each intermediate floor button
+      }
+    }
+
+    const timers = sequence.map((step) => {
+      return setTimeout(() => {
+        setHighlightedFloor(step.floor);
+      }, step.delay);
+    });
+
+    animTimersRef.current = timers;
+
+    return () => {
+      timers.forEach(clearTimeout);
+    };
+  }, [nodes, floorSequence, destNode, availableFloors, cancelAnim, startFloorKey, destFloorKey]);
+
   const handleClose = () => {
     setVisible(false);
     setTimeout(() => onClose?.(), 400);
@@ -237,14 +366,6 @@ export default function NavigationMap({
     }
     return points;
   }, [path, path_ids, currentFloor]);
-
-  const destNode = useMemo(() => {
-    return nodes.find(
-      (n: any) =>
-        n.label?.toLowerCase() === destination.toLowerCase() &&
-        n.type !== "waypoint",
-    );
-  }, [nodes, destination]);
 
   const buildingEntries = useMemo(() => {
     return Object.entries(buildings || {}).filter(
@@ -311,6 +432,7 @@ export default function NavigationMap({
               }
             }
             const active = currentFloor === f;
+            const isButtonActive = highlightedFloor ? highlightedFloor === f : active;
 
             return (
               <button
@@ -318,10 +440,11 @@ export default function NavigationMap({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
+                  cancelAnim();
                   setCurrentFloor(f as string);
                 }}
-                className={`w-full min-h-[52px] px-3 py-2.5 rounded-3xl font-bold flex flex-col items-center justify-center border transition-colors shadow-lg backdrop-blur-md ${
-                  active
+                className={`w-full min-h-[52px] px-3 py-2.5 rounded-3xl font-bold flex flex-col items-center justify-center border transition-all duration-300 shadow-lg backdrop-blur-md overflow-hidden ${
+                  isButtonActive
                     ? "bg-blue-500/80 text-white border-blue-400/30"
                     : "bg-black/60 text-white border-white/10"
                 }`}
@@ -332,7 +455,7 @@ export default function NavigationMap({
                 {badge ? (
                   <span
                     className={`text-[10px] mt-0.5 font-semibold leading-tight ${
-                      active ? "opacity-85 text-white" : "opacity-70 text-white"
+                      isButtonActive ? "opacity-85 text-white" : "opacity-70 text-white"
                     }`}
                   >
                     {badge}
@@ -360,12 +483,14 @@ export default function NavigationMap({
           if (e.deltaY < 0) {
             // Scroll up -> Go to higher floor (lower index since it's sorted descending)
             if (currentIndex > 0) {
+              cancelAnim();
               setCurrentFloor(availableFloors[currentIndex - 1] as string);
               lastScrollRef.current = now;
             }
           } else if (e.deltaY > 0) {
             // Scroll down -> Go to lower floor (higher index)
             if (currentIndex < availableFloors.length - 1) {
+              cancelAnim();
               setCurrentFloor(availableFloors[currentIndex + 1] as string);
               lastScrollRef.current = now;
             }
@@ -391,124 +516,126 @@ export default function NavigationMap({
               distance={15}
             />
 
-            {/* Building Grids */}
-            {buildingEntries.map(([bId, b]) => (
-              <group key={bId} position={b.position}>
-                {/* Floor Cells (skipping removed cells) */}
-                {Array.from({ length: Math.round(b.size[0] || 1) }).map(
-                  (_, c) =>
-                    Array.from({ length: Math.round(b.size[1] || 1) }).map(
-                      (_, r) => {
-                        const cellId = `${c}_${r}`;
-                        if (b.removed_cells?.includes(cellId)) return null;
-                        const cx = c - b.size[0] / 2 + 0.5;
-                        const cz = r - b.size[1] / 2 + 0.5;
-                        return (
-                          <mesh
-                            key={cellId}
-                            position={[cx, -0.5, cz]}
-                            receiveShadow
-                          >
-                            <boxGeometry args={[1, 1, 1]} />
-                            <meshStandardMaterial color={b.color} />
-                          </mesh>
-                        );
-                      },
-                    ),
-                )}
-                <Text
-                  position={[0, 0.02, b.size[1] / 2 + 0.5]}
-                  rotation={[-Math.PI / 2, 0, 0]}
-                  fontSize={0.7}
-                  color={b.color}
-                  fontWeight="bold"
-                  textAlign="center"
-                >
-                  {b.name.replace(" ", "\n")}
-                </Text>
-              </group>
-            ))}
-
-            {/* Room Blocks */}
-            {floorNodes.map((node: any, index: number) => {
-              const size = node.size || [1, 1, 1];
-              const isDestination =
-                node.label?.toLowerCase() === destination.toLowerCase();
-              const theme = getRoomTheme(node.label);
-              // Use a vibrant indigo for the destination instead of green
-              const boxColor = isDestination ? "#2563EB" : theme.color;
-
-              // Elevate ALL labels and alternate heights to prevent crossing
-              const staggerHeight = 1.0 + (index % 2) * 0.8;
-              const textY = size[1] / 2 + staggerHeight;
-
-              return (
-                <group
-                  key={node.id}
-                  position={[node.world[0], size[1] / 2, node.world[2]]}
-                  onClick={(e) => {
-                    if (onNodeClick) {
-                      e.stopPropagation();
-                      onNodeClick(node.label);
-                    }
-                  }}
-                  onPointerOver={(e) => {
-                    if (onNodeClick) {
-                      e.stopPropagation();
-                      document.body.style.cursor = "pointer";
-                    }
-                  }}
-                  onPointerOut={(e) => {
-                    if (onNodeClick) {
-                      e.stopPropagation();
-                      document.body.style.cursor = "auto";
-                    }
-                  }}
-                >
-                  <Box args={size} castShadow>
-                    <meshStandardMaterial
-                      color={boxColor}
-                      emissive={isDestination ? "#2563EB" : "#000000"}
-                      emissiveIntensity={isDestination ? 0.4 : 0}
-                    />
-                  </Box>
-
-                  {/* Text label painted directly on the top of the item */}
+            <AnimatedFloorGroup currentFloor={currentFloor} destFloor={destFloorKey}>
+              {/* Building Grids */}
+              {buildingEntries.map(([bId, b]) => (
+                <group key={bId} position={b.position}>
+                  {/* Floor Cells (skipping removed cells) */}
+                  {Array.from({ length: Math.round(b.size[0] || 1) }).map(
+                    (_, c) =>
+                      Array.from({ length: Math.round(b.size[1] || 1) }).map(
+                        (_, r) => {
+                          const cellId = `${c}_${r}`;
+                          if (b.removed_cells?.includes(cellId)) return null;
+                          const cx = c - b.size[0] / 2 + 0.5;
+                          const cz = r - b.size[1] / 2 + 0.5;
+                          return (
+                            <mesh
+                              key={cellId}
+                              position={[cx, -0.5, cz]}
+                              receiveShadow
+                            >
+                              <boxGeometry args={[1, 1, 1]} />
+                              <meshStandardMaterial color={b.color} />
+                            </mesh>
+                          );
+                        },
+                      ),
+                  )}
                   <Text
-                    position={[0, size[1] / 2 + 0.05, 0]}
+                    position={[0, 0.02, b.size[1] / 2 + 0.5]}
                     rotation={[-Math.PI / 2, 0, 0]}
-                    fontSize={0.35}
-                    color="#ffffff"
-                    anchorX="center"
-                    anchorY="middle"
+                    fontSize={0.7}
+                    color={b.color}
                     fontWeight="bold"
                     textAlign="center"
-                    lineHeight={1.1}
                   >
-                    {`${theme.icon}\n${node.label.replace(" ", "\n")}`}
+                    {b.name.replace(" ", "\n")}
                   </Text>
                 </group>
-              );
-            })}
+              ))}
 
-            {/* Glowing route — navigation only, never in explore mode */}
-            {!isStandalone && pathPoints.length >= 2 && (
-              <GlowingPath points={pathPoints} />
-            )}
+              {/* Room Blocks */}
+              {floorNodes.map((node: any, index: number) => {
+                const size = node.size || [1, 1, 1];
+                const isDestination =
+                  node.label?.toLowerCase() === destination.toLowerCase();
+                const theme = getRoomTheme(node.label);
+                // Use a vibrant indigo for the destination instead of green
+                const boxColor = isDestination ? "#2563EB" : theme.color;
 
-            {/* Destination marker — navigation only */}
-            {!isStandalone &&
-              destNode &&
-              destNode.floor === currentFloor && (
-              <DestinationMarker
-                position={[
-                  destNode.world[0],
-                  destNode.world[1],
-                  destNode.world[2],
-                ]}
-                label={destination}
-              />
-            )}
+                // Elevate ALL labels and alternate heights to prevent crossing
+                const staggerHeight = 1.0 + (index % 2) * 0.8;
+                const textY = size[1] / 2 + staggerHeight;
+
+                return (
+                  <group
+                    key={node.id}
+                    position={[node.world[0], size[1] / 2, node.world[2]]}
+                    onClick={(e) => {
+                      if (onNodeClick) {
+                        e.stopPropagation();
+                        onNodeClick(node.label);
+                      }
+                    }}
+                    onPointerOver={(e) => {
+                      if (onNodeClick) {
+                        e.stopPropagation();
+                        document.body.style.cursor = "pointer";
+                      }
+                    }}
+                    onPointerOut={(e) => {
+                      if (onNodeClick) {
+                        e.stopPropagation();
+                        document.body.style.cursor = "auto";
+                      }
+                    }}
+                  >
+                    <Box args={size} castShadow>
+                      <meshStandardMaterial
+                        color={boxColor}
+                        emissive={isDestination ? "#2563EB" : "#000000"}
+                        emissiveIntensity={isDestination ? 0.4 : 0}
+                      />
+                    </Box>
+
+                    {/* Text label painted directly on the top of the item */}
+                    <Text
+                      position={[0, size[1] / 2 + 0.05, 0]}
+                      rotation={[-Math.PI / 2, 0, 0]}
+                      fontSize={0.35}
+                      color="#ffffff"
+                      anchorX="center"
+                      anchorY="middle"
+                      fontWeight="bold"
+                      textAlign="center"
+                      lineHeight={1.1}
+                    >
+                      {`${theme.icon}\n${node.label.replace(" ", "\n")}`}
+                    </Text>
+                  </group>
+                );
+              })}
+
+              {/* Glowing route — navigation only, never in explore mode */}
+              {!isStandalone && pathPoints.length >= 2 && (
+                <GlowingPath points={pathPoints} />
+              )}
+
+              {/* Destination marker — navigation only */}
+              {!isStandalone &&
+                destNode &&
+                destNode.floor === currentFloor && (
+                <DestinationMarker
+                  position={[
+                    destNode.world[0],
+                    destNode.world[1],
+                    destNode.world[2],
+                  ]}
+                  label={destination}
+                />
+              )}
+            </AnimatedFloorGroup>
 
             <OrbitControls
               enableZoom={false}

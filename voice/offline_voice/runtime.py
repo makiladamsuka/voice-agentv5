@@ -382,6 +382,41 @@ class OfflineVoiceRuntime:
         if intent:
             print(f"\n✅ Match Found! Action: {intent['action']}")
             reply_text = intent.get("response_text", "")
+            action = intent.get("action", {})
+            
+            # Dynamic wayfinding integration for offline runtime
+            if action.get("action") == "navigate" and action.get("destination"):
+                try:
+                    from voice.wayfinding import Wayfinder
+                    if not hasattr(self, "_wayfinder"):
+                        self._wayfinder = Wayfinder()
+                    result = self._wayfinder.find_path(action["destination"])
+                    if result and "directions" in result:
+                        reply_text = result["directions"]
+                        action = {
+                            "action": "navigate",
+                            "destination": result["destination"],
+                            "floor": result.get("floor", "floor_1"),
+                            "path": result["path_coords"],
+                            "path_ids": result.get("path_ids", []),
+                            "directions": result["directions"],
+                            "nodes": [
+                                {
+                                    "id": n["id"],
+                                    "label": n["label"],
+                                    "type": n.get("type", "room"),
+                                    "world": n["world"],
+                                    "building": n.get("building"),
+                                    "size": n.get("size", [1, 1, 1]),
+                                    "floor": n.get("floor", result.get("floor", "floor_1")),
+                                }
+                                for n in result["nodes"]
+                            ],
+                            "buildings": result["buildings"],
+                        }
+                except Exception as exc:
+                    print(f"⚠️ Offline dynamic wayfinding failed: {exc}")
+
             write_conv_emotion(self.bb, reply_text, is_agent=True, log_prefix="Vader NLU")
 
             # 2. Write UI Action to Blackboard (Frontend updates screen instantly)
@@ -389,20 +424,20 @@ class OfflineVoiceRuntime:
                 conv_state="speaking", 
                 agent_speaking=True,
                 agent_text=reply_text,
-                current_action=intent.get("action", {})
+                current_action=action
             )
             
-            # 3. Play Pre-Recorded Audio (Zero latency)
+            # 3. Play Pre-Recorded Audio (Zero latency) - only if not navigate (since navigate has dynamic speech)
             audio_file = intent.get("audio_file")
-            audio_path = APP_DIR / "assets" / "audio_cache" / audio_file if audio_file else None
+            audio_path = APP_DIR / "assets" / "audio_cache" / audio_file if (audio_file and action.get("action") != "navigate") else None
             
             if audio_path and audio_path.exists():
                 print(f"🔊 Playing audio: {audio_file}")
                 played = play_audio(audio_path)
                 if not played:
-                    print(f"🔊 [Audio Fallback] {intent['response_text']}")
+                    print(f"🔊 [Audio Fallback] {reply_text}")
             else:
-                print(f"🔊 [Audio Playback] {intent['response_text']}")
+                print(f"🔊 [Audio Playback] {reply_text}")
                 
         else:
             print("\n❌ No match found. (Out of Domain)")

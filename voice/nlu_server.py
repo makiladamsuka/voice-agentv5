@@ -95,6 +95,11 @@ async def _voice_ws_endpoint(websocket) -> None:
     """
     await websocket.accept()
     log.info("Browser connected to NLU voice server.")
+    
+    speculative_cache = {}
+    
+    def _normalize_text(t: str) -> str:
+        return t.lower().strip(" \t\r\n.,?!;:")
 
     if _bb is not None:
         _bb.write(voice_session_active=True, conv_state="listening")
@@ -107,6 +112,18 @@ async def _voice_ws_endpoint(websocket) -> None:
 
             if msg_type == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
+                continue
+
+            if msg_type == "speculative_transcript":
+                user_text = msg.get("text", "").strip()
+                if user_text:
+                    norm_text = _normalize_text(user_text)
+                    runtime = _get_runtime()
+                    loop = asyncio.get_running_loop()
+                    result = await loop.run_in_executor(
+                        None, _match_intent, runtime, user_text
+                    )
+                    speculative_cache[norm_text] = result
                 continue
 
             if msg_type == "transcript":
@@ -125,12 +142,25 @@ async def _voice_ws_endpoint(websocket) -> None:
                     json.dumps({"type": "state", "conv_state": "thinking"})
                 )
 
-                # Run NLU in a thread so we don't block the asyncio event loop
-                runtime = _get_runtime()
-                loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(
-                    None, _match_intent, runtime, user_text
-                )
+                norm_text = _normalize_text(user_text)
+                result = speculative_cache.pop(norm_text, None)
+                if not result:
+                    for cached_norm, cached_res in list(speculative_cache.items()):
+                        if cached_norm in norm_text or norm_text in cached_norm:
+                            result = cached_res
+                            break
+                    speculative_cache.clear()
+
+                if result:
+                    log.info("  [NLU] Speculative cache hit!")
+                    print("  [NLU] Speculative cache hit!")
+                else:
+                    # Run NLU in a thread so we don't block the asyncio event loop
+                    runtime = _get_runtime()
+                    loop = asyncio.get_running_loop()
+                    result = await loop.run_in_executor(
+                        None, _match_intent, runtime, user_text
+                    )
 
                 print(
                     f"[NLU] Reply: '{result.get('reply_text', '')[:80]}' "
@@ -187,6 +217,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                 )
 
             elif msg_type == "user_speaking":
+                speculative_cache.clear()
                 # Browser VAD detected speech start — update robot face
                 if _bb is not None:
                     _bb.write(conv_state="listening", user_speaking=True)

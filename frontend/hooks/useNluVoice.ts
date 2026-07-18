@@ -103,6 +103,10 @@ export function useNluVoice({
   const pendingTranscriptRef = useRef("");
   /** Avoid double-sending the same utterance. */
   const sentUtteranceRef = useRef(false);
+  const resumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dgKeepAliveIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startMicCaptureRef = useRef<() => Promise<void>>(null as any);
+  const eventKeywordsRef = useRef<string[]>([]);
 
   const apiKey =
     deepgramApiKey ?? process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY ?? "";
@@ -123,6 +127,10 @@ export function useNluVoice({
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
+    }
+    if (resumeTimeoutRef.current) {
+      clearTimeout(resumeTimeoutRef.current);
+      resumeTimeoutRef.current = null;
     }
     if (
       nluWs.current?.readyState === WebSocket.OPEN &&
@@ -150,8 +158,9 @@ export function useNluVoice({
       setVoiceState("speaking");
       stopCurrentAudio();
 
+      const backendHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
       const resolvedUrl = audioUrl
-        ? `http://localhost:8080${audioUrl}`
+        ? `http://${backendHost}:8080${audioUrl}`
         : null;
 
       // While the robot talks, stop feeding the mic to Deepgram — otherwise
@@ -159,7 +168,13 @@ export function useNluVoice({
       const resumeAfter = () => {
         sentUtteranceRef.current = false;
         pendingTranscriptRef.current = "";
-        setVoiceState("listening");
+        if (resumeTimeoutRef.current) {
+          clearTimeout(resumeTimeoutRef.current);
+        }
+        resumeTimeoutRef.current = setTimeout(() => {
+          setVoiceState("listening");
+          resumeTimeoutRef.current = null;
+        }, 800); // 800ms guard to prevent audio tail-echo from triggering VAD
       };
 
       if (resolvedUrl) {
@@ -198,27 +213,13 @@ export function useNluVoice({
       }
 
       try {
-        const response = await fetch("/api/tts", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ text: replyText }),
-        });
-        if (!response.ok) {
-          throw new Error(`Deepgram TTS error: ${response.status}`);
-        }
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
+        const url = `/api/tts?text=${encodeURIComponent(replyText)}`;
         const audio = new Audio(url);
         audioRef.current = audio;
         await audio.play();
         sendPlaybackStart(utteranceId ?? "");
         await new Promise<void>((resolve) => {
-          audio.onended = () => {
-            URL.revokeObjectURL(url);
-            resolve();
-          };
+          audio.onended = () => resolve();
           audio.onerror = () => resolve();
         });
       } catch (e) {
@@ -294,6 +295,16 @@ export function useNluVoice({
       // Keep latest interim for UtteranceEnd fallback; show live text via pending
       pendingTranscriptRef.current = transcript;
 
+      // Speculative intent: send intermediate transcript if not speech_final
+      if (!data.speech_final && !sentUtteranceRef.current && transcript.trim().length > 3) {
+        if (nluWs.current?.readyState === WebSocket.OPEN) {
+          nluWs.current.send(JSON.stringify({
+            type: "speculative_transcript",
+            text: transcript.trim()
+          }));
+        }
+      }
+
       // Endpointing: speech_final === end of spoken turn
       if (data.speech_final && !sentUtteranceRef.current) {
         console.log(`[STT] speech_final: "${transcript}"`);
@@ -305,9 +316,9 @@ export function useNluVoice({
     [sendTranscript, setVoiceState],
   );
 
-  const openDeepgramStream = useCallback(async (): Promise<void> => {
+  const openDeepgramStream = useCallback((): Promise<void> => {
     if (!apiKey) {
-      throw new Error("Missing Deepgram API key");
+      return Promise.reject(new Error("Missing Deepgram API key"));
     }
     if (dgWs.current) {
       try {
@@ -321,38 +332,15 @@ export function useNluVoice({
     // Deepgram's own VAD + endpointing — no Silero / ONNX in the browser.
     const params = new URLSearchParams({
       model: "nova-3",
-      language: "en-IN", // Highly accurate for Sri Lankan / South Asian accents
       smart_format: "true",
       interim_results: "true",
       vad_events: "true",
-      endpointing: "500", // Increased from 300ms to prevent cutting off words during pauses
+      endpointing: "300", // Fast response time
       utterance_end_ms: "1000",
     });
 
     const cleanKw = (text: string) => 
       text.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
-
-    let eventKeywords: string[] = [];
-    try {
-      const res = await fetch("/api/upload-status");
-      const data = await res.json();
-      if (data.allFiles) {
-        eventKeywords = data.allFiles
-          .map((f: any) => f.extracted?.title)
-          .filter(Boolean)
-          .map((title: string) => {
-            const cleaned = cleanKw(title);
-            // Deepgram rejects keyterms > 40 chars, and very short ones might be invalid
-            if (!cleaned || cleaned.length < 3 || cleaned.length > 39) return null;
-            return cleaned;
-          })
-          .filter(Boolean) as string[];
-          
-        eventKeywords = eventKeywords.slice(0, 80);
-      }
-    } catch (e) {
-      console.warn("Failed to fetch dynamic event keywords", e);
-    }
 
     const baseKeywords = [
       "lab 8",
@@ -368,7 +356,7 @@ export function useNluVoice({
 
     const rawDomainKeywords = [
       ...baseKeywords.map(k => cleanKw(k)),
-      ...eventKeywords,
+      ...eventKeywordsRef.current,
     ];
     
     // Deduplicate! Deepgram might 400 if the same keyterm is passed multiple times
@@ -395,6 +383,15 @@ export function useNluVoice({
         settled = true;
         clearTimeout(timer);
         console.log("[NluVoice] Deepgram connected.");
+
+        // Start KeepAlive heartbeat (every 4s) to prevent Deepgram from dropping idle connections
+        if (dgKeepAliveIntervalRef.current) clearInterval(dgKeepAliveIntervalRef.current);
+        dgKeepAliveIntervalRef.current = setInterval(() => {
+          if (dgWs.current?.readyState === WebSocket.OPEN) {
+            dgWs.current.send(JSON.stringify({ type: "KeepAlive" }));
+          }
+        }, 4000);
+
         resolve();
       };
 
@@ -406,6 +403,10 @@ export function useNluVoice({
 
       dg.onerror = (e) => {
         console.error("[Deepgram STT] WebSocket error:", e);
+        if (dgKeepAliveIntervalRef.current) {
+          clearInterval(dgKeepAliveIntervalRef.current);
+          dgKeepAliveIntervalRef.current = null;
+        }
         if (!settled) {
           settled = true;
           clearTimeout(timer);
@@ -415,25 +416,59 @@ export function useNluVoice({
 
       dg.onclose = () => {
         console.log("[NluVoice] Deepgram disconnected.");
+        if (dgKeepAliveIntervalRef.current) {
+          clearInterval(dgKeepAliveIntervalRef.current);
+          dgKeepAliveIntervalRef.current = null;
+        }
+        if (isActiveRef.current) {
+          console.log("[NluVoice] Reconnecting Deepgram stream...");
+          setTimeout(async () => {
+            try {
+              await openDeepgramStream();
+              await startMicCaptureRef.current?.();
+              console.log("[NluVoice] Deepgram stream successfully reconnected.");
+            } catch (e) {
+              console.error("[NluVoice] Deepgram reconnect failed:", e);
+            }
+          }, 2000);
+        }
       };
     });
   }, [apiKey, handleDeepgramMessage]);
 
   const startMicCapture = useCallback(async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
-    mediaStreamRef.current = stream;
+    let stream = mediaStreamRef.current;
+    const isStreamActive = stream && stream.getAudioTracks().some(track => track.readyState === "live");
+
+    if (!isStreamActive) {
+      if (audioCtxRef.current) {
+        try {
+          audioCtxRef.current.close();
+        } catch (e) {}
+        audioCtxRef.current = null;
+      }
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      mediaStreamRef.current = stream;
+    }
+
+    if (recorderRef.current) {
+      try {
+        recorderRef.current.stop();
+      } catch (e) {}
+      recorderRef.current = null;
+    }
 
     const mime = pickRecorderMime();
     const recorder = mime
-      ? new MediaRecorder(stream, { mimeType: mime })
-      : new MediaRecorder(stream);
+      ? new MediaRecorder(stream!, { mimeType: mime })
+      : new MediaRecorder(stream!);
     recorderRef.current = recorder;
 
     recorder.ondataavailable = (event) => {
@@ -468,6 +503,7 @@ export function useNluVoice({
 
     // Volume Analysis
     try {
+      if (!stream) return;
       const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
       const actx = new AudioContext();
       audioCtxRef.current = actx;
@@ -519,6 +555,8 @@ export function useNluVoice({
 
   }, []);
 
+  startMicCaptureRef.current = startMicCapture;
+
   const connectNluServer = useCallback((): Promise<void> => {
     if (nluWs.current?.readyState === WebSocket.OPEN) {
       return Promise.resolve();
@@ -532,10 +570,12 @@ export function useNluVoice({
       nluWs.current = null;
     }
 
-    console.log(`[NluVoice] Connecting to NLU server: ${nluServerUrl}`);
+    const backendHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
+    const resolvedNluUrl = nluServerUrl.replace("localhost", backendHost).replace("127.0.0.1", backendHost);
+    console.log(`[NluVoice] Connecting to NLU server: ${resolvedNluUrl}`);
 
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(nluServerUrl);
+      const ws = new WebSocket(resolvedNluUrl);
       nluWs.current = ws;
       let settled = false;
 
@@ -706,6 +746,10 @@ export function useNluVoice({
     mediaStreamRef.current = null;
 
     // Ask Deepgram to flush, then close
+    if (dgKeepAliveIntervalRef.current) {
+      clearInterval(dgKeepAliveIntervalRef.current);
+      dgKeepAliveIntervalRef.current = null;
+    }
     try {
       if (dgWs.current?.readyState === WebSocket.OPEN) {
         dgWs.current.send(JSON.stringify({ type: "CloseStream" }));
@@ -744,6 +788,34 @@ export function useNluVoice({
     window.addEventListener("nlu:inject_transcript", onInject);
     return () => window.removeEventListener("nlu:inject_transcript", onInject);
   }, [sendTranscript]);
+
+  useEffect(() => {
+    const fetchKeywords = async () => {
+      try {
+        const res = await fetch("/api/upload-status");
+        const data = await res.json();
+        if (data.allFiles) {
+          const cleanKw = (text: string) => 
+            text.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+          const kws = data.allFiles
+            .map((f: any) => f.extracted?.title)
+            .filter(Boolean)
+            .map((title: string) => {
+              const cleaned = cleanKw(title);
+              if (!cleaned || cleaned.length < 3 || cleaned.length > 39) return null;
+              return cleaned;
+            })
+            .filter(Boolean) as string[];
+          eventKeywordsRef.current = kws.slice(0, 80);
+        }
+      } catch (e) {
+        console.warn("Failed to fetch dynamic event keywords on mount", e);
+      }
+    };
+    if (apiKey) {
+      void fetchKeywords();
+    }
+  }, [apiKey]);
 
   return {
     state,

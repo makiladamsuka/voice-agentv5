@@ -239,31 +239,41 @@ class Wayfinder:
 
     def _directions(self, path_ids: list[str], dest_label: str) -> str:
         if len(path_ids) < 2: return f"You are already at {dest_label}."
-        steps, prev_bld, prev_floor, cooldown = [], None, None, 0
-        for i, nid in enumerate(path_ids):
-            n = self.nodes[nid]
-            bld, floor = n.get("building",""), n.get("floor","")
-            if prev_bld and bld != prev_bld:
-                b_old = self.buildings.get(prev_bld,{}).get("name", prev_bld)
-                b_new = self.buildings.get(bld,{}).get("name", bld)
-                steps.append(f"Walk from {b_old} to {b_new}"); cooldown = 3
-            prev_bld = bld
-            if prev_floor and floor != prev_floor:
-                fn = floor.replace("floor_",""); fo = prev_floor.replace("floor_","")
-                verb = "up" if fn > fo else "down"
-                via  = "elevator" if "elevator" in n.get("label","").lower() else "staircase"
-                steps.append(f"Take the {via} {verb} to Floor {fn}"); cooldown = 3
-            prev_floor = floor
-            if 0 < i < len(path_ids)-1 and cooldown <= 0:
-                p1 = self.nodes[path_ids[i-1]]["world"]
-                p2 = n["world"]
-                p3 = self.nodes[path_ids[i+1]]["world"]
-                ang = self._angle(p1, p2, p3)
-                if abs(ang) > 38:
-                    steps.append("Turn left" if ang < 0 else "Turn right"); cooldown = 2
-            if cooldown > 0: cooldown -= 1
-        steps.append(f"Arrive at {dest_label}")
-        return ".\n".join(steps) + "."
+        
+        dest_node = self.nodes[path_ids[-1]]
+        dest_floor = dest_node.get("floor", "floor_1")
+        floor_num = int(dest_floor.replace("floor_", ""))
+        
+        if floor_num == 1:
+            floor_str = "1st"
+        elif floor_num == 2:
+            floor_str = "2nd"
+        elif floor_num == 3:
+            floor_str = "3rd"
+        elif floor_num == 4:
+            floor_str = "4th"
+        else:
+            floor_str = f"{floor_num}th"
+
+        dest_bld = dest_node.get("building", "")
+        if dest_bld == "building_2":
+            building_str = "the new building"
+        elif dest_bld == "building_1":
+            building_str = "Building 1"
+        elif dest_bld:
+            building_str = self.buildings.get(dest_bld, {}).get("name", dest_bld).replace("_", " ").title()
+        else:
+            building_str = "the building"
+
+        x_val = dest_node.get("x", 0)
+        if x_val < -1:
+            side = "on the left"
+        elif x_val > 1:
+            side = "on the right"
+        else:
+            side = "all the way in"
+
+        return f"It is on the {floor_str} floor of {building_str}, {side}."
 
     # ── Public API ─────────────────────────────────────────────────────────
 

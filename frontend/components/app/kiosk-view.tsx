@@ -115,7 +115,8 @@ function KioskViewNlu() {
   }, []);
 
   useEffect(() => {
-    fetch("http://127.0.0.1:8765/health")
+    const backendHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
+    fetch(`http://${backendHost}:8765/health`)
       .then((r) => r.json())
       .then((j) => console.log("[KioskNlu] NLU health:", j))
       .catch((e) => console.error("[KioskNlu] NLU health failed:", e));
@@ -838,7 +839,7 @@ function KioskViewUI({
                         <div className="font-semibold text-[15px] leading-relaxed">
                           {talkCaption.text.includes("\n") || talkCaption.text.includes(", then ") ? (
                             <ul className="list-disc pl-5 space-y-1">
-                              {talkCaption.text.split(/(?:\.\n|, then )/).map((step, i) => {
+                              {talkCaption.text.split(/(?:\.\n|, then )/).map((step: string, i: number) => {
                                 const clean = step.trim().replace(/\.$/, "");
                                 return clean ? <li key={i}>{clean}</li> : null;
                               })}
@@ -887,7 +888,7 @@ function KioskViewUI({
                         <div className="font-semibold text-[15px] leading-relaxed">
                           {talkCaption.text.includes("\n") || talkCaption.text.includes(", then ") ? (
                             <ul className="list-disc pl-5 space-y-1">
-                              {talkCaption.text.split(/(?:\.\n|, then )/).map((step, i) => {
+                              {talkCaption.text.split(/(?:\.\n|, then )/).map((step: string, i: number) => {
                                 const clean = step.trim().replace(/\.$/, "");
                                 return clean ? <li key={i}>{clean}</li> : null;
                               })}

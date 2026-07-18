@@ -169,7 +169,7 @@ class CampusAgent(Agent, TimeTools, SearchTools, AppearanceTools):
     async def get_campus_directions(
         self, start_location: str, destination: str, context: RunContext
     ) -> str:
-        """Gives walking directions between two campus locations using the map graph."""
+        """Gives walking directions between two campus locations. Rephrase the raw turn-by-turn steps into a simple, natural, human-friendly summary stating the target floor and general area (e.g. 'It's on the 4th floor, just left of the corridor'). Do not recite robotic turn lists."""
         return await self.content_tools.get_campus_directions(
             start_location, destination, context
         )

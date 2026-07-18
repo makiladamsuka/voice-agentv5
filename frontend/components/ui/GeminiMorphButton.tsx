@@ -80,6 +80,13 @@ export function GeminiMorphButton({
     segIdx.current = 0;
     segStart.current = 0;
 
+    // Set initial path immediately to prevent blank SVG flash during mount
+    const initialKey = SEQUENCE[0];
+    const initialD = buildPath(SHAPES[initialKey], 38, 40, 40);
+    if (mainRef.current) {
+      mainRef.current.setAttribute("d", initialD);
+    }
+
     const tick = (now: number) => {
       if (segStart.current === 0) segStart.current = now;
 
@@ -113,7 +120,7 @@ export function GeminiMorphButton({
         key="morph"
         onClick={onClick}
         initial={{ scale: 0.72 }}
-        animate={{ scale: 1 + volume * 0.8 }}
+        animate={{ scale: 1 + volume * 0.3 }}
         whileTap={{ scale: 0.92 }}
         transition={M3_POP}
         className="relative z-10 rounded-full flex items-center justify-center cursor-pointer"
@@ -131,7 +138,7 @@ export function GeminiMorphButton({
             zIndex: -1,
           }}
         >
-          <path ref={mainRef} d={buildPath(SHAPES.scallop8, 38, 40, 40)} />
+          <path ref={mainRef} />
         </svg>
         <span className="material-symbols-outlined text-3xl text-white dark:text-black relative z-10">
           mic

@@ -240,6 +240,11 @@ class Wayfinder:
     def _directions(self, path_ids: list[str], dest_label: str) -> str:
         if len(path_ids) < 2: return f"You are already at {dest_label}."
         
+        import random
+        
+        start_node = self.nodes[path_ids[0]]
+        start_floor = start_node.get("floor", "floor_1")
+        
         dest_node = self.nodes[path_ids[-1]]
         dest_floor = dest_node.get("floor", "floor_1")
         floor_num = int(dest_floor.replace("floor_", ""))
@@ -273,7 +278,20 @@ class Wayfinder:
         else:
             side = "all the way in"
 
-        return f"It is on the {floor_str} floor of {building_str}, {side}."
+        if start_floor == dest_floor:
+            responses = [
+                f"It is right here on this floor, {side}.",
+                f"You're on the right floor! Just look {side}.",
+                f"It is on the same floor, {side}."
+            ]
+            return random.choice(responses)
+        else:
+            responses = [
+                f"It is on the {floor_str} floor of {building_str}, {side}.",
+                f"You'll need to go to the {floor_str} floor of {building_str}. It will be {side}.",
+                f"Head over to the {floor_str} floor of {building_str}, it's {side}."
+            ]
+            return random.choice(responses)
 
     # ── Public API ─────────────────────────────────────────────────────────
 

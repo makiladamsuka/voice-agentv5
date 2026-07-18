@@ -294,7 +294,7 @@ export default function NavigationMap({
           className="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-20 w-[108px] max-h-[70vh] overflow-y-auto pointer-events-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="text-[11px] font-bold text-center uppercase tracking-wider text-[var(--kiosk-muted,#6b7280)] py-1">
+          <div className="text-[11px] font-bold text-center uppercase tracking-wider text-white/70 py-1">
             Floors
           </div>
           {availableFloors.map((f, idx) => {
@@ -320,10 +320,10 @@ export default function NavigationMap({
                   e.stopPropagation();
                   setCurrentFloor(f as string);
                 }}
-                className={`w-full min-h-[52px] px-3 py-2.5 rounded-2xl font-bold flex flex-col items-center justify-center border transition-colors ${
+                className={`w-full min-h-[52px] px-3 py-2.5 rounded-3xl font-bold flex flex-col items-center justify-center border transition-colors shadow-lg backdrop-blur-md ${
                   active
-                    ? "bg-[var(--kiosk-brand,#2563eb)] text-[var(--kiosk-brand-fg,#fff)] border-[var(--kiosk-brand,#2563eb)]"
-                    : "bg-[var(--kiosk-surface,#fff)] text-[var(--kiosk-text,#111827)] border-[var(--kiosk-border,#e5e7eb)]"
+                    ? "bg-blue-500/80 text-white border-blue-400/30"
+                    : "bg-black/60 text-white border-white/10"
                 }`}
               >
                 <span className="text-[14px] leading-tight">
@@ -332,7 +332,7 @@ export default function NavigationMap({
                 {badge ? (
                   <span
                     className={`text-[10px] mt-0.5 font-semibold leading-tight ${
-                      active ? "opacity-85" : "text-[var(--kiosk-muted,#6b7280)]"
+                      active ? "opacity-85 text-white" : "opacity-70 text-white"
                     }`}
                   >
                     {badge}

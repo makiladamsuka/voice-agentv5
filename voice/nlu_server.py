@@ -262,6 +262,16 @@ def _match_intent(runtime, user_text: str) -> dict:
         }, None)
 
     intent = runtime.matcher.match(user_text, domain=domain)
+    
+    # Fallback for STT mishearings: If the strict regex router sent it to the wrong domain,
+    # the vector database will return no matches. We trust ChromaDB to find it in other domains.
+    if not intent:
+        for fallback_domain in ["navigate", "events", "smalltalk"]:
+            if fallback_domain != domain:
+                intent = runtime.matcher.match(user_text, domain=fallback_domain)
+                if intent:
+                    log.info(f"  [Fallback] AI matched in '{fallback_domain}' domain despite missing trigger words!")
+                    break
 
     if intent:
         action = intent.get("action", {}) or {}

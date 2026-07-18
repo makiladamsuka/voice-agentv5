@@ -246,13 +246,13 @@ class Wayfinder:
             if prev_bld and bld != prev_bld:
                 b_old = self.buildings.get(prev_bld,{}).get("name", prev_bld)
                 b_new = self.buildings.get(bld,{}).get("name", bld)
-                steps.append(f"walk from {b_old} to {b_new}"); cooldown = 3
+                steps.append(f"Walk from {b_old} to {b_new}"); cooldown = 3
             prev_bld = bld
             if prev_floor and floor != prev_floor:
                 fn = floor.replace("floor_",""); fo = prev_floor.replace("floor_","")
                 verb = "up" if fn > fo else "down"
                 via  = "elevator" if "elevator" in n.get("label","").lower() else "staircase"
-                steps.append(f"take the {via} {verb} to Floor {fn}"); cooldown = 3
+                steps.append(f"Take the {via} {verb} to Floor {fn}"); cooldown = 3
             prev_floor = floor
             if 0 < i < len(path_ids)-1 and cooldown <= 0:
                 p1 = self.nodes[path_ids[i-1]]["world"]
@@ -260,10 +260,10 @@ class Wayfinder:
                 p3 = self.nodes[path_ids[i+1]]["world"]
                 ang = self._angle(p1, p2, p3)
                 if abs(ang) > 38:
-                    steps.append("turn left" if ang < 0 else "turn right"); cooldown = 2
+                    steps.append("Turn left" if ang < 0 else "Turn right"); cooldown = 2
             if cooldown > 0: cooldown -= 1
-        steps.append(f"arrive at {dest_label}")
-        return ", then ".join(steps).capitalize() + "."
+        steps.append(f"Arrive at {dest_label}")
+        return ".\n".join(steps) + "."
 
     # ── Public API ─────────────────────────────────────────────────────────
 

@@ -217,7 +217,6 @@ function KioskViewUI({
     string | null
   >(null);
   const [filteredLocations, setFilteredLocations] = useState<any[]>([]);
-  const [isNavLoading, setIsNavLoading] = useState(false);
   const [exploreMapData, setExploreMapData] = useState<{
     nodes: any[];
     buildings: any;
@@ -719,7 +718,6 @@ function KioskViewUI({
 
   const handleNavigateToLocation = async (destination: string) => {
     setLocationsModalCategory(null);
-    setIsNavLoading(true);
     setShowExploreMap(false);
     try {
       const res = await fetch(
@@ -751,8 +749,6 @@ function KioskViewUI({
       }
     } catch (e) {
       console.error("Failed to fetch navigation:", e);
-    } finally {
-      setIsNavLoading(false);
     }
   };
 
@@ -790,7 +786,7 @@ function KioskViewUI({
   };
 
   const showMapCanvas = Boolean(navData) || showExploreMap;
-  const mountMap = mode === "maps" && (showMapCanvas || isNavLoading);
+  const mountMap = mode === "maps" && showMapCanvas;
 
   return (
     <div
@@ -833,15 +829,28 @@ function KioskViewUI({
           {/* NAV / EXPLORE MAP overlay */}
           {mode === "maps" && mountMap ? (
             <div className={`flex-1 min-h-0 ${PANEL} overflow-hidden relative bg-[var(--kiosk-surface-muted)]`}>
-              {isNavLoading ? (
-                <div className="flex h-full items-center justify-center flex-col gap-3 text-[var(--kiosk-text)]">
-                  <span className="material-symbols-outlined animate-spin text-5xl text-[var(--kiosk-brand)]">
-                    navigation
-                  </span>
-                  <p className="font-semibold text-[16px]">Calculating route…</p>
-                </div>
-              ) : navData ? (
+              {navData ? (
                 <>
+                  {/* Floating Transcript for Navigation Map Mode */}
+                  {(isConnected || isThinking || talkCaption.text !== "Tap the mic to talk") && (
+                    <div className="absolute top-4 right-20 flex flex-col items-end z-40 pointer-events-none">
+                      <div className="bg-black/60 backdrop-blur-md text-white px-5 py-4 rounded-3xl text-left max-w-sm shadow-xl border border-white/10">
+                        <div className="font-semibold text-[15px] leading-relaxed">
+                          {talkCaption.text.includes("\n") || talkCaption.text.includes(", then ") ? (
+                            <ul className="list-disc pl-5 space-y-1">
+                              {talkCaption.text.split(/(?:\.\n|, then )/).map((step, i) => {
+                                const clean = step.trim().replace(/\.$/, "");
+                                return clean ? <li key={i}>{clean}</li> : null;
+                              })}
+                            </ul>
+                          ) : (
+                            talkCaption.text
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
                   <PopButton
                     onClick={closeNav}
                     aria-label="Close"
@@ -871,6 +880,26 @@ function KioskViewUI({
                 </>
               ) : showExploreMap && exploreMapData ? (
                 <>
+                  {/* Floating Transcript for Explore Map Mode */}
+                  {(isConnected || isThinking || talkCaption.text !== "Tap the mic to talk") && (
+                    <div className="absolute top-4 right-20 flex flex-col items-end z-40 pointer-events-none">
+                      <div className="bg-black/60 backdrop-blur-md text-white px-5 py-4 rounded-3xl text-left max-w-sm shadow-xl border border-white/10">
+                        <div className="font-semibold text-[15px] leading-relaxed">
+                          {talkCaption.text.includes("\n") || talkCaption.text.includes(", then ") ? (
+                            <ul className="list-disc pl-5 space-y-1">
+                              {talkCaption.text.split(/(?:\.\n|, then )/).map((step, i) => {
+                                const clean = step.trim().replace(/\.$/, "");
+                                return clean ? <li key={i}>{clean}</li> : null;
+                              })}
+                            </ul>
+                          ) : (
+                            talkCaption.text
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <PopButton
                     onClick={() => setShowExploreMap(false)}
                     aria-label="Close map"
@@ -1067,7 +1096,7 @@ function KioskViewUI({
                   </span>
                 </PopButton>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-28">
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-28 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {categoryEventPosts.length === 0 ? (
                   <div className="h-full min-h-[200px] flex flex-col items-center justify-center gap-2 opacity-50">
                     <span className="material-symbols-outlined text-4xl">
@@ -1086,7 +1115,7 @@ function KioskViewUI({
                             key={post.id}
                           type="button"
                           onClick={() => handlePosterTap(post)}
-                          className="text-left rounded-2xl overflow-hidden border border-[var(--kiosk-border)] bg-[var(--kiosk-surface-muted)] flex flex-col min-h-[200px]"
+                          className="text-left rounded-2xl overflow-hidden border border-[var(--kiosk-border)] bg-[var(--kiosk-surface-muted)] flex flex-col min-h-[200px] h-full"
                           >
                           <div className="relative w-full aspect-[4/3] shrink-0 overflow-hidden bg-[var(--kiosk-border)]">
                                 <img
@@ -1094,9 +1123,7 @@ function KioskViewUI({
                               alt=""
                               className="w-full h-full object-cover"
                                 />
-                                <div
-                              className={`absolute top-0 left-0 right-0 h-1 ${meta.accent}`}
-                                />
+
                               </div>
                           <div className="flex-1 p-3 min-w-0 flex flex-col">
                                   {post.extracted_date && (
@@ -1326,9 +1353,7 @@ function KioskViewUI({
                                 alt=""
                                 className="w-full h-full object-cover min-h-[64px]"
                               />
-                              <div
-                                className={`absolute inset-y-0 left-0 w-1 ${meta.accent}`}
-                              />
+
                         </div>
                             <div className="flex-1 p-2.5 min-w-0">
                               <div className="flex items-center gap-1.5 mb-0.5">
@@ -1377,6 +1402,7 @@ function KioskViewUI({
               <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
                 <GeminiMorphButton
                   size={80}
+                  volume={agentState === "listening" ? maxVolume : 0}
                 isAnimating={
                   isConnecting ||
                   isAgentInitializing ||

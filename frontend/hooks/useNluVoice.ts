@@ -56,6 +56,7 @@ interface UseNluVoiceOptions {
   deepgramApiKey?: string;
   onResponse?: (response: NluResponse) => void;
   onStateChange?: (state: NluVoiceState) => void;
+  onVolumeChange?: (volume: number) => void;
 }
 
 /** Prefer a MediaRecorder mime type the browser actually supports. */
@@ -81,6 +82,7 @@ export function useNluVoice({
   deepgramApiKey,
   onResponse,
   onStateChange,
+  onVolumeChange,
 }: UseNluVoiceOptions = {}) {
   const [state, setState] = useState<NluVoiceState>("idle");
   const [isActive, setIsActive] = useState(false);
@@ -91,6 +93,10 @@ export function useNluVoice({
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const volumeAnimRef = useRef<number | null>(null);
+  
   const stateRef = useRef<NluVoiceState>("idle");
   const isActiveRef = useRef(false);
   /** Last non-empty transcript for UtteranceEnd fallback. */
@@ -109,6 +115,9 @@ export function useNluVoice({
     },
     [onStateChange],
   );
+
+  const onVolumeChangeRef = useRef(onVolumeChange);
+  onVolumeChangeRef.current = onVolumeChange;
 
   const stopCurrentAudio = useCallback(() => {
     if (audioRef.current) {
@@ -189,17 +198,13 @@ export function useNluVoice({
       }
 
       try {
-        const response = await fetch(
-          "https://api.deepgram.com/v1/speak?model=aura-luna-en",
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Token ${apiKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ text: replyText }),
+        const response = await fetch("/api/tts", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
-        );
+          body: JSON.stringify({ text: replyText }),
+        });
         if (!response.ok) {
           throw new Error(`Deepgram TTS error: ${response.status}`);
         }
@@ -300,9 +305,9 @@ export function useNluVoice({
     [sendTranscript, setVoiceState],
   );
 
-  const openDeepgramStream = useCallback((): Promise<void> => {
+  const openDeepgramStream = useCallback(async (): Promise<void> => {
     if (!apiKey) {
-      return Promise.reject(new Error("Missing Deepgram API key"));
+      throw new Error("Missing Deepgram API key");
     }
     if (dgWs.current) {
       try {
@@ -316,12 +321,60 @@ export function useNluVoice({
     // Deepgram's own VAD + endpointing — no Silero / ONNX in the browser.
     const params = new URLSearchParams({
       model: "nova-3",
+      language: "en-IN", // Highly accurate for Sri Lankan / South Asian accents
       smart_format: "true",
       interim_results: "true",
       vad_events: "true",
-      endpointing: "300",
+      endpointing: "500", // Increased from 300ms to prevent cutting off words during pauses
       utterance_end_ms: "1000",
     });
+
+    const cleanKw = (text: string) => 
+      text.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+
+    let eventKeywords: string[] = [];
+    try {
+      const res = await fetch("/api/upload-status");
+      const data = await res.json();
+      if (data.allFiles) {
+        eventKeywords = data.allFiles
+          .map((f: any) => f.extracted?.title)
+          .filter(Boolean)
+          .map((title: string) => {
+            const cleaned = cleanKw(title);
+            // Deepgram rejects keyterms > 40 chars, and very short ones might be invalid
+            if (!cleaned || cleaned.length < 3 || cleaned.length > 39) return null;
+            return cleaned;
+          })
+          .filter(Boolean) as string[];
+          
+        eventKeywords = eventKeywords.slice(0, 80);
+      }
+    } catch (e) {
+      console.warn("Failed to fetch dynamic event keywords", e);
+    }
+
+    const baseKeywords = [
+      "lab 8",
+      "lab 7",
+      "deans office", // Removed apostrophe explicitly
+      "undergraduate department",
+      "lecture hall",
+      "front desk",
+      "nema",
+      "fit24",
+      "idealize uom"
+    ];
+
+    const rawDomainKeywords = [
+      ...baseKeywords.map(k => cleanKw(k)),
+      ...eventKeywords,
+    ];
+    
+    // Deduplicate! Deepgram might 400 if the same keyterm is passed multiple times
+    const uniqueKeywords = Array.from(new Set(rawDomainKeywords));
+    uniqueKeywords.forEach((kw) => params.append("keyterm", kw));
+
     const url = `wss://api.deepgram.com/v1/listen?${params}`;
     console.log("[NluVoice] Opening Deepgram stream (built-in VAD)…");
 
@@ -412,6 +465,58 @@ export function useNluVoice({
     // Small timeslice → low-latency chunks for Deepgram VAD
     recorder.start(250);
     console.log("[NluVoice] Mic capture started", mime ?? "(default mime)");
+
+    // Volume Analysis
+    try {
+      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+      const actx = new AudioContext();
+      audioCtxRef.current = actx;
+      const source = actx.createMediaStreamSource(stream);
+      const analyser = actx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+      
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      let lastCall = 0;
+      let smoothedVol = 0;
+      
+      const updateVolume = (now: number) => {
+        if (!isActiveRef.current) return;
+        
+        if (now - lastCall > 50) { // Limit to ~20fps
+          analyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+          }
+          const avg = sum / dataArray.length;
+          
+          let rawVol = 0;
+          // Noise Gate: Ignore ambient room noise and keyboard typing (typically avg < 15)
+          if (avg > 15) {
+            // Normalize volume relative to the threshold
+            rawVol = Math.min(1, (avg - 15) / 35);
+            // Boost lower talking volumes slightly
+            rawVol = Math.pow(rawVol, 0.8);
+          }
+          
+          // Apply fast-attack, slow-release smoothing to prevent UI thrashing
+          const smoothing = rawVol > smoothedVol ? 0.4 : 0.1;
+          smoothedVol = smoothedVol + (rawVol - smoothedVol) * smoothing;
+          
+          if (stateRef.current === "listening" && onVolumeChangeRef.current) {
+             onVolumeChangeRef.current(smoothedVol);
+          }
+          lastCall = now;
+        }
+        volumeAnimRef.current = requestAnimationFrame(updateVolume);
+      };
+      volumeAnimRef.current = requestAnimationFrame(updateVolume);
+    } catch(e) {
+      console.warn("AudioContext init failed", e);
+    }
+
   }, []);
 
   const connectNluServer = useCallback((): Promise<void> => {
@@ -586,6 +691,16 @@ export function useNluVoice({
       /* ignore */
     }
     recorderRef.current = null;
+
+    if (volumeAnimRef.current) {
+      cancelAnimationFrame(volumeAnimRef.current);
+      volumeAnimRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
+    analyserRef.current = null;
 
     mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
     mediaStreamRef.current = null;

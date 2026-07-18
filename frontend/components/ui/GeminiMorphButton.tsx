@@ -56,12 +56,14 @@ interface GeminiMorphButtonProps {
   isConnected: boolean;
   onClick: () => void;
   size?: number;
+  volume?: number;
 }
 
 export function GeminiMorphButton({
   isAnimating,
   onClick,
   size = 72,
+  volume = 0,
 }: GeminiMorphButtonProps) {
   const mainRef = useRef<SVGPathElement | null>(null);
   const animRef = useRef<number | null>(null);
@@ -111,7 +113,7 @@ export function GeminiMorphButton({
         key="morph"
         onClick={onClick}
         initial={{ scale: 0.72 }}
-        animate={{ scale: 1 }}
+        animate={{ scale: 1 + volume * 0.8 }}
         whileTap={{ scale: 0.92 }}
         transition={M3_POP}
         className="relative z-10 rounded-full flex items-center justify-center cursor-pointer"

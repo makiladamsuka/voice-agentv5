@@ -102,9 +102,9 @@ def get_time_reply() -> str:
 # minimum top-1/top-2 margin required when the two nearest hits belong to
 # DIFFERENT intents (ambiguity rejection).
 DOMAIN_THRESHOLDS = {
-    "events": 1.2,
-    "smalltalk": 1.4,
-    "navigate": 1.3,
+    "events": 0.8,
+    "smalltalk": 0.9,
+    "navigate": 0.75,
 }
 AMBIGUITY_MARGIN = 0.15
 
@@ -365,6 +365,19 @@ class OfflineVoiceRuntime:
 
         # 1. Match Intent instantly via ChromaDB
         intent = self.matcher.match(text)
+        
+        # 1b. Fallback for STT mishearings (e.g. heard "Jerry's" instead of "Where is")
+        # If the strict regex router sent it to the wrong domain, the vector database
+        # will return no matches. In that case, we trust the ChromaDB AI embeddings 
+        # to find it in the other domains.
+        if not intent:
+            original_domain = route_domain(text)
+            for fallback_domain in ["navigate", "events", "smalltalk"]:
+                if fallback_domain != original_domain:
+                    intent = self.matcher.match(text, domain=fallback_domain)
+                    if intent:
+                        print(f"  [Fallback] AI matched in '{fallback_domain}' domain despite missing trigger words!")
+                        break
         
         if intent:
             print(f"\n✅ Match Found! Action: {intent['action']}")

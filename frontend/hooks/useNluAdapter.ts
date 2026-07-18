@@ -143,6 +143,12 @@ export function useNluAdapter(): NluAdapter {
     deepgramApiKey: process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY,
     onResponse: handleResponse,
     onStateChange: handleStateChange,
+    onVolumeChange: (vol: number) => {
+      // Only update if we are listening (speaking is handled by the fake sine wave)
+      if (agentState === "listening") {
+        setMaxVolume(0.1 + vol * 0.9);
+      }
+    }
   });
 
   // Mirror the NLU transcript into the transcriptions array so the

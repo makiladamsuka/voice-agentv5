@@ -97,6 +97,7 @@ async def _voice_ws_endpoint(websocket) -> None:
     log.info("Browser connected to NLU voice server.")
     
     speculative_cache = {}
+    pending_ambiguity_category = None
     
     def _normalize_text(t: str) -> str:
         return t.lower().strip(" \t\r\n.,?!;:")
@@ -117,6 +118,8 @@ async def _voice_ws_endpoint(websocket) -> None:
             if msg_type == "speculative_transcript":
                 user_text = msg.get("text", "").strip()
                 if user_text:
+                    if pending_ambiguity_category:
+                        user_text = f"{pending_ambiguity_category} {user_text}"
                     norm_text = _normalize_text(user_text)
                     runtime = _get_runtime()
                     loop = asyncio.get_running_loop()
@@ -127,17 +130,22 @@ async def _voice_ws_endpoint(websocket) -> None:
                 continue
 
             if msg_type == "transcript":
-                user_text = msg.get("text", "").strip()
-                if not user_text:
+                original_text = msg.get("text", "").strip()
+                if not original_text:
                     continue
 
-                log.info(f"[NLU] Transcript: '{user_text}'")
-                print(f"[NLU] Transcript: '{user_text}'")
+                log.info(f"[NLU] Transcript: '{original_text}'")
+                print(f"[NLU] Transcript: '{original_text}'")
+
+                user_text = original_text
+                if pending_ambiguity_category:
+                    user_text = f"{pending_ambiguity_category} {original_text}"
+                    print(f"  [Context injected] Rewrote query to: '{user_text}'")
 
                 # Update blackboard — show "thinking" on robot face
                 if _bb is not None:
                     _bb.write(conv_state="thinking", user_speaking=False)
-                write_conv_emotion(_bb, user_text, is_agent=False, log_prefix="Vader NLU")
+                write_conv_emotion(_bb, original_text, is_agent=False, log_prefix="Vader NLU")
                 await websocket.send_text(
                     json.dumps({"type": "state", "conv_state": "thinking"})
                 )
@@ -161,6 +169,9 @@ async def _voice_ws_endpoint(websocket) -> None:
                     result = await loop.run_in_executor(
                         None, _match_intent, runtime, user_text
                     )
+
+                if result:
+                    pending_ambiguity_category = result.get("ambiguity_category")
 
                 print(
                     f"[NLU] Reply: '{result.get('reply_text', '')[:80]}' "
@@ -325,6 +336,7 @@ def _match_intent(runtime, user_text: str) -> dict:
             "reply_text": intent.get("response_text", ""),
             "audio_url": audio_url,
             "action": action,
+            "ambiguity_category": intent.get("ambiguity_category"),
         }, audio_file if audio_url else None)
 
     # No intent matched — return fallback

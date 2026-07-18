@@ -144,7 +144,11 @@ async def _voice_ws_endpoint(websocket) -> None:
                     result = await loop.run_in_executor(
                         None, _match_intent, runtime, user_text
                     )
-                    speculative_cache[norm_text] = result
+                    
+                    # Prevent caching fallbacks for partial transcripts!
+                    is_fallback = result and result.get("reply_text", "").startswith("I'm NEma")
+                    if result and not is_fallback:
+                        speculative_cache[norm_text] = result
                 continue
 
             if msg_type == "transcript":
@@ -169,13 +173,11 @@ async def _voice_ws_endpoint(websocket) -> None:
                 )
 
                 norm_text = _normalize_text(user_text)
+                
+                # Only use exact matches for speculative cache to avoid substring bugs
+                # (e.g., 'laboratory 1' in 'laboratory 10')
                 result = speculative_cache.pop(norm_text, None)
-                if not result:
-                    for cached_norm, cached_res in list(speculative_cache.items()):
-                        if cached_norm in norm_text or norm_text in cached_norm:
-                            result = cached_res
-                            break
-                    speculative_cache.clear()
+                speculative_cache.clear()
 
                 if result:
                     log.info("  [NLU] Speculative cache hit!")

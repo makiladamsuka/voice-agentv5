@@ -22,6 +22,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import hashlib
+import urllib.request
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -330,11 +333,15 @@ def _match_intent(runtime, user_text: str) -> dict:
     # ── Tool routes (dynamic replies, no retrieval) ──────────────────────────
     domain = route_domain(user_text)
     if domain == "tool_time":
-        return _with_audio_path({
-            "reply_text": get_time_reply(),
-            "audio_url": None,  # browser Deepgram TTS speaks the dynamic text
+        reply_text = get_time_reply()
+        audio_file = _generate_dynamic_tts(reply_text)
+        audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
+        return {
+            "reply_text": reply_text,
+            "audio_url": audio_url,
+            "audio_path": str(APP_DIR / "assets" / "audio_cache" / audio_file) if audio_file else None,
             "action": {},
-        }, None)
+        }
 
     intent = runtime.matcher.match(user_text, domain=domain)
     
@@ -356,6 +363,11 @@ def _match_intent(runtime, user_text: str) -> dict:
             return _navigate_response(action["destination"])
 
         audio_file = intent.get("audio_file")
+        
+        # Generate dynamic TTS for intents lacking precompiled audio (e.g., ambiguity prompts)
+        if not audio_file and intent.get("response_text"):
+            audio_file = _generate_dynamic_tts(intent["response_text"])
+            
         audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
 
         # Verify the cached file actually exists on disk
@@ -384,6 +396,38 @@ def _match_intent(runtime, user_text: str) -> dict:
         "audio_url": fallback_url,
         "action": {},
     }, fallback_audio if fallback_url else None)
+
+
+def _generate_dynamic_tts(text: str) -> str | None:
+    """Generate TTS synchronously and cache it, avoiding Next.js API overhead."""
+    filename = f"dyn_{hashlib.md5(text.encode()).hexdigest()[:10]}.mp3"
+    audio_base = APP_DIR / "assets" / "audio_cache"
+    output_path = audio_base / filename
+    
+    if output_path.exists():
+        return filename
+        
+    api_key = os.getenv("DEEPGRAM_API_KEY") or os.getenv("NEXT_PUBLIC_DEEPGRAM_API_KEY")
+    if not api_key:
+        log.warning("No Deepgram API key for dynamic TTS")
+        return None
+        
+    try:
+        url = "https://api.deepgram.com/v1/speak?model=aura-luna-en"
+        headers = {
+            "Authorization": f"Token {api_key}",
+            "Content-Type": "application/json"
+        }
+        data = json.dumps({"text": text}).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        
+        with urllib.request.urlopen(req, timeout=5.0) as response:
+            output_path.write_bytes(response.read())
+            
+        return filename
+    except Exception as e:
+        log.error(f"Dynamic TTS failed for text '{text}': {e}")
+        return None
 
 
 def _navigate_response(destination: str) -> dict:
@@ -431,9 +475,13 @@ def _navigate_response(destination: str) -> dict:
         for n in result["nodes"]
     ]
 
+    audio_file = _generate_dynamic_tts(result["directions"])
+    audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
+
     return {
         "reply_text": result["directions"],
-        "audio_url": None,  # spoken live via browser TTS so audio matches path
+        "audio_url": audio_url,
+        "audio_path": str(APP_DIR / "assets" / "audio_cache" / audio_file) if audio_file else None,
         "action": {
             "action": "navigate",
             "destination": result["destination"],

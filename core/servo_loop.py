@@ -730,7 +730,7 @@ class ServoLoop:
                 if not is_locked:
                     self._voice_locked = True
                     self.bb.write(voice_locked_on_face=True)
-                    print("\n[ServoLoop] Face is centered -> FREEZING MOTORS NOW (STOP)")
+                    print("\n\033[94m[ServoLoop] face detected\033[0m")
             elif not tracking_active:
                 if (now - self._last_face_ts) > 1.5:
                     if is_locked:

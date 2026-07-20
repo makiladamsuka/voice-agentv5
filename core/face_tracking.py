@@ -233,6 +233,11 @@ class FaceTracker:
             return False
         if not state.get("voice_session_active"):
             return False
+            
+        # Do not pause vision until we have found and locked onto a face
+        if not state.get("voice_locked_on_face", False):
+            return False
+
         if state.get("user_speaking") or state.get("agent_speaking"):
             return True
         return state.get("conv_state", "idle") in ("listening", "speaking", "nodding")
@@ -498,6 +503,7 @@ class FaceTracker:
                 "agent_speaking",
                 "conv_state",
                 "animation_override",
+                "voice_locked_on_face",
             )
 
             # optimize/cpu2: yield to AnimationEngine — skip camera capture

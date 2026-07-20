@@ -199,7 +199,7 @@ class MediaServer:
                     return
                     
                 if path == "/api/mic-clicked":
-                    print("[MediaServer] Received /api/mic-clicked !!")
+                    print("\033[91m[MediaServer] clickd mic, get the mic clicked\033[0m")
                     if media_server.blackboard is not None:
                         media_server.blackboard.write(voice_session_active=True)
                     self._json_response(200, {"success": True})

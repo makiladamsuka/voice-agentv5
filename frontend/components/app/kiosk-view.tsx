@@ -190,16 +190,17 @@ export function KioskView() {
 
   // Handle mic button press — show blob overlay while connecting
   const handleMicClick = useCallback(async () => {
+    const apiHost = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
     if (isConnected) {
       end();
-      try { fetch("http://127.0.0.1:8080/api/mic-aborted", { method: "POST" }); } catch (e) {}
+      try { fetch(`http://${apiHost}:8080/api/mic-aborted`, { method: "POST" }).catch(e => console.error("Mic abort failed:", e)); } catch (e) {}
       // Brief settle so the backend can release the previous job before a
       // quick re-press races the old room's cleanup.
       await new Promise((r) => setTimeout(r, 400));
       return;
     }
     setIsConnecting(true);
-    try { fetch("http://127.0.0.1:8080/api/mic-clicked", { method: "POST" }); } catch (e) {}
+    try { fetch(`http://${apiHost}:8080/api/mic-clicked`, { method: "POST" }).catch(e => console.error("Mic click failed:", e)); } catch (e) {}
     try {
       // start() resolves once the room connects; agent join can take longer.
       // Generous ceiling so slow token/room join on the Pi does not fake-fail
@@ -214,7 +215,7 @@ export function KioskView() {
     } catch (e) {
       console.error("Agent connection failed:", e);
       setIsConnecting(false);
-      try { fetch("http://127.0.0.1:8080/api/mic-aborted", { method: "POST" }); } catch (e) {}
+      try { fetch(`http://${apiHost}:8080/api/mic-aborted`, { method: "POST" }).catch(e => console.error("Mic abort failed:", e)); } catch (e) {}
     }
   }, [isConnected, startSession, end]);
 

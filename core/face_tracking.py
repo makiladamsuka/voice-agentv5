@@ -234,14 +234,12 @@ class FaceTracker:
         if not state.get("voice_session_active"):
             return False
             
-        # Once locked onto a face during a voice session, ALWAYS pause vision
-        # so the robot stops tracking entirely until the session ends.
+        # Only pause vision AFTER we have found and locked onto a face.
+        # This ensures we always identify a face before stopping the motors.
         if state.get("voice_locked_on_face", False):
             return True
-
-        if state.get("user_speaking") or state.get("agent_speaking"):
-            return True
-        return state.get("conv_state", "idle") in ("listening", "speaking", "nodding")
+            
+        return False
     
     def _detect_reversals(self, history: list[int]) -> tuple[int, float]:
         """Analyzes coordinate history for peak-to-peak swing counts (reversals) and amplitude.

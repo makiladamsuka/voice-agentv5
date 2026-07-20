@@ -234,9 +234,10 @@ class FaceTracker:
         if not state.get("voice_session_active"):
             return False
             
-        # Do not pause vision until we have found and locked onto a face
-        if not state.get("voice_locked_on_face", False):
-            return False
+        # Once locked onto a face during a voice session, ALWAYS pause vision
+        # so the robot stops tracking entirely until the session ends.
+        if state.get("voice_locked_on_face", False):
+            return True
 
         if state.get("user_speaking") or state.get("agent_speaking"):
             return True

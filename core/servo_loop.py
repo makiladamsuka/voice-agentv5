@@ -717,6 +717,7 @@ class ServoLoop:
         prev_voice_active = getattr(self, '_prev_voice_active', False)
         if voice_active and not prev_voice_active:
             print("\n[ServoLoop] Mic clicked -> Starting face tracking / search to freeze...")
+            self._voice_search_start_ts = 0.0
         self._prev_voice_active = voice_active
 
         if not voice_active:
@@ -726,8 +727,13 @@ class ServoLoop:
             self.bb.write(voice_locked_on_face=False)
         else:
             is_locked = getattr(self, '_voice_locked', False)
-            if tracking_active and abs(self._pan_track_norm) <= self.pan_center_norm_x:
-                if not is_locked:
+            if tracking_active:
+                if getattr(self, '_voice_search_start_ts', 0.0) == 0.0:
+                    self._voice_search_start_ts = now
+                
+                # Lock if we are within 25% of center, OR if 1.5 seconds have passed while tracking
+                time_tracking = now - self._voice_search_start_ts
+                if not is_locked and (abs(self._pan_track_norm) <= 0.25 or time_tracking > 1.5):
                     self._voice_locked = True
                     self.bb.write(voice_locked_on_face=True)
                     self._voice_locked_base_pan = self._pan
@@ -739,6 +745,7 @@ class ServoLoop:
                     self._voice_micro_next_time = now + random.uniform(1.0, 3.0)
                     print("\n\033[94m[ServoLoop] face detected\033[0m")
             elif not tracking_active:
+                self._voice_search_start_ts = 0.0
                 if (now - self._last_face_ts) > 1.5:
                     if is_locked:
                         self._voice_locked = False

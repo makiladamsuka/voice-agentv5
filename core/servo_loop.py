@@ -803,10 +803,10 @@ class ServoLoop:
             self._pan_pid.reset()
             if is_locked:
                 if now > getattr(self, '_voice_micro_next_time', 0):
-                    self._voice_micro_target_pan = random.uniform(-4.0, 4.0)
-                    self._voice_micro_target_tilt = random.uniform(-2.5, 2.5)
-                    self._voice_micro_next_time = now + random.uniform(0.5, 3.0)
-                self._voice_micro_pan += (self._voice_micro_target_pan - getattr(self, '_voice_micro_pan', 0.0)) * dt * 1.5
+                    self._voice_micro_target_pan = random.uniform(-1.0, 1.0)
+                    self._voice_micro_target_tilt = random.uniform(-0.8, 0.8)
+                    self._voice_micro_next_time = now + random.uniform(1.5, 4.0)
+                self._voice_micro_pan += (self._voice_micro_target_pan - getattr(self, '_voice_micro_pan', 0.0)) * dt * 0.8
                 pan_target = getattr(self, '_voice_locked_base_pan', self._pan) + self._voice_micro_pan
             else:
                 pan_target = self._pan
@@ -862,7 +862,7 @@ class ServoLoop:
         if abs(self._tilt_track_norm) <= self.tilt_center_norm_y or is_locked:
             self._tilt_pid.reset()
             if is_locked:
-                self._voice_micro_tilt += (getattr(self, '_voice_micro_target_tilt', 0.0) - getattr(self, '_voice_micro_tilt', 0.0)) * dt * 1.5
+                self._voice_micro_tilt += (getattr(self, '_voice_micro_target_tilt', 0.0) - getattr(self, '_voice_micro_tilt', 0.0)) * dt * 0.8
                 tilt_target = getattr(self, '_voice_locked_base_tilt', self._tilt) + self._voice_micro_tilt
             else:
                 tilt_target = tilt_base

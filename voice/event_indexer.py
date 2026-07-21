@@ -7,7 +7,12 @@ import json
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 from openai import OpenAI
+
+APP_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(APP_DIR / ".env")
+load_dotenv(APP_DIR / ".env.local")
 
 POSTER_CATEGORIES = ("events", "competitions", "posts")
 VALID_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -19,25 +24,35 @@ def encode_image(image_path: Path) -> str:
 
 
 def _clients() -> list[tuple[OpenAI, str]]:
-    """Return a list of (client, model) pairs to try in order."""
+    """Return a list of (client, model) pairs to try in order (Groq, OpenAI, OpenRouter)."""
     options: list[tuple[OpenAI, str]] = []
-    if os.getenv("OPENROUTER_API_KEY"):
-        options.append((
-            OpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=os.getenv("OPENROUTER_API_KEY"),
-            ),
-            "google/gemini-2.5-flash",
-        ))
+
+    # 1. Groq Vision Models (free tier)
     if os.getenv("GROQ_API_KEY"):
-        # Groq free-tier vision model — good quality, no cost
-        options.append((
-            OpenAI(
-                base_url="https://api.groq.com/openai/v1",
-                api_key=os.getenv("GROQ_API_KEY"),
-            ),
-            "meta-llama/llama-4-scout-17b-16e-instruct",
-        ))
+        groq_client = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=os.getenv("GROQ_API_KEY"),
+        )
+        options.append((groq_client, "llama-3.2-11b-vision-preview"))
+        options.append((groq_client, "llama-3.2-90b-vision-preview"))
+
+    # 2. OpenAI Vision Models
+    if os.getenv("OPENAI_API_KEY"):
+        openai_client = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+        )
+        options.append((openai_client, "gpt-4o-mini"))
+        options.append((openai_client, "gpt-4o"))
+
+    # 3. OpenRouter Vision Models
+    if os.getenv("OPENROUTER_API_KEY"):
+        openrouter_client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=os.getenv("OPENROUTER_API_KEY"),
+        )
+        options.append((openrouter_client, "google/gemini-2.0-flash-001"))
+        options.append((openrouter_client, "google/gemini-2.5-flash"))
+
     return options
 
 
@@ -92,7 +107,7 @@ def index_posters(assets_dir: Path) -> list[dict]:
     """Scan events/competitions/posts posters and extract structured metadata."""
     clients = _clients()
     if not clients:
-        print("No OPENROUTER_API_KEY or GROQ_API_KEY — skipping poster indexing")
+        print("No vision API key found (GROQ_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY) in environment or .env — skipping poster indexing")
         return []
 
     extracted: list[dict] = []

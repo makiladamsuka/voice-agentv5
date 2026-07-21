@@ -503,65 +503,6 @@ export function useNluVoice({
     // Small timeslice → low-latency chunks for Deepgram VAD
     recorder.start(250);
     console.log("[NluVoice] Mic capture started", mime ?? "(default mime)");
-
-    // Volume Analysis
-    try {
-      if (!stream) return;
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      const actx = new AudioContext();
-      if (actx.state === 'suspended') {
-        actx.resume().catch(() => {});
-      }
-      audioCtxRef.current = actx;
-      
-      // Clone the stream for WebAudio to prevent Chromium ALSA bug from muting MediaRecorder
-      const clone = stream.clone();
-      const source = actx.createMediaStreamSource(clone);
-      const analyser = actx.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      analyserRef.current = analyser;
-      
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      let lastCall = 0;
-      let smoothedVol = 0;
-      
-      const updateVolume = (now: number) => {
-        if (!isActiveRef.current) return;
-        
-        if (now - lastCall > 50) { // Limit to ~20fps
-          analyser.getByteFrequencyData(dataArray);
-          let sum = 0;
-          for (let i = 0; i < dataArray.length; i++) {
-            sum += dataArray[i];
-          }
-          const avg = sum / dataArray.length;
-          
-          let rawVol = 0;
-          // Noise Gate: Lower threshold for Pi microphone compatibility (avg > 4)
-          if (avg > 4) {
-            // Normalize volume relative to threshold
-            rawVol = Math.min(1, (avg - 4) / 30);
-            // Boost lower talking volumes slightly
-            rawVol = Math.pow(rawVol, 0.8);
-          }
-          
-          // Apply fast-attack, slow-release smoothing to prevent UI thrashing
-          const smoothing = rawVol > smoothedVol ? 0.4 : 0.1;
-          smoothedVol = smoothedVol + (rawVol - smoothedVol) * smoothing;
-          
-          if (stateRef.current === "listening" && onVolumeChangeRef.current) {
-             onVolumeChangeRef.current(smoothedVol);
-          }
-          lastCall = now;
-        }
-        volumeAnimRef.current = requestAnimationFrame(updateVolume);
-      };
-      volumeAnimRef.current = requestAnimationFrame(updateVolume);
-    } catch(e) {
-      console.warn("AudioContext init failed", e);
-    }
-
   }, []);
 
   startMicCaptureRef.current = startMicCapture;

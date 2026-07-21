@@ -40,6 +40,9 @@ export interface NluAction {
     floor?: string;
   }>;
   buildings?: Record<string, unknown>;
+  /** Each entry is either a plain string (navigation/smalltalk) or an
+   *  event descriptor object { label, filename, category } from the NLU server. */
+  suggested_buttons?: Array<string | { label: string; filename: string; category: string }>;
   [key: string]: unknown;
 }
 
@@ -823,5 +826,6 @@ export function useNluVoice({
     lastTranscript,
     start,
     stop,
+    sendSimulatedVoice: sendTranscript,
   };
 }

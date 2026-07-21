@@ -18,30 +18,80 @@ def encode_image(image_path: Path) -> str:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
 
-def _vision_client() -> tuple[OpenAI, str] | tuple[None, None]:
+def _clients() -> list[tuple[OpenAI, str]]:
+    """Return a list of (client, model) pairs to try in order."""
+    options: list[tuple[OpenAI, str]] = []
     if os.getenv("OPENROUTER_API_KEY"):
-        return (
+        options.append((
             OpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=os.getenv("OPENROUTER_API_KEY"),
             ),
             "google/gemini-2.5-flash",
-        )
+        ))
     if os.getenv("GROQ_API_KEY"):
-        return (
+        # Groq free-tier vision model — good quality, no cost
+        options.append((
             OpenAI(
                 base_url="https://api.groq.com/openai/v1",
                 api_key=os.getenv("GROQ_API_KEY"),
             ),
-            "llama-3.3-70b-versatile",
-        )
-    return None, None
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+        ))
+    return options
+
+
+def _extract_poster(file_path: Path, clients: list[tuple[OpenAI, str]]) -> dict | None:
+    """Try each client in order until one succeeds. Returns extracted dict or None."""
+    image_b64 = encode_image(file_path)
+    prompt = (
+        "Extract details from this event poster. "
+        "Return ONLY a JSON object with keys: title, date, time, location, description. "
+        "Keep values short (one line each). Use null for missing fields."
+    )
+    for client, model in clients:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_b64}",
+                                },
+                            },
+                        ],
+                    }
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=400,  # title+date+time+location+description needs ~80 tokens
+            )
+            content = response.choices[0].message.content
+            if not content:
+                continue
+            data = json.loads(content)
+            if data:
+                return data
+        except Exception as exc:
+            err_str = str(exc)
+            # 402 = out of credits on this provider — try next
+            if "402" in err_str or "credits" in err_str.lower():
+                print(f"   [{model}] out of credits, trying next provider...")
+                continue
+            # Any other error — log and try next
+            print(f"   [{model}] failed: {err_str[:120]}")
+            continue
+    return None
 
 
 def index_posters(assets_dir: Path) -> list[dict]:
     """Scan events/competitions/posts posters and extract structured metadata."""
-    client, model = _vision_client()
-    if client is None:
+    clients = _clients()
+    if not clients:
         print("No OPENROUTER_API_KEY or GROQ_API_KEY — skipping poster indexing")
         return []
 
@@ -55,45 +105,14 @@ def index_posters(assets_dir: Path) -> list[dict]:
             if file_path.suffix.lower() not in VALID_EXTENSIONS:
                 continue
             print(f"   Processing {category}/{file_path.name}...")
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": (
-                                        "Extract details from this poster/image. Return JSON with keys: "
-                                        "title, date, time, location, description. "
-                                        "Do your best to extract any relevant information."
-                                    ),
-                                },
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{encode_image(file_path)}",
-                                    },
-                                },
-                            ],
-                        }
-                    ],
-                    response_format={"type": "json_object"},
-                    max_tokens=1000,
-                )
-                content = response.choices[0].message.content
-                if not content:
-                    continue
-                event_data = json.loads(content)
-                if not event_data:
-                    continue
-                event_data["source_file"] = file_path.name
-                event_data["category"] = category
-                extracted.append(event_data)
-                print(f"   Extracted: {event_data.get('title', 'Unknown')} ({category})")
-            except Exception as exc:
-                print(f"   Failed to process {category}/{file_path.name}: {exc}")
+            data = _extract_poster(file_path, clients)
+            if data is None:
+                print(f"   All providers failed for {file_path.name} — skipping.")
+                continue
+            data["source_file"] = file_path.name
+            data["category"] = category
+            extracted.append(data)
+            print(f"   Extracted: {data.get('title', 'Unknown')} ({category})")
 
     print(f"Poster indexing complete ({len(extracted)} item(s))")
     return extracted

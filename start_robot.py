@@ -854,6 +854,60 @@ def main():
     ensure_media_server(bb, cfg)
     run_watchdog(interval=5, daemon=True)
 
+    # ── Bootstrap NLU index if posters exist but extracted_events.json is stale/empty ──
+    def _bootstrap_nlu_index():
+        import json as _json
+        extracted_path = APP_DIR / "voice" / "event_db" / "extracted_events.json"
+        assets_dir = APP_DIR / "assets"
+        VALID_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+        CATEGORIES = ("events", "competitions", "posts")
+
+        # Check if any posters exist on disk
+        has_posters = any(
+            f.suffix.lower() in VALID_EXTS
+            for cat in CATEGORIES
+            for f in (assets_dir / cat).iterdir()
+            if (assets_dir / cat).is_dir()
+        )
+        if not has_posters:
+            return
+
+        # Check if extracted_events.json is empty or missing entries for existing posters
+        existing = []
+        if extracted_path.exists():
+            try:
+                existing = _json.loads(extracted_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        existing_files = {e.get("source_file") for e in existing}
+        disk_files = {
+            f.name
+            for cat in CATEGORIES
+            for f in (assets_dir / cat).iterdir()
+            if (assets_dir / cat).is_dir() and f.suffix.lower() in VALID_EXTS
+        }
+        unindexed = disk_files - existing_files
+
+        if unindexed:
+            print(f"[Bootstrap] {len(unindexed)} poster(s) not yet indexed — running NLU indexer...")
+            try:
+                from voice.event_indexer import index_posters
+                events = index_posters(assets_dir)
+                if events:
+                    extracted_path.parent.mkdir(parents=True, exist_ok=True)
+                    extracted_path.write_text(
+                        _json.dumps(events, indent=2, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                    print(f"[Bootstrap] NLU index: {len(events)} event(s) written.")
+                else:
+                    print("[Bootstrap] NLU indexer returned no events (check API keys).")
+            except Exception as exc:
+                print(f"[Bootstrap] NLU indexer failed: {exc}")
+
+    threading.Thread(target=_bootstrap_nlu_index, daemon=True, name="NluBootstrapIndex").start()
+
     for t in threads:
         t.start()
 

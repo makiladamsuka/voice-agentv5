@@ -302,6 +302,8 @@ class IntentMatcher:
                                 c2 = clean_dest2[0].upper() + clean_dest2[1:] if clean_dest2 else ""
                                 response_text = f"Did you mean {c1} or {c2}?"
 
+                            buttons = matching_dests if len(matching_dests) > 0 and len(matching_dests) <= 4 else ([c1, c2] if c1 and c2 else [])
+                            
                             print(f"  [Matcher] Ambiguity clarification: {response_text}")
                             return {
                                 "id": "ambiguous_clarification",
@@ -309,7 +311,8 @@ class IntentMatcher:
                                 "audio_file": None,
                                 "action": {
                                     "action": "speak",
-                                    "text": response_text
+                                    "text": response_text,
+                                    "suggested_buttons": buttons
                                 },
                                 "ambiguity_category": category
                             }
@@ -435,6 +438,64 @@ class OfflineVoiceRuntime:
             print(f"🔊 [Audio Playback] {reply}")
             self.bb.write(conv_state="listening", agent_speaking=False)
             return
+
+        # Shortcut: If user tapped a button with an exact room name, skip NLU
+        # This prevents ambiguity loops when users tap "Auditorium 1" exactly.
+        try:
+            if not hasattr(self, "_wayfinder"):
+                from voice.wayfinding import Wayfinder
+                self._wayfinder = Wayfinder()
+            exact_room = self._wayfinder.find_room(text)
+            # Only use shortcut when the query contains a digit (e.g. "Auditorium 1")
+            # so generic words like "auditorium" still go through the full NLU flow.
+            import re as _re
+            text_has_number = bool(_re.search(r'\d', text))
+            label_matches = exact_room is not None and (
+                text.lower().strip() in exact_room["label"].lower()
+                or exact_room["label"].lower() in text.lower().strip()
+            )
+            if exact_room is not None and text_has_number and label_matches:
+                print(f"  [Navigate Shortcut] Exact room match: {exact_room['label']}")
+                # Bypass matcher, go straight to navigation
+                try:
+                    result = self._wayfinder.find_path(exact_room['label'])
+                    if result and "directions" in result:
+                        reply_text = result["directions"]
+                        action = {
+                            "action": "navigate",
+                            "destination": result["destination"],
+                            "floor": result.get("floor", "floor_1"),
+                            "path": result["path_coords"],
+                            "path_ids": result.get("path_ids", []),
+                            "directions": result["directions"],
+                            "nodes": [
+                                {
+                                    "id": n["id"],
+                                    "label": n["label"],
+                                    "type": n.get("type", "room"),
+                                    "world": n["world"],
+                                    "building": n.get("building"),
+                                    "size": n.get("size", [1, 1, 1]),
+                                    "floor": n.get("floor", result.get("floor", "floor_1")),
+                                }
+                                for n in result["nodes"]
+                            ],
+                            "buildings": result["buildings"],
+                        }
+                        write_conv_emotion(self.bb, reply_text, is_agent=True, log_prefix="Vader NLU")
+                        self.bb.write(
+                            conv_state="speaking", 
+                            agent_speaking=True,
+                            agent_text=reply_text,
+                            current_action=action
+                        )
+                        print(f"🔊 [Audio Playback] {reply_text}")
+                        self.bb.write(conv_state="listening", agent_speaking=False)
+                        return
+                except Exception as exc:
+                    print(f"⚠️ Shortcut navigation failed: {exc}")
+        except Exception:
+            pass
 
         # 1. Match Intent instantly via ChromaDB
         intent = self.matcher.match(text)

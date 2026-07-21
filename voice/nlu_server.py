@@ -23,6 +23,7 @@ import asyncio
 import json
 import logging
 import hashlib
+import re
 import urllib.request
 import os
 from pathlib import Path
@@ -211,6 +212,29 @@ async def _voice_ws_endpoint(websocket) -> None:
                     if action.get("action") == "navigate" and action.get("destination"):
                         last_discussed_category = get_dest_category(action.get("destination"))
 
+                    # ── Events fallback: inject poster buttons even when NLU
+                    # has no compiled event intents yet (empty compiled_intents.json).
+                    # Triggered whenever the user asks about events but we returned
+                    # the generic fallback reply.
+                    is_fallback_reply = result.get("reply_text", "").startswith("I'm NEma")
+                    if is_fallback_reply and _is_events_query(original_text):
+                        buttons = _get_event_buttons()
+                        if buttons:
+                            from voice.offline_voice.runtime import get_time_reply
+                            reply_text = "Here are the latest events on campus! Tap one to find out more."
+                            audio_file = _generate_dynamic_tts(reply_text)
+                            audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
+                            audio_base_path = APP_DIR / "assets" / "audio_cache"
+                            result = {
+                                "reply_text": reply_text,
+                                "audio_url": audio_url,
+                                "audio_path": str(audio_base_path / audio_file) if audio_file else None,
+                                "action": {
+                                    "action": "show_events",
+                                    "suggested_buttons": buttons,
+                                },
+                            }
+
                 print(
                     f"[NLU] Reply: '{result.get('reply_text', '')[:80]}' "
                     f"audio={result.get('audio_url')}"
@@ -316,6 +340,87 @@ def _build_app():
     )
 
 
+_EVENTS_QUERY_RE = re.compile(
+    r"\b("
+    r"event|events|happening|going on|what's on|whats on"
+    r"|competition|competitions|poster|posters"
+    r"|activity|activities|campus news|announcement|announcements"
+    r"|show me|tell me about|what is|latest|upcoming|today"
+    r")\b",
+    re.IGNORECASE,
+)
+
+def _is_events_query(text: str) -> bool:
+    """Return True if the user's text looks like an events/discovery question."""
+    return bool(_EVENTS_QUERY_RE.search(text))
+
+
+def _get_event_buttons(max_buttons: int = 4) -> list:
+    """Return button descriptors for the most recent uploaded posters.
+
+    Each entry is ``{"label": str, "filename": str, "category": str}`` so the
+    frontend can match by filename (exact) rather than by title (fragile).
+    Falls back to plain strings when no posters exist yet.
+    """
+    assets_dir = APP_DIR / "assets"
+    extracted_path = APP_DIR / "event_db" / "extracted_events.json"
+
+    extracted: dict[str, dict] = {}
+    try:
+        if extracted_path.exists():
+            import json as _json
+            for item in _json.loads(extracted_path.read_text(encoding="utf-8")):
+                if item.get("source_file"):
+                    extracted[item["source_file"]] = item
+    except Exception as exc:
+        log.warning(f"Could not read extracted_events.json: {exc}")
+
+    category_map = {
+        "events": "Featured Campus Event",
+        "competitions": "Upcoming Competition",
+        "posts": "Campus Announcement",
+    }
+    image_exts = {".jpg", ".jpeg", ".png", ".webp"}
+
+    entries: list[tuple[float, dict]] = []
+    for category in ("events", "competitions", "posts"):
+        cat_dir = assets_dir / category
+        if not cat_dir.exists():
+            continue
+        for f in cat_dir.iterdir():
+            if f.suffix.lower() not in image_exts:
+                continue
+            meta = extracted.get(f.name, {})
+            title = (meta.get("title") or "").strip()
+            if not title:
+                stem = f.stem
+                parts = stem.split("_")
+                readable_parts = [p for p in parts if not p.isdigit()]
+                if readable_parts:
+                    title = " ".join(readable_parts).replace("-", " ").strip().title()
+                if not title or not any(c.isalpha() for c in title):
+                    title = category_map.get(category, "Campus Event")
+            entries.append((f.stat().st_mtime, {
+                "label": title,
+                "filename": f.name,
+                "category": category,
+            }))
+
+    if not entries:
+        return ["Show all Events", "Show Competitions"]
+
+    entries.sort(key=lambda x: x[0], reverse=True)
+    seen: set[str] = set()
+    buttons = []
+    for _, desc in entries:
+        if desc["filename"] not in seen:
+            seen.add(desc["filename"])
+            buttons.append(desc)
+        if len(buttons) >= max_buttons:
+            break
+    return buttons
+
+
 def _match_intent(runtime, user_text: str) -> dict:
     """
     Synchronous NLU matching (runs in a thread via run_in_executor).
@@ -379,6 +484,14 @@ def _match_intent(runtime, user_text: str) -> dict:
             )
             audio_url = None
 
+        # ── Inject dynamic buttons for smalltalk and events ─────
+        if not action.get("suggested_buttons"):
+            intent_id = intent.get("id", "")
+            if intent_id == "smalltalk_greeting" or intent_id == "smalltalk_what_can_you_do":
+                action["suggested_buttons"] = ["Where is the auditorium?", "What events are happening?"]
+            elif intent_id.startswith("events_"):
+                action["suggested_buttons"] = _get_event_buttons()
+
         return _with_audio_path({
             "reply_text": intent.get("response_text", ""),
             "audio_url": audio_url,
@@ -433,13 +546,80 @@ def _generate_dynamic_tts(text: str) -> str | None:
 
 
 def _navigate_response(destination: str) -> dict:
-    """Run Wayfinder pathfinding and build a map-ready navigate action."""
+    """Run Wayfinder pathfinding and build a map-ready navigate action.
+
+    When the destination string is ambiguous (multiple rooms share the same
+    keyword, e.g. "auditorium") we return a clarification response with
+    ``suggested_buttons`` so the user can tap instead of speaking again.
+    """
     wayfinder = _get_wayfinder()
     if wayfinder is None:
         return {
             "reply_text": "I'm sorry, my navigation system isn't available right now.",
             "audio_url": None,
             "action": {},
+        }
+
+    # ── Ambiguity check: if multiple distinct rooms match, ask which one ──────
+    # First, try an exact/unambiguous single-room lookup. If the destination
+    # string is specific enough (e.g. "Auditorium 1" after context injection),
+    # find_room() will resolve it directly and we can skip disambiguation.
+    try:
+        exact_match = wayfinder.find_room(destination)
+    except Exception:
+        exact_match = None
+
+    if exact_match is not None:
+        # Verify it's a genuine confident match (label contains the query or vice-versa)
+        dest_lc = destination.lower().strip()
+        label_lc = exact_match["label"].lower()
+        # Only treat as unambiguous if the destination exactly contains a number
+        # (e.g. "Auditorium 1") — means user already picked a specific one
+        import re as _re
+        dest_has_number = bool(_re.search(r'\d', dest_lc))
+        label_matches_exactly = (dest_lc in label_lc or label_lc in dest_lc)
+        if dest_has_number and label_matches_exactly:
+            # Route directly to navigation — no disambiguation needed
+            candidates = [exact_match]
+        else:
+            try:
+                candidates = wayfinder.find_rooms(destination)
+            except Exception as exc:
+                log.warning(f"find_rooms('{destination}') failed: {exc}")
+                candidates = []
+    else:
+        try:
+            candidates = wayfinder.find_rooms(destination)
+        except Exception as exc:
+            log.warning(f"find_rooms('{destination}') failed: {exc}")
+            candidates = []
+
+    if len(candidates) > 1:
+        # Build clean button labels (e.g. "Auditorium 1", "Auditorium 2")
+        buttons = [c["label"] for c in candidates]
+        category = get_dest_category(destination)
+
+        if len(buttons) == 2:
+            options = f"{buttons[0]} or {buttons[1]}"
+        elif len(buttons) == 3:
+            options = f"{buttons[0]}, {buttons[1]}, or {buttons[2]}"
+        else:
+            options = ", ".join(buttons[:-1]) + f", or {buttons[-1]}"
+
+        reply_text = f"Which {category} did you mean? {options}?"
+        audio_file = _generate_dynamic_tts(reply_text)
+        audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
+        audio_base = APP_DIR / "assets" / "audio_cache"
+        return {
+            "reply_text": reply_text,
+            "audio_url": audio_url,
+            "audio_path": str(audio_base / audio_file) if audio_file else None,
+            "action": {
+                "action": "speak",
+                "text": reply_text,
+                "suggested_buttons": buttons,
+            },
+            "ambiguity_category": category,
         }
 
     try:

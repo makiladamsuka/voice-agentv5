@@ -211,6 +211,38 @@ class Wayfinder:
             if r > best_r and r > 0.5: best_r, best = r, n
         return best
 
+    def find_rooms(self, query: str, floor: str = None, min_ratio: float = 0.55) -> list[dict]:
+        """Return ALL rooms that are plausible matches for *query*, ordered by score.
+
+        Used to populate disambiguation buttons when a destination name is ambiguous
+        (e.g. "auditorium" matches Auditorium 1, 2, 3 …).  Returns every node whose
+        label contains the query term, or whose fuzzy-match score exceeds *min_ratio*.
+        Results are de-duplicated by label and capped at 4 (enough for one row of buttons).
+        """
+        q = query.lower().strip()
+        cands = [n for n in self.nodes.values()
+                 if n.get("type") != "waypoint"
+                 and (floor is None or n.get("floor") == floor)]
+
+        seen_labels: set[str] = set()
+        scored: list[tuple[float, dict]] = []
+
+        for n in cands:
+            label_lc = n["label"].lower()
+            if label_lc in seen_labels:
+                continue
+            # Exact substring match scores 1.0; fuzzy otherwise
+            if q in label_lc or label_lc in q:
+                score = 1.0
+            else:
+                score = SequenceMatcher(None, q, label_lc).ratio()
+            if score >= min_ratio:
+                seen_labels.add(label_lc)
+                scored.append((score, n))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [n for _, n in scored[:4]]
+
     def list_rooms(self) -> list[str]:
         return sorted({n["label"] for n in self.nodes.values() if n.get("type") != "waypoint"})
 

@@ -72,6 +72,9 @@ export interface NluAdapter {
 
   // last NLU action payload (for future map/UI triggers)
   lastAction: NluResponse["action"] | null;
+  
+  // method to simulate user voice input (e.g. from UI buttons)
+  sendSimulatedVoice: (text: string) => void;
 }
 
 // ── Helper ────────────────────────────────────────────────────────────────────
@@ -121,6 +124,16 @@ export function useNluAdapter(): NluAdapter {
     };
     const mapped = map[state] ?? "idle";
     setAgentState(mapped);
+
+    // A new user turn has started — clear stale buttons from the previous response
+    // so they don't linger while the agent is thinking.
+    if (mapped === "thinking") {
+      setLastAction((prev) => {
+        if (!prev || !prev.suggested_buttons) return prev;
+        const { suggested_buttons: _, ...rest } = prev as Record<string, unknown>;
+        return Object.keys(rest).length > 0 ? (rest as typeof prev) : null;
+      });
+    }
 
     // Animate maxVolume during speaking for the SiriGlow pulse
     if (mapped === "speaking") {
@@ -211,5 +224,6 @@ export function useNluAdapter(): NluAdapter {
     transcriptions,
     maxVolume,
     lastAction,
+    sendSimulatedVoice: nlu.sendSimulatedVoice,
   };
 }

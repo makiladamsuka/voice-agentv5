@@ -198,17 +198,46 @@ class CampusAgent(Agent, TimeTools, SearchTools, AppearanceTools):
 # ── Prewarm & Entrypoint ─────────────────────────────────────────────────────
 
 def _trigger_reindex() -> None:
-    """Force event DB rebuild after poster upload or manual trigger."""
-    global _global_event_db
-    try:
-        manifest_path = APP_DIR / "voice" / "event_db" / "event_manifest.json"
-        if manifest_path.exists():
-            manifest_path.unlink()
-        assets_dir = APP_DIR / "assets"
-        _global_event_db = build_event_database(assets_dir)
-        print("[VoiceService] Event database re-indexed")
-    except Exception as exc:
-        print(f"[VoiceService] Re-index failed: {exc}")
+    """Force event DB rebuild after poster upload or manual trigger.
+
+    Runs two pipelines in a background thread:
+    1. LiveKit ChromaDB event database (voice/event_database.py)
+    2. NLU extracted_events.json (voice/event_indexer.py) — feeds the
+       intent compiler watchdog so NLU mode gets fresh event intents.
+    """
+    def _run():
+        global _global_event_db
+        # ── Pipeline 1: LiveKit ChromaDB (used by SearchTools in voice_service) ──
+        try:
+            manifest_path = APP_DIR / "voice" / "event_db" / "event_manifest.json"
+            if manifest_path.exists():
+                manifest_path.unlink()
+            assets_dir = APP_DIR / "assets"
+            _global_event_db = build_event_database(assets_dir)
+            print("[VoiceService] Event database re-indexed")
+        except Exception as exc:
+            print(f"[VoiceService] LiveKit re-index failed: {exc}")
+
+        # ── Pipeline 2: NLU extracted_events.json (feeds watchdog → compiler) ──
+        try:
+            from voice.event_indexer import index_posters
+            assets_dir = APP_DIR / "assets"
+            extracted_events_path = APP_DIR / "voice" / "event_db" / "extracted_events.json"
+            print("[VoiceService] Running poster OCR indexer for NLU pipeline...")
+            events = index_posters(assets_dir)
+            if events:
+                extracted_events_path.parent.mkdir(parents=True, exist_ok=True)
+                extracted_events_path.write_text(
+                    __import__("json").dumps(events, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                print(f"[VoiceService] NLU index: wrote {len(events)} event(s) to extracted_events.json")
+            else:
+                print("[VoiceService] NLU index: no events extracted from posters")
+        except Exception as exc:
+            print(f"[VoiceService] NLU poster indexer failed: {exc}")
+
+    threading.Thread(target=_run, daemon=True, name="ReindexWorker").start()
 
 
 def _init_image_server(

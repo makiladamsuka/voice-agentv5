@@ -133,6 +133,7 @@ function KioskViewNlu() {
       maxVolume={nluAdapter.maxVolume}
       room={null}
       lastAction={nluAdapter.lastAction}
+      sendSimulatedVoice={nluAdapter.sendSimulatedVoice}
     />
   );
 }
@@ -170,6 +171,7 @@ function KioskViewLiveKit() {
       maxVolume={maxVolume}
       room={room}
       lastAction={null}
+      sendSimulatedVoice={() => {}}
     />
   );
 }
@@ -183,7 +185,8 @@ type KioskViewUIProps = {
   agentState: string;
   maxVolume: number;
   room: any;
-  lastAction: NluAction | null;
+  lastAction: any | null;
+  sendSimulatedVoice: (text: string) => void;
 };
 
 function KioskViewUI({
@@ -196,6 +199,7 @@ function KioskViewUI({
   maxVolume,
   room,
   lastAction,
+  sendSimulatedVoice,
 }: KioskViewUIProps) {
   const [mode, setMode] = useState<KioskMode>("idle");
   const [focusedEvent, setFocusedEvent] = useState<any | null>(null);
@@ -203,6 +207,8 @@ function KioskViewUI({
     "events" | "competitions" | "posts" | null
   >(null);
   const pendingEventRef = useRef<any | null>(null);
+  // Stable ref so early useEffects can call handlePosterTap before it is declared
+  const handlePosterTapRef = useRef<(post: any) => void>(() => {});
   const [navData, setNavData] = useState<any | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -333,13 +339,13 @@ function KioskViewUI({
   }, [isConnected, sendEventFocus]);
 
   // Navigation from NLU / LiveKit → open Maps overlay
+  // Also handles: event poster routing and map→chat fallback routing
   useEffect(() => {
     if (NLU_MODE) {
-      if (
-        lastAction &&
-        lastAction.action === "navigate" &&
-        lastAction.destination
-      ) {
+      if (!lastAction) return;
+
+      // ── 1. Navigate action → open map ───────────────────────────────────
+      if (lastAction.action === "navigate" && lastAction.destination) {
         setNavData({
           ...lastAction,
           path: lastAction.path ?? lastAction.path_coords,
@@ -348,7 +354,33 @@ function KioskViewUI({
         });
         setMode("maps");
         setShowExploreMap(false);
+        return;
       }
+
+      // ── 2. Event poster action → switch to event detail view ─────────────
+      const POSTER_ACTIONS = ["show_event_poster", "show_competition_poster", "show_campus_post"];
+      if (POSTER_ACTIONS.includes(lastAction.action) && lastAction.target) {
+        const targetFilename = lastAction.target as string;
+        // Find the post whose image URL ends with the target filename
+        const matched = fbPosts.find((p: any) => {
+          const url: string = p.full_picture || p.image || p.filename || "";
+          return url.includes(targetFilename);
+        });
+        if (matched) {
+          handlePosterTapRef.current(matched);
+        }
+        return;
+      }
+
+      // ── 3. Non-navigate response while map is open → return to chat ──────
+      if (mode === "maps" && lastAction.action !== "navigate") {
+        // Close the map and go to talk mode so the transcript is visible
+        setNavData(null);
+        setShowExploreMap(false);
+        setMode("talk");
+        return;
+      }
+
       return;
     }
     if (!room) return;
@@ -372,7 +404,7 @@ function KioskViewUI({
     return () => {
       room.off("dataReceived", handleDataReceived);
     };
-  }, [room, lastAction]);
+  }, [room, lastAction, fbPosts, mode]);
 
   // Pause timers when tab/screen hidden (CPU)
   useEffect(() => {
@@ -443,7 +475,19 @@ function KioskViewUI({
             };
             const defaultTitle =
               categoryMap[file.category] || "Campus Highlight";
-            const title = file.extracted?.title || defaultTitle;
+            // Use AI-extracted title if available, otherwise derive from filename.
+            // e.g. "1780921427234_fit24_semester_end.jpg" → "Fit24 Semester End"
+            // e.g. "1784340506849_34510.jpg" → falls back to category label
+            let title = (file.extracted?.title || "").trim();
+            if (!title) {
+              const stem = (file.name as string).replace(/\.[^.]+$/, "");
+              const parts = stem.split("_");
+              const readable = parts.filter((p: string) => !/^\d+$/.test(p));
+              const derived = readable.join(" ").replace(/-/g, " ").trim();
+              title = derived && /[a-zA-Z]/.test(derived)
+                ? derived.replace(/\b\w/g, (c: string) => c.toUpperCase())
+                : defaultTitle;
+            }
             return {
               id: "local_" + file.mtimeMs + "_" + file.name,
               full_picture: file.url,
@@ -455,6 +499,7 @@ function KioskViewUI({
               created_time: new Date(file.mtimeMs).toISOString(),
               isLocal: true,
               category: file.category,
+              name: file.name,
             };
             }),
           );
@@ -693,6 +738,8 @@ function KioskViewUI({
     },
     [isConnected, sendEventFocus],
   );
+  // Keep the ref in sync so the lastAction effect always has the latest version
+  handlePosterTapRef.current = handlePosterTap;
 
   const handleCategoryClick = (category: string, filterKeyword: string) => {
     setLocationsModalCategory(category);
@@ -788,6 +835,7 @@ function KioskViewUI({
 
   const showMapCanvas = Boolean(navData) || showExploreMap;
   const mountMap = mode === "maps" && showMapCanvas;
+  const hasTranscript = isConnected || isThinking || talkCaption.text !== "Tap the mic to talk";
 
   return (
     <div
@@ -833,7 +881,7 @@ function KioskViewUI({
               {navData ? (
                 <>
                   {/* Floating Transcript for Navigation Map Mode */}
-                  {(isConnected || isThinking || talkCaption.text !== "Tap the mic to talk") && (
+                  {hasTranscript && (
                     <div className="absolute top-4 right-20 flex flex-col items-end z-40 pointer-events-none">
                       <div className="bg-black/60 backdrop-blur-md text-white px-5 py-4 rounded-3xl text-left max-w-sm shadow-xl border border-white/10">
                         <div className="font-semibold text-[15px] leading-relaxed">
@@ -882,7 +930,7 @@ function KioskViewUI({
               ) : showExploreMap && exploreMapData ? (
                 <>
                   {/* Floating Transcript for Explore Map Mode */}
-                  {(isConnected || isThinking || talkCaption.text !== "Tap the mic to talk") && (
+                  {hasTranscript && (
                     <div className="absolute top-4 right-20 flex flex-col items-end z-40 pointer-events-none">
                       <div className="bg-black/60 backdrop-blur-md text-white px-5 py-4 rounded-3xl text-left max-w-sm shadow-xl border border-white/10">
                         <div className="font-semibold text-[15px] leading-relaxed">
@@ -995,27 +1043,91 @@ function KioskViewUI({
                 </div>
                 </div>
           ) : mode === "talk" ? (
-            <div className={`flex-1 min-h-0 ${PANEL} flex flex-col items-center justify-center gap-6 px-6 relative`}>
-              <PopButton
-                onClick={goIdle}
-                aria-label="Close"
-                className={`absolute top-4 right-4 ${ICON_BTN}`}
-              >
-                <span className="material-symbols-outlined text-[22px]">
-                  close
-                </span>
-              </PopButton>
-              <p className="text-[24px] font-semibold text-center text-[var(--kiosk-text)] max-w-lg min-h-[3rem] px-4">
-                {talkCaption.isUser ? (
-                  <span className="opacity-70">You: </span>
-                ) : null}
-                {talkCaption.text}
-              </p>
-              {!isConnected && (
-                <p className="text-[15px] text-[var(--kiosk-muted)]">
-                  Ask about events or directions
-                </p>
+            <div className={`flex-1 min-h-0 ${PANEL} relative overflow-hidden bg-[var(--kiosk-surface-muted)]`}>
+              {/* Poster/Image on the Left */}
+              {focusedEvent && (
+                <div className="absolute left-0 top-0 bottom-0 w-1/2 min-w-0 flex items-center justify-center bg-black/20 overflow-hidden">
+                  <img
+                    src={focusedEvent.full_picture}
+                    alt={focusedEvent.message}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
               )}
+
+              {/* Transcript area (centered when no poster, right-aligned split-screen when poster is active) */}
+              <div className={
+                focusedEvent
+                  ? "absolute right-0 top-0 bottom-0 w-1/2 min-w-0 flex flex-col items-center justify-center gap-6 px-8 py-6"
+                  : "w-full h-full flex flex-col items-center justify-center gap-6 px-6 relative"
+              }>
+                <PopButton
+                  onClick={goIdle}
+                  aria-label="Close"
+                  className={`absolute top-4 right-4 ${ICON_BTN}`}
+                >
+                  <span className="material-symbols-outlined text-[22px]">
+                    close
+                  </span>
+                </PopButton>
+
+                <div className="flex-1 flex flex-col items-center justify-center gap-6 w-full">
+                  <p className={`text-[24px] font-semibold text-center text-[var(--kiosk-text)] min-h-[3rem] px-4 ${
+                    focusedEvent ? "max-w-sm" : "max-w-lg"
+                  }`}>
+                    {talkCaption.isUser ? (
+                      <span className="opacity-70">You: </span>
+                    ) : null}
+                    {talkCaption.text}
+                  </p>
+
+                  {/* Dynamic Buttons injected via NLU Action payload */}
+                  {lastAction?.suggested_buttons && lastAction.suggested_buttons.length > 0 && (
+                    <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
+                      {(lastAction.suggested_buttons as Array<string | { label: string; filename: string; category: string }>).map((btn, idx: number) => {
+                        // Buttons can be plain strings (navigation/smalltalk) or
+                        // event descriptor objects { label, filename, category }.
+                        const isEventBtn = typeof btn === "object" && btn !== null;
+                        const btnLabel = isEventBtn ? btn.label : btn;
+                        const btnFilename = isEventBtn ? btn.filename : null;
+
+                        // For event buttons: match by filename (exact), then fall
+                        // back to message match for legacy string buttons.
+                        const matchingPost = btnFilename
+                          ? fbPosts.find((p) => (p.name as string) === btnFilename)
+                          : fbPosts.find(
+                              (p) =>
+                                (p.message || "").toLowerCase().trim() ===
+                                btnLabel.toLowerCase().trim(),
+                            );
+
+                        const handleButtonClick = () => {
+                          if (matchingPost) {
+                            handlePosterTap(matchingPost);
+                          } else {
+                            sendSimulatedVoice(btnLabel);
+                          }
+                        };
+                        return (
+                          <PopButton
+                            key={idx}
+                            onClick={handleButtonClick}
+                            className="px-5 py-2.5 rounded-full bg-white/40 dark:bg-black/40 border border-[var(--kiosk-border)] shadow-sm backdrop-blur-md text-[16px] font-medium text-[var(--kiosk-text)] hover:bg-white/60 dark:hover:bg-white/10 transition-colors active:scale-95"
+                          >
+                            {btnLabel}
+                          </PopButton>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {!isConnected && (
+                    <p className="text-[15px] text-[var(--kiosk-muted)] mt-2">
+                      Ask about events or directions
+                    </p>
+                  )}
+                </div>
+              </div>
             </div>
           ) : mode === "events" && focusedEvent ? (
             /* Focused poster with category + meta */
@@ -1029,14 +1141,14 @@ function KioskViewUI({
                   close
                 </span>
               </PopButton>
-              <div className="flex-1 min-h-0">
-                      <img
-                        src={focusedEvent.full_picture}
-                        alt={focusedEvent.message}
+              <div className={`flex-1 min-h-0 transition-all duration-300 ${hasTranscript ? "w-1/2 pl-8" : "w-full"}`}>
+                <img
+                  src={focusedEvent.full_picture}
+                  alt={focusedEvent.message}
                   className="w-full h-full object-contain"
                 />
               </div>
-              <div className="shrink-0 p-5 bg-black/80 text-white space-y-2">
+              <div className={`shrink-0 p-5 bg-black/80 text-white space-y-2 transition-all duration-300 ${hasTranscript ? "w-1/2 border-r border-white/10" : "w-full"}`}>
                 <div className="flex flex-wrap items-center gap-2">
                   <span
                     className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${
@@ -1044,7 +1156,7 @@ function KioskViewUI({
                     }`}
                   >
                     {eventCategoryMeta(focusedEvent.category).label}
-                        </span>
+                  </span>
                   {focusedEvent.extracted_date && (
                     <span className="text-[12px] font-semibold opacity-80">
                       {focusedEvent.extracted_date}
@@ -1058,17 +1170,37 @@ function KioskViewUI({
                       {focusedEvent.extracted_location}
                     </span>
                   )}
-                    </div>
+                </div>
                 <p className="font-semibold text-[20px] leading-tight">
-                        {focusedEvent.message}
-                      </p>
-                      {focusedEvent.description && (
+                  {focusedEvent.message}
+                </p>
+                {focusedEvent.description && (
                   <p className="text-[14px] opacity-80 line-clamp-3">
-                          {focusedEvent.description}
-                        </p>
-                        )}
-                      </div>
+                    {focusedEvent.description}
+                  </p>
+                )}
+              </div>
+
+              {/* Floating Transcript for Event/Poster Mode (matching Map Mode) */}
+              {hasTranscript && (
+                <div className="absolute top-4 right-20 flex flex-col items-end z-40 pointer-events-none">
+                  <div className="bg-black/60 backdrop-blur-md text-white px-5 py-4 rounded-3xl text-left max-w-sm shadow-xl border border-white/10">
+                    <div className="font-semibold text-[15px] leading-relaxed">
+                      {talkCaption.text.includes("\n") || talkCaption.text.includes(", then ") ? (
+                        <ul className="list-disc pl-5 space-y-1">
+                          {talkCaption.text.split(/(?:\.\n|, then )/).map((step: string, i: number) => {
+                            const clean = step.trim().replace(/\.$/, "");
+                            return clean ? <li key={i}>{clean}</li> : null;
+                          })}
+                        </ul>
+                      ) : (
+                        talkCaption.text
+                      )}
                     </div>
+                  </div>
+                </div>
+              )}
+            </div>
           ) : mode === "events" && eventCategory ? (
             /* Category list — picked Competitions / Events / Announcements */
             <div className={`flex-1 min-h-0 ${PANEL} flex flex-col`}>

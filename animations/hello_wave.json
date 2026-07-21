@@ -1,0 +1,72 @@
+{
+  "animation_name": "hello_wave",
+  "duration_ms": 2000,
+  "tracks": {
+    "arms": [
+      {
+        "time_ms": 0,
+        "a0": 90,
+        "a1": 20,
+        "a2": 90,
+        "a3": 20
+      },
+      {
+        "time_ms": 700,
+        "a0": 150,
+        "a1": 80,
+        "a2": 90,
+        "a3": 20,
+        "easing": "easeOutQuad"
+      },
+      {
+        "time_ms": 1200,
+        "a0": 130,
+        "a1": 90,
+        "a2": 90,
+        "a3": 20,
+        "easing": "easeInOutSine"
+      },
+      {
+        "time_ms": 2000,
+        "a0": 90,
+        "a1": 20,
+        "a2": 90,
+        "a3": 20,
+        "easing": "easeInOutCubic"
+      }
+    ],
+    "head": [
+      {
+        "time_ms": 0,
+        "pan": 100,
+        "tilt": 110
+      },
+      {
+        "time_ms": 500,
+        "pan": 100,
+        "tilt": 130,
+        "easing": "easeOutQuad"
+      },
+      {
+        "time_ms": 2000,
+        "pan": 100,
+        "tilt": 110,
+        "easing": "easeInOutSine"
+      }
+    ],
+    "eyes": [
+      {
+        "time_ms": 0,
+        "theme": "default"
+      },
+      {
+        "time_ms": 400,
+        "theme": "rainbow"
+      },
+      {
+        "time_ms": 1700,
+        "theme": "default"
+      }
+    ]
+  }
+}

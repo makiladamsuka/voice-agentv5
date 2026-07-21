@@ -7,12 +7,7 @@ import json
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
 from openai import OpenAI
-
-APP_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(APP_DIR / ".env")
-load_dotenv(APP_DIR / ".env.local")
 
 POSTER_CATEGORIES = ("events", "competitions", "posts")
 VALID_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -36,27 +31,12 @@ def _clients() -> list[tuple[OpenAI, str]]:
         ))
     if os.getenv("GROQ_API_KEY"):
         # Groq free-tier vision model — good quality, no cost
-        groq_client = OpenAI(
-            base_url="https://api.groq.com/openai/v1",
-            api_key=os.getenv("GROQ_API_KEY"),
-        )
-        options.append((groq_client, "llama-3.2-11b-vision-preview"))
-        options.append((groq_client, "llama-3.2-90b-vision-preview"))
-    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if gemini_key:
         options.append((
             OpenAI(
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-                api_key=gemini_key,
+                base_url="https://api.groq.com/openai/v1",
+                api_key=os.getenv("GROQ_API_KEY"),
             ),
-            "gemini-2.5-flash",
-        ))
-    if os.getenv("OPENAI_API_KEY"):
-        options.append((
-            OpenAI(
-                api_key=os.getenv("OPENAI_API_KEY"),
-            ),
-            "gpt-4o-mini",
+            "meta-llama/llama-4-scout-17b-16e-instruct",
         ))
     return options
 
@@ -112,7 +92,7 @@ def index_posters(assets_dir: Path) -> list[dict]:
     """Scan events/competitions/posts posters and extract structured metadata."""
     clients = _clients()
     if not clients:
-        print("No vision API key found (OPENROUTER_API_KEY, GROQ_API_KEY, GEMINI_API_KEY, or OPENAI_API_KEY) in environment or .env — skipping poster indexing")
+        print("No OPENROUTER_API_KEY or GROQ_API_KEY — skipping poster indexing")
         return []
 
     extracted: list[dict] = []

@@ -293,8 +293,8 @@ class TalkGestureService:
             
             # Apply the pose with smooth interpolation — physics ticks continuously
             # for the full duration (movement + hold), so arms never freeze mid-air
-            # Random wait time between poses (0.2-0.6 seconds) - hold pose even if speaking stops
-            wait_time = random.uniform(0.2, 0.6)
+            # Random wait time between poses (0.4-0.7 seconds) - hold pose even if speaking stops
+            wait_time = random.uniform(0.4, 0.7)
             total_duration = self.pose_duration + wait_time
             self._apply_pose_smooth(pose, total_duration, check_speaking=True)
         

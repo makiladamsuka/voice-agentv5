@@ -7,12 +7,7 @@ import json
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
 from openai import OpenAI
-
-APP_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(APP_DIR / ".env")
-load_dotenv(APP_DIR / ".env.local")
 
 POSTER_CATEGORIES = ("events", "competitions", "posts")
 VALID_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -26,47 +21,23 @@ def encode_image(image_path: Path) -> str:
 def _clients() -> list[tuple[OpenAI, str]]:
     """Return a list of (client, model) pairs to try in order."""
     options: list[tuple[OpenAI, str]] = []
-
-    # 1. Groq Vision Models (Active Instruct Models)
-    if os.getenv("GROQ_API_KEY"):
-        groq_client = OpenAI(
-            base_url="https://api.groq.com/openai/v1",
-            api_key=os.getenv("GROQ_API_KEY"),
-        )
-        options.append((groq_client, "llama-3.2-11b-vision-instruct"))
-        options.append((groq_client, "llama-3.2-90b-vision-instruct"))
-
-    # 2. OpenAI Vision Models
-    if os.getenv("OPENAI_API_KEY"):
-        openai_client = OpenAI(
-            api_key=os.getenv("OPENAI_API_KEY"),
-        )
-        options.append((openai_client, "gpt-4o-mini"))
-        options.append((openai_client, "gpt-4o"))
-
-    # 3. Direct Google Gemini (OpenAI compatible endpoint)
-    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if gemini_key:
+    if os.getenv("OPENROUTER_API_KEY"):
         options.append((
             OpenAI(
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-                api_key=gemini_key,
+                base_url="https://openrouter.ai/api/v1",
+                api_key=os.getenv("OPENROUTER_API_KEY"),
             ),
-            "gemini-2.0-flash",
+            "google/gemini-2.5-flash",
         ))
-
-    # 4. OpenRouter Free & Paid Vision Models
-    if os.getenv("OPENROUTER_API_KEY"):
-        or_client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=os.getenv("OPENROUTER_API_KEY"),
-        )
-        # Free vision models first (does not require credits)
-        options.append((or_client, "meta-llama/llama-3.2-11b-vision-instruct:free"))
-        options.append((or_client, "qwen/qwen-2.5-vl-72b-instruct:free"))
-        options.append((or_client, "google/gemini-2.0-flash-exp:free"))
-        options.append((or_client, "google/gemini-2.5-flash"))
-
+    if os.getenv("GROQ_API_KEY"):
+        # Groq free-tier vision model — good quality, no cost
+        options.append((
+            OpenAI(
+                base_url="https://api.groq.com/openai/v1",
+                api_key=os.getenv("GROQ_API_KEY"),
+            ),
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+        ))
     return options
 
 

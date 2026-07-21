@@ -509,8 +509,14 @@ export function useNluVoice({
       if (!stream) return;
       const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
       const actx = new AudioContext();
+      if (actx.state === 'suspended') {
+        actx.resume().catch(() => {});
+      }
       audioCtxRef.current = actx;
-      const source = actx.createMediaStreamSource(stream);
+      
+      // Clone the stream for WebAudio to prevent Chromium ALSA bug from muting MediaRecorder
+      const clone = stream.clone();
+      const source = actx.createMediaStreamSource(clone);
       const analyser = actx.createAnalyser();
       analyser.fftSize = 256;
       source.connect(analyser);

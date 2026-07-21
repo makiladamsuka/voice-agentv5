@@ -24,17 +24,17 @@ def encode_image(image_path: Path) -> str:
 
 
 def _clients() -> list[tuple[OpenAI, str]]:
-    """Return a list of (client, model) pairs to try in order (Groq, OpenAI, OpenRouter)."""
+    """Return a list of (client, model) pairs to try in order."""
     options: list[tuple[OpenAI, str]] = []
 
-    # 1. Groq Vision Models (free tier)
+    # 1. Groq Vision Models (Active Instruct Models)
     if os.getenv("GROQ_API_KEY"):
         groq_client = OpenAI(
             base_url="https://api.groq.com/openai/v1",
             api_key=os.getenv("GROQ_API_KEY"),
         )
-        options.append((groq_client, "llama-3.2-11b-vision-preview"))
-        options.append((groq_client, "llama-3.2-90b-vision-preview"))
+        options.append((groq_client, "llama-3.2-11b-vision-instruct"))
+        options.append((groq_client, "llama-3.2-90b-vision-instruct"))
 
     # 2. OpenAI Vision Models
     if os.getenv("OPENAI_API_KEY"):
@@ -44,14 +44,28 @@ def _clients() -> list[tuple[OpenAI, str]]:
         options.append((openai_client, "gpt-4o-mini"))
         options.append((openai_client, "gpt-4o"))
 
-    # 3. OpenRouter Vision Models
+    # 3. Direct Google Gemini (OpenAI compatible endpoint)
+    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if gemini_key:
+        options.append((
+            OpenAI(
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                api_key=gemini_key,
+            ),
+            "gemini-2.0-flash",
+        ))
+
+    # 4. OpenRouter Free & Paid Vision Models
     if os.getenv("OPENROUTER_API_KEY"):
-        openrouter_client = OpenAI(
+        or_client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=os.getenv("OPENROUTER_API_KEY"),
         )
-        options.append((openrouter_client, "google/gemini-2.0-flash-001"))
-        options.append((openrouter_client, "google/gemini-2.5-flash"))
+        # Free vision models first (does not require credits)
+        options.append((or_client, "meta-llama/llama-3.2-11b-vision-instruct:free"))
+        options.append((or_client, "qwen/qwen-2.5-vl-72b-instruct:free"))
+        options.append((or_client, "google/gemini-2.0-flash-exp:free"))
+        options.append((or_client, "google/gemini-2.5-flash"))
 
     return options
 
@@ -107,7 +121,7 @@ def index_posters(assets_dir: Path) -> list[dict]:
     """Scan events/competitions/posts posters and extract structured metadata."""
     clients = _clients()
     if not clients:
-        print("No vision API key found (GROQ_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY) in environment or .env — skipping poster indexing")
+        print("No OPENROUTER_API_KEY or GROQ_API_KEY — skipping poster indexing")
         return []
 
     extracted: list[dict] = []

@@ -101,27 +101,28 @@ Measure backend CPU/RAM:
 
 ---
 
-### Terminal 2 — Frontend (Next.js kiosk UI on :3000)
+#### Terminal 2 — Frontend (Next.js kiosk UI on :3000)
 
 Requires **Node.js 20+** and `pnpm` (or npm).
 
-```bash
-cd /home/nema/Documents/voice-agentv5
-./scripts/run-frontend-prod.sh   # production — builds then starts (slow first time on Pi)
-```
+* **Fast start (skip rebuild):**
+  If the UI code did **not** change since the last build, skip the build step and launch instantly:
+  ```bash
+  cd voice-agentv5/frontend
+  pnpm start
+  ```
 
-If the UI code did **not** change since the last build, skip the rebuild:
+* **Production build + start (slow first time on Pi):**
+  ```bash
+  cd voice-agentv5
+  ./scripts/run-frontend-prod.sh
+  ```
 
-```bash
-cd frontend
-pnpm start
-```
-
-For UI development with hot reload:
-
-```bash
-./scripts/run-frontend-dev.sh
-```
+* **Development mode (with hot reload):**
+  ```bash
+  cd voice-agentv5
+  ./scripts/run-frontend-dev.sh
+  ```
 
 Kiosk API routes (`/api/map`, `/api/upload-status`, etc.) proxy to Python on **:8080**. LiveKit tokens are minted in Next.js (`/api/connection-details`).
 

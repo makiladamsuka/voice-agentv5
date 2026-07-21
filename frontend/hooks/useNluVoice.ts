@@ -478,19 +478,19 @@ export function useNluVoice({
       if (
         event.data.size > 0 &&
         dgWs.current?.readyState === WebSocket.OPEN &&
-        isActiveRef.current &&
-        // Do not stream mic→Deepgram while NLU is thinking or TTS is playing
-        // (speaker echo would fake SpeechStarted and kill the reply).
-        stateRef.current !== "speaking" &&
-        stateRef.current !== "thinking"
+        isActiveRef.current
       ) {
         event.data.arrayBuffer().then((buf) => {
-          if (
-            dgWs.current?.readyState === WebSocket.OPEN &&
-            stateRef.current !== "speaking" &&
-            stateRef.current !== "thinking"
-          ) {
-            dgWs.current.send(buf);
+          if (dgWs.current?.readyState === WebSocket.OPEN) {
+            // While speaking/thinking, send zeroed audio buffers instead of dropping chunks.
+            // This preserves WebM container structure & timestamp alignment so Deepgram
+            // STT doesn't corrupt/drop the stream.
+            if (stateRef.current === "speaking" || stateRef.current === "thinking") {
+              const silentBuf = new ArrayBuffer(buf.byteLength);
+              dgWs.current.send(silentBuf);
+            } else {
+              dgWs.current.send(buf);
+            }
           }
         });
       }
@@ -538,10 +538,10 @@ export function useNluVoice({
           const avg = sum / dataArray.length;
           
           let rawVol = 0;
-          // Noise Gate: Ignore ambient room noise and keyboard typing (typically avg < 15)
-          if (avg > 15) {
-            // Normalize volume relative to the threshold
-            rawVol = Math.min(1, (avg - 15) / 35);
+          // Noise Gate: Lower threshold for Pi microphone compatibility (avg > 4)
+          if (avg > 4) {
+            // Normalize volume relative to threshold
+            rawVol = Math.min(1, (avg - 4) / 30);
             // Boost lower talking volumes slightly
             rawVol = Math.pow(rawVol, 0.8);
           }

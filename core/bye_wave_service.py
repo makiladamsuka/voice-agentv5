@@ -13,7 +13,7 @@ config.yaml section:
       presets_path: "tests/arm_pose_presets.json"
 """
 from __future__ import annotations
-import collections, json, pathlib, random, socket, socketserver, sys, threading, time
+import collections, json, math, pathlib, random, socket, socketserver, sys, threading, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import cv2
 from core.blackboard import Blackboard
@@ -456,11 +456,10 @@ class _ByeSequenceRunner:
                 horizontal_t = min(1.0, elapsed / horizontal_duration) if horizontal_duration > 0 else 1.0
                 
                 if frame_idx in (2, 4, 6):
-                    if vertical_t <= 0.3:
-                        vertical_progress = (-125.0 / 21.0) * (vertical_t ** 2) + (30.0 / 7.0) * vertical_t
+                    if vertical_t <= 0.5:
+                        vertical_progress = 0.375 * (1.0 - math.cos(math.pi * (vertical_t / 0.5)))
                     else:
-                        dt_val = vertical_t - 0.3
-                        vertical_progress = 0.75 + (-25.0 / 49.0) * (dt_val ** 2) + (5.0 / 7.0) * dt_val
+                        vertical_progress = 0.75 + 0.125 * (1.0 - math.cos(math.pi * ((vertical_t - 0.5) / 0.5)))
                 else:
                     vertical_progress = self._ease_in_out(vertical_t)
                 

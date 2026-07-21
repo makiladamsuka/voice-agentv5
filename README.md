@@ -2,41 +2,79 @@
 
 Raspberry Pi robot stack: face tracking, servos, TFT eyes, LiveKit voice agent, and kiosk UI.
 
-## How to start the robot
+## How to set up and start the robot
 
-Run these in **separate terminals** on the Pi. Order matters: backend first, then frontend, then kiosk browser.
-
-### One-time setup
-
-```bash
-cd /home/nema/Documents/voice-agentv5
-python3 -m venv --system-site-packages venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-Create a repo `.env` with LiveKit credentials (used by backend and to seed the frontend):
-
-```bash
-# .env
-LIVEKIT_URL=wss://...
-LIVEKIT_API_KEY=...
-LIVEKIT_API_SECRET=...
-LIVEKIT_AGENT_NAME=campus-greeting-agent
-```
-
-Copy `frontend/.env.local.example` → `frontend/.env.local` if you prefer to edit frontend env by hand. The run scripts can seed `.env.local` from `.env` on first run.
-
-**Audio:** set the system default **microphone** and **speakers** in the Pi audio menu (USB webcam mic, Bluetooth neckband, etc.). The kiosk browser uses OS defaults — no mic setting in `start_robot.py`. Vision uses the **Pi Camera** (CSI) via `Picamera2`, not a USB webcam.
+Run these steps after cloning or performing a `git pull`.
 
 ---
 
-### Terminal 1 — Backend (robot + voice agent + APIs on :8080)
+### Step 1: One-time Environment Setup
+
+1. **Python Virtual Environment & Dependencies:**
+   ```bash
+   cd voice-agentv5
+   python3 -m venv --system-site-packages venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+2. **Frontend Dependencies (Next.js):**
+   ```bash
+   cd frontend
+   pnpm install   # or npm install
+   cd ..
+   ```
+
+3. **Configure Environment Variables (`.env`):**
+   Create a `.env` file in the root directory:
+   ```ini
+   # .env
+   LIVEKIT_URL=wss://your-livekit-url
+   LIVEKIT_API_KEY=your-api-key
+   LIVEKIT_API_SECRET=your-api-secret
+   LIVEKIT_AGENT_NAME=campus-greeting-agent
+
+   # Optional Vision/OCR keys for poster indexing
+   OPENROUTER_API_KEY=your-openrouter-key
+   GROQ_API_KEY=your-groq-key
+   ```
+
+---
+
+### Step 2: Optional Pre-Setup & Cache Pre-Building
+
+The system dynamically builds intent caches, amplitude envelopes, and poster metadata when running `start_robot.py`. However, you can run these commands manually beforehand to pre-populate caches and optimize first-run performance:
+
+1. **Pre-build TTS Waveform Sidecars (Lip-Sync & Eye Amplitude Cache):**
+   ```bash
+   python voice/compiler/build_amplitude_cache.py
+   ```
+   *Computes `.amp.json` waveform sidecars for cached audio files in `assets/audio_cache/` so screen lip-syncing remains smooth on low-power devices like Raspberry Pi.*
+
+2. **Pre-build Navigation Vector Database & Intents:**
+   ```bash
+   python voice/compiler/build_navigate_intents.py
+   ```
+   *Parses campus nodes/graph in `data/` and builds navigation intents & ChromaDB vectors.*
+
+3. **Pre-index Event Poster Metadata (OCR / AI Vision):**
+   ```bash
+   python -c "from pathlib import Path; from voice.event_indexer import index_posters; index_posters(Path('assets'))"
+   ```
+   *Scans poster images in `assets/events/`, `assets/competitions/`, and `assets/posts/` and extracts dates/locations via Groq or OpenRouter vision API.*
+
+---
+
+### Step 3: Run the System
+
+Run these in **separate terminals** on the Pi. Order matters: backend first, then frontend, then kiosk browser.
+
+#### Terminal 1 — Backend (robot + voice agent + APIs on :8080)
 
 **Recommended on the Pi** (lower CPU for frontend + Chromium):
 
 ```bash
-cd /home/nema/Documents/voice-agentv5
+cd voice-agentv5
 source venv/bin/activate
 CONFIG_PATH=config.kiosk.yaml python start_robot.py start
 ```

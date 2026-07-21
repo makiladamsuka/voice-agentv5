@@ -455,7 +455,15 @@ class _ByeSequenceRunner:
                 vertical_t = min(1.0, elapsed / vertical_duration) if vertical_duration > 0 else 1.0
                 horizontal_t = min(1.0, elapsed / horizontal_duration) if horizontal_duration > 0 else 1.0
                 
-                vertical_progress = self._ease_in_out(vertical_t)
+                if frame_idx in (2, 4, 6):
+                    if vertical_t <= 0.3:
+                        vertical_progress = (-125.0 / 21.0) * (vertical_t ** 2) + (30.0 / 7.0) * vertical_t
+                    else:
+                        dt_val = vertical_t - 0.3
+                        vertical_progress = 0.75 + (-25.0 / 49.0) * (dt_val ** 2) + (5.0 / 7.0) * dt_val
+                else:
+                    vertical_progress = self._ease_in_out(vertical_t)
+                
                 horizontal_progress = self._ease_in_out(horizontal_t)
                 
                 new_a0 = start_a0 + delta_a0 * vertical_progress
@@ -469,6 +477,9 @@ class _ByeSequenceRunner:
                 time.sleep(max(0.001, sleep_time))
             
             self._bb.write(arm_a0=target_a0, arm_a1=target_a1, arm_a2=target_a2, arm_a3=target_a3)
+            
+            if 1 <= frame_idx <= 5:
+                time.sleep(0.2)
         
         self._bb.write(
             bye_animation_playing=False,

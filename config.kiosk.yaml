@@ -240,7 +240,7 @@ servo:
   pan_center_norm_x: 0.05       # |norm_x| below this → face centered, hold pan
   tilt_center_norm_y: 0.08
   loop_hz: 35.0
-  no_face_home_sec: 1.2
+  no_face_home_sec: 3.0
   debug_hz: 2.0
   face_alpha_x: 0.12 # tilt/velocity only
   face_alpha_y: 0.24 
@@ -279,8 +279,8 @@ servo:
   wander_long_stare_chance: 0.14
   wander_pan_smooth_hz: 5.5 
   wander_tilt_smooth_hz: 6 
-  wander_track_loss_hold_min_sec: 1.2   # hold last track pose before first wander glance
-  wander_track_loss_hold_max_sec: 2.8
+  wander_track_loss_hold_min_sec: 3.0   # hold last track pose before first wander glance
+  wander_track_loss_hold_max_sec: 5.0
   wander_imu_tilt_blend: 1.0            # 1.0 = wander glances relative to IMU horizon
   motion_emotion_min_sec: 2.6
   attention_hold_min_sec: 3.2

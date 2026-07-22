@@ -113,7 +113,7 @@ export function useNluVoice({
   /** Timestamp when speaking ends — used to reject Deepgram echo transcripts */
   const speakingEndedAtRef = useRef<number>(0);
   /** How long (ms) to reject Deepgram results after TTS ends (echo cooldown) */
-  const ECHO_COOLDOWN_MS = 2000;
+  const ECHO_COOLDOWN_MS = 400;
 
   const apiKey =
     deepgramApiKey ?? process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY ?? "";
@@ -179,11 +179,9 @@ export function useNluVoice({
         speakingEndedAtRef.current = Date.now();
         if (resumeTimeoutRef.current) {
           clearTimeout(resumeTimeoutRef.current);
-        }
-        resumeTimeoutRef.current = setTimeout(() => {
-          setVoiceState("listening");
           resumeTimeoutRef.current = null;
-        }, ECHO_COOLDOWN_MS);
+        }
+        setVoiceState("listening");
       };
 
       if (resolvedUrl) {

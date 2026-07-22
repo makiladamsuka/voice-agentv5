@@ -99,7 +99,7 @@ exec "$CHROMIUM" \
   --disable-default-apps \
   --disable-component-update \
   --disable-features=TranslateUI,MediaRouter \
-  --use-fake-device-for-media-stream \
+  --use-fake-ui-for-media-stream \
   --log-level=3 \
   --disable-logging \
   --user-data-dir="$PROFILE_DIR" \

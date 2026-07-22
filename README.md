@@ -1,6 +1,6 @@
 # Voice Agent V5
 
-Raspberry Pi robot stack: face tracking, servos, TFT eyes, LiveKit voice agent, and kiosk UI.
+Raspberry Pi robot stack: face tracking, servos, TFT eyes, NLU WebSocket voice agent, and kiosk UI.
 
 ## How to start the robot
 
@@ -9,36 +9,31 @@ Run these in **separate terminals** on the Pi. Order matters: backend first, the
 ### One-time setup
 
 ```bash
-cd /home/nema/Documents/voice-agentv5
+cd voice-agentv5
 python3 -m venv --system-site-packages venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Create a repo `.env` with LiveKit credentials (used by backend and to seed the frontend):
+Create a `.env` file for API keys (e.g. Deepgram TTS / Groq / OpenRouter):
 
-```bash
+```ini
 # .env
-LIVEKIT_URL=wss://...
-LIVEKIT_API_KEY=...
-LIVEKIT_API_SECRET=...
-LIVEKIT_AGENT_NAME=campus-greeting-agent
+DEEPGRAM_API_KEY=your-deepgram-key
+GROQ_API_KEY=your-groq-key
+OPENROUTER_API_KEY=your-openrouter-key
 ```
 
-Copy `frontend/.env.local.example` → `frontend/.env.local` if you prefer to edit frontend env by hand. The run scripts can seed `.env.local` from `.env` on first run.
-
-**Audio:** set the system default **microphone** and **speakers** in the Pi audio menu (USB webcam mic, Bluetooth neckband, etc.). The kiosk browser uses OS defaults — no mic setting in `start_robot.py`. Vision uses the **Pi Camera** (CSI) via `Picamera2`, not a USB webcam.
+**Audio:** The kiosk browser captures microphone speech via Browser VAD & Deepgram STT, communicating with the local NLU WebSocket server on port `8765`.
 
 ---
 
-### Terminal 1 — Backend (robot + voice agent + APIs on :8080)
-
-**Recommended on the Pi** (lower CPU for frontend + Chromium):
+### Terminal 1 — Backend (robot + NLU voice server + APIs on :8080)
 
 ```bash
-cd /home/nema/Documents/voice-agentv5
+cd voice-agentv5
 source venv/bin/activate
-CONFIG_PATH=config.kiosk.yaml python start_robot.py start
+CONFIG_PATH=config.kiosk.yaml python start_robot.py
 ```
 
 | Command | Use when |

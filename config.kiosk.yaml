@@ -382,17 +382,8 @@ surroundings_emotion:
 
 voice:
   enabled: true
-  local_speaker: true        # play TTS on Pi speakers (set NEXT_PUBLIC_LOCAL_SPEAKER=true in frontend)
-  local_mic: true            # capture mic on Pi (frontend disables browser mic)
-  aec_reverse: false         # OFF — reverse AEC flooded Pi CPU (QueueFull). Soft echo_gate + warmup instead.
-  speaker_device: hdmi       # routes via Pulse/default (same path as browser HDMI)
-  speaker_blocksize: 4096    # larger blocks reduce ALSA underruns on Pi
-  speaker_latency: high
-  # Soft barge-in gate: drop low-energy mic frames while agent speaks (echo), pass loud interrupts
-  echo_gate_rms: 0.035
-  interrupt_min_duration: 0.75
-  interrupt_min_words: 3
-  aec_warmup_sec: 2.0        # ignore barge-in right after TTS starts (WebRTC-style)
+  nlu_mode: true
+  nlu_port: 8765
 
 # Lower loop rates while LiveKit mic session is active (reduces audio jitter on Pi)
 voice_profile:

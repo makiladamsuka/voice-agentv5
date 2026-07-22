@@ -117,7 +117,13 @@ async def _voice_ws_endpoint(websocket) -> None:
     speculative_cache = {}
     pending_ambiguity_category = None
     last_discussed_category = None
-    
+    # ── Echo / duplicate suppression ──────────────────────────────────────
+    # Track the last transcript text + timestamp so we can reject rapid
+    # repeats (speaker echo picked up by the browser mic).
+    _last_transcript_norm: str = ""
+    _last_transcript_ts: float = 0.0
+    _ECHO_SUPPRESS_SEC = 10.0  # suppress identical transcripts within this window
+
     def _normalize_text(t: str) -> str:
         return t.lower().strip(" \t\r\n.,?!;:")
 
@@ -156,6 +162,21 @@ async def _voice_ws_endpoint(websocket) -> None:
                 original_text = msg.get("text", "").strip()
                 if not original_text:
                     continue
+
+                # ── Duplicate / echo suppression ──────────────────────────
+                # If the exact same transcript arrives again within the
+                # suppression window, it's almost certainly the speaker
+                # echo being picked up by the browser mic.  Drop it.
+                import time as _time
+                _norm_incoming = _normalize_text(original_text)
+                _now = _time.monotonic()
+                if _norm_incoming == _last_transcript_norm and (_now - _last_transcript_ts) < _ECHO_SUPPRESS_SEC:
+                    print(f"[NLU] Echo suppressed (duplicate within {_ECHO_SUPPRESS_SEC}s): '{original_text}'")
+                    # Tell frontend to go back to listening
+                    await websocket.send_text(json.dumps({"type": "state", "conv_state": "listening"}))
+                    continue
+                _last_transcript_norm = _norm_incoming
+                _last_transcript_ts = _now
 
                 log.info(f"[NLU] Transcript: '{original_text}'")
                 print(f"[NLU] Transcript: '{original_text}'")

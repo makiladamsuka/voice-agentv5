@@ -121,6 +121,8 @@ async def _voice_ws_endpoint(websocket) -> None:
     # Use a mutable dict so reassignment works correctly in all scopes.
     import time as _time
     _echo = {"norm": "", "ts": 0.0, "suppress_sec": 10.0}
+    # ── Speculative throttle ──────────────────────────────────────────────
+    _spec = {"last_norm": "", "last_ts": 0.0, "min_interval": 1.0}
 
     def _normalize_text(t: str) -> str:
         return t.lower().strip(" \t\r\n.,?!;:")
@@ -144,6 +146,13 @@ async def _voice_ws_endpoint(websocket) -> None:
                     if pending_ambiguity_category:
                         user_text = f"{pending_ambiguity_category} {user_text}"
                     norm_text = _normalize_text(user_text)
+                    # ── Throttle: skip if same text or too soon ───────────
+                    _snow = _time.monotonic()
+                    if norm_text == _spec["last_norm"] or (_snow - _spec["last_ts"]) < _spec["min_interval"]:
+                        continue
+                    _spec["last_norm"] = norm_text
+                    _spec["last_ts"] = _snow
+                    # ─────────────────────────────────────────────────────
                     runtime = _get_runtime()
                     loop = asyncio.get_running_loop()
                     result = await loop.run_in_executor(
@@ -485,6 +494,22 @@ def _match_intent(runtime, user_text: str) -> dict:
         # ── Navigate intents: run live pathfinding and enrich the action ─────
         if action.get("action") == "navigate" and action.get("destination"):
             return _navigate_response(action["destination"])
+
+        # ── Events ambiguity: show all event buttons instead of a single event ──
+        if intent.get("_events_ambiguous"):
+            buttons = _get_event_buttons()
+            if buttons:
+                reply_text = "Here are the latest events on campus! Tap one to find out more."
+                audio_file = _generate_dynamic_tts(reply_text)
+                audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
+                return _with_audio_path({
+                    "reply_text": reply_text,
+                    "audio_url": audio_url,
+                    "action": {
+                        "action": "show_events",
+                        "suggested_buttons": buttons,
+                    },
+                }, audio_file)
 
         audio_file = intent.get("audio_file")
         

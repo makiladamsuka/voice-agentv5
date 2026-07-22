@@ -316,6 +316,15 @@ class IntentMatcher:
                                 },
                                 "ambiguity_category": category
                             }
+                # ── Events domain ambiguity: show all events instead of rejecting ──
+                if domain == "events" and d1 < threshold:
+                    print(f"  [Matcher] Events ambiguous → returning top match + show_events hint")
+                    top = self.intents_map.get(top_intent)
+                    if top:
+                        # Return the top event but flag it so nlu_server can inject all event buttons
+                        result = dict(top)
+                        result["_events_ambiguous"] = True
+                        return result
                 print("  [Matcher] Rejected: ambiguous top-2 candidates.")
                 return None
         else:

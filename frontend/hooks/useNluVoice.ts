@@ -185,6 +185,7 @@ export function useNluVoice({
 
       if (resolvedUrl) {
         const audio = new Audio(resolvedUrl);
+        audio.preload = "auto";
         audioRef.current = audio;
         try {
           await audio.play();
@@ -221,6 +222,7 @@ export function useNluVoice({
       try {
         const url = `/api/tts?text=${encodeURIComponent(replyText)}`;
         const audio = new Audio(url);
+        audio.preload = "auto";
         audioRef.current = audio;
         await audio.play();
         sendPlaybackStart(utteranceId ?? "");
@@ -347,8 +349,8 @@ export function useNluVoice({
       smart_format: "true",
       interim_results: "true",
       vad_events: "true",
-      endpointing: "300", // Fast response time
-      utterance_end_ms: "1000",
+      endpointing: "200", // Fast endpoint detection for low latency
+      utterance_end_ms: "800",
     });
 
     const cleanKw = (text: string) => 

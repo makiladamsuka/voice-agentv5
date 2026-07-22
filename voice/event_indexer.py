@@ -30,13 +30,13 @@ def _clients() -> list[tuple[OpenAI, str]]:
             "google/gemini-2.5-flash",
         ))
     if os.getenv("GROQ_API_KEY"):
-        # Groq free-tier vision model — good quality, no cost
+        # Groq free-tier vision model — good quality, zero cost
         options.append((
             OpenAI(
                 base_url="https://api.groq.com/openai/v1",
                 api_key=os.getenv("GROQ_API_KEY"),
             ),
-            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "llama-3.2-11b-vision-preview",
         ))
     return options
 

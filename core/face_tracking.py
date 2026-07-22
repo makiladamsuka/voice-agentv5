@@ -26,6 +26,12 @@ from typing import Optional
 import cv2
 import numpy as np
 
+# Limit OpenCV internal OpenMP threads to 2 cores to prevent CPU saturation on Pi
+try:
+    cv2.setNumThreads(2)
+except Exception:
+    pass
+
 try:
     import yaml
 except ImportError:

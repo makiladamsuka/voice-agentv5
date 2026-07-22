@@ -2,34 +2,34 @@
   "nodes": [
     {
       "id": "1781148136543",
-      "x": -3,
+      "x": -4,
       "z": 5,
       "building": "building_2",
-      "label": "DEpartment of Infromation technology",
+      "label": "Department of Information Technology",
       "type": "room",
       "size": [
-        15,
+        12,
         2,
-        1
+        2
       ]
     },
     {
       "id": "1781162040533",
-      "x": 2,
+      "x": -13,
       "z": 0,
-      "building": "building_1",
-      "label": "LECTURE HALL 8",
+      "building": "building_2",
+      "label": "Lecture hall 8",
       "type": "room",
       "size": [
-        6,
+        7,
         2,
-        6.5
+        7
       ]
     },
     {
       "id": "1781197414993",
-      "x": 1,
-      "z": 6,
+      "x": 2.5,
+      "z": 6.5,
       "building": "building_1",
       "label": "Front desk",
       "type": "room",
@@ -41,861 +41,801 @@
     },
     {
       "id": "1781197519029",
-      "x": -1,
-      "z": -7,
+      "x": -2,
+      "z": -6,
       "building": "building_1",
       "label": "Evaluator",
       "type": "room",
       "size": [
         1.5,
         2,
-        1
+        1.5
       ]
     },
     {
       "id": "1781197563001",
       "x": -5,
-      "z": -7,
+      "z": -6,
       "building": "building_1",
-      "label": "male washroom",
+      "label": "Male Washroom",
       "type": "room",
       "size": [
-        1,
+        1.5,
         2,
-        1
-      ]
+        1.5
+      ],
+      "color": "#949090"
     },
     {
       "id": "1781197908315",
-      "x": 3,
-      "z": -7,
-      "building": "building_1",
+      "x": -12,
+      "z": -6,
+      "building": "building_2",
       "label": "Laboratory 7",
       "type": "room",
       "size": [
-        4,
+        4.5,
         2,
-        1
+        2
       ]
     },
     {
       "id": "1781198178717",
-      "x": -8,
-      "z": -7,
+      "x": -7.5,
+      "z": -6,
       "building": "building_2",
       "label": "Director undergraduate studies",
       "type": "room",
       "size": [
-        2,
+        2.5,
         1.5,
         2
       ]
     },
     {
       "id": "1781198205764",
-      "x": -6,
-      "z": -7,
+      "x": -5,
+      "z": -6,
       "building": "building_2",
-      "label": "undergraduate devision",
+      "label": "Undergraduate Division",
       "type": "room",
       "size": [
-        2,
+        2.5,
         2,
         2
       ]
     },
     {
       "id": "1781198355817",
-      "x": 1,
-      "z": -7,
+      "x": -1.5,
+      "z": -6,
       "building": "building_2",
-      "label": "male washroom",
+      "label": "Male Washroom",
       "type": "room",
       "size": [
-        1,
+        1.5,
         2,
-        1
-      ]
+        1.5
+      ],
+      "color": "#949090"
     },
     {
       "id": "1781198364437",
-      "x": 5,
-      "z": -7,
+      "x": 1.5,
+      "z": -6,
       "building": "building_2",
-      "label": "female washroom",
+      "label": "feMale Washroom",
       "type": "room",
       "size": [
-        1,
         1.5,
-        1
-      ]
+        1.5,
+        1.5
+      ],
+      "color": "#949090"
     },
     {
       "id": "1781198456809",
-      "x": 6,
-      "z": -4,
+      "x": 4,
+      "z": -3,
       "building": "building_2",
-      "label": "DEAN office",
+      "label": "Dean's Office",
       "type": "room",
       "size": [
-        2.5,
+        3.5,
         1.5,
-        1.5
+        2.5
       ]
     },
     {
       "id": "1781198472735",
-      "x": 9,
-      "z": -4,
+      "x": 7.5,
+      "z": -3,
       "building": "building_2",
-      "label": "labratory 1",
+      "label": "Laboratory 1",
       "type": "room",
       "size": [
         3,
         1.5,
-        1
+        2
       ]
     },
     {
       "id": "1781198537692",
-      "x": 9,
-      "z": 0,
+      "x": 8,
+      "z": 3,
       "building": "building_2",
       "label": "EXIT",
       "type": "room",
       "size": [
+        2,
         1,
-        1,
-        1
+        2
       ]
     },
     {
       "id": "1781198556760",
-      "x": 7,
-      "z": 1,
+      "x": 5.5,
+      "z": 1.5,
       "building": "building_2",
       "label": "Lecture hall 1",
       "type": "room",
       "size": [
-        2,
+        3,
         1,
         3
       ]
     },
     {
       "id": "1781198587299",
-      "x": 7,
-      "z": 4,
+      "x": 5.5,
+      "z": 4.5,
       "building": "building_2",
       "label": "Lecture hall 2",
       "type": "room",
       "size": [
-        2,
+        3,
         2,
         3
       ]
     },
     {
-      "id": "1781199094782",
-      "x": 0,
-      "z": 5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781199113872",
-      "x": -3,
-      "z": -5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781199115035",
-      "x": -1,
-      "z": -5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781199116220",
-      "x": 1,
-      "z": -5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781199117289",
-      "x": 3,
-      "z": -5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781199164957",
-      "x": -9,
-      "z": -5,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781199177070",
-      "x": 3,
-      "z": -5,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781199177944",
-      "x": 3,
-      "z": -6,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781199178853",
-      "x": 3,
-      "z": -7,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781199243402",
-      "x": 4,
-      "z": -5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781199244673",
-      "x": 2,
-      "z": -5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781199246056",
-      "x": 0,
-      "z": -5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781199247383",
-      "x": -2,
-      "z": -5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781199255819",
-      "x": -1,
-      "z": 5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259528109",
-      "x": -3,
-      "z": -7,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259541505",
-      "x": -2,
-      "z": 5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259547804",
-      "x": 4,
-      "z": -4,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259549846",
-      "x": 4,
-      "z": -7,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259552686",
-      "x": -6,
-      "z": -5,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259554241",
-      "x": -8,
-      "z": -5,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259560929",
-      "x": 3,
-      "z": -2,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259562241",
-      "x": 6,
-      "z": -2,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259563408",
-      "x": 6,
-      "z": -4,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259565445",
-      "x": 9,
-      "z": -4,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259566971",
-      "x": 9,
-      "z": -2,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259570276",
-      "x": 5,
-      "z": -2,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259572005",
-      "x": 5,
-      "z": 1,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259574624",
-      "x": 5,
-      "z": 4,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259576903",
-      "x": 3,
-      "z": 5,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259674430",
-      "x": 1,
-      "z": 6,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259685902",
-      "x": 1,
-      "z": 5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259694938",
-      "x": 2,
-      "z": 5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259696388",
-      "x": 4,
-      "z": 5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259713702",
-      "x": 3,
-      "z": 5,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259822281",
-      "x": -8,
-      "z": -6,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259824343",
-      "x": -6,
-      "z": -6,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259864093",
-      "x": -5,
-      "z": -7,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259866176",
-      "x": -1,
-      "z": -7,
-      "building": "building_1",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259917315",
-      "x": 7,
-      "z": 1,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259919697",
-      "x": 7,
-      "z": 4,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
-      "id": "1781259942184",
-      "x": 9,
-      "z": 0,
-      "building": "building_2",
-      "label": "Waypoint",
-      "type": "waypoint"
-    },
-    {
       "id": "1781449457527",
-      "x": 3,
-      "z": -7,
+      "x": 0,
+      "z": -6,
       "building": "building_2",
-      "label": "Staircase",
+      "label": "Staircase 2",
       "type": "room",
       "size": [
+        1.5,
         1,
-        1,
-        1
+        1.5
       ]
     },
     {
       "id": "1781449466199",
-      "x": -3,
-      "z": -7,
+      "x": -3.5,
+      "z": -6,
       "building": "building_1",
-      "label": "Staircase",
+      "label": "Staircase 1",
       "type": "room",
       "size": [
+        1.5,
         1,
-        1,
-        1
+        1.5
       ]
+    },
+    {
+      "id": "1782223582333",
+      "x": 2.5,
+      "z": 5.5,
+      "building": "building_1",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223584608",
+      "x": 2.5,
+      "z": 5,
+      "building": "building_1",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223587287",
+      "x": 8.5,
+      "z": 5,
+      "building": "building_1",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223589208",
+      "x": -2,
+      "z": 5,
+      "building": "building_1",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223592790",
+      "x": -2,
+      "z": -4.5,
+      "building": "building_1",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223598176",
+      "x": 4,
+      "z": -4.5,
+      "building": "building_1",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223600581",
+      "x": 4,
+      "z": -6,
+      "building": "building_1",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223602040",
+      "x": 4,
+      "z": -3.5,
+      "building": "building_1",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223603985",
+      "x": -3.5,
+      "z": -4.5,
+      "building": "building_1",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223606753",
+      "x": -5,
+      "z": -6,
+      "building": "building_1",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223607555",
+      "x": -2,
+      "z": -6,
+      "building": "building_1",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223608459",
+      "x": -3.5,
+      "z": -6,
+      "building": "building_1",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223610617",
+      "x": -7.5,
+      "z": -4.5,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223612028",
+      "x": -5,
+      "z": -4.5,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223613312",
+      "x": -5,
+      "z": -6,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223615767",
+      "x": -7.5,
+      "z": -6,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223617972",
+      "x": 0,
+      "z": -4.5,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223620755",
+      "x": -1.5,
+      "z": -6,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223621573",
+      "x": 0,
+      "z": -6,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223622397",
+      "x": 1.5,
+      "z": -6,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223625242",
+      "x": 1.5,
+      "z": -4.5,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223628545",
+      "x": 1.5,
+      "z": -1,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223630230",
+      "x": 4,
+      "z": -1,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223632033",
+      "x": 7.5,
+      "z": -1,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223633413",
+      "x": 7.5,
+      "z": -3,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223635306",
+      "x": 4,
+      "z": -2.5,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223639301",
+      "x": 3,
+      "z": -1,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223641062",
+      "x": 3,
+      "z": 2,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223642438",
+      "x": 3,
+      "z": 5,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223644216",
+      "x": 5.5,
+      "z": 2,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223645642",
+      "x": 5.5,
+      "z": 5,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223648343",
+      "x": 8,
+      "z": -1,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
+    },
+    {
+      "id": "1782223650160",
+      "x": 8,
+      "z": 3,
+      "building": "building_2",
+      "label": "Waypoint",
+      "type": "waypoint"
     }
   ],
   "edges": [
     {
-      "id": "1781251462713",
-      "source": "1781199094782",
-      "target": "1781199255819"
+      "id": "e_1781197414993_1782223584608_1782223657867",
+      "source": "1781197414993",
+      "target": "1782223584608",
+      "visible": true
     },
     {
-      "id": "1781259588465",
-      "source": "1781199094782",
-      "target": "1781259541505"
+      "id": "e_1782223584608_1782223589208_1782223698590",
+      "source": "1782223584608",
+      "target": "1782223589208",
+      "visible": true
     },
     {
-      "id": "1781259592658",
-      "source": "1781259541505",
-      "target": "1781199247383"
+      "id": "e_1782223589208_1782223592790_1782223700653",
+      "source": "1782223589208",
+      "target": "1782223592790",
+      "visible": true
     },
     {
-      "id": "1781259595679",
-      "source": "1781199247383",
-      "target": "1781199113872"
+      "id": "e_1782223592790_1782223603985_1782223702352",
+      "source": "1782223592790",
+      "target": "1782223603985",
+      "visible": true
     },
     {
-      "id": "1781259597667",
-      "source": "1781199113872",
-      "target": "1781259528109"
+      "id": "e_1782223592790_1782223598176_1782223773810",
+      "source": "1782223592790",
+      "target": "1782223598176",
+      "visible": true
     },
     {
-      "id": "1781259613050",
-      "source": "1781199247383",
-      "target": "1781199177070"
+      "id": "e_1782223598176_1782223625242_1782223775877",
+      "source": "1782223598176",
+      "target": "1782223625242",
+      "visible": true
     },
     {
-      "id": "1781259617478",
-      "source": "1781199177070",
-      "target": "1781199178853"
+      "id": "e_1782223625242_1782223628545_1782223778266",
+      "source": "1782223625242",
+      "target": "1782223628545",
+      "visible": true
     },
     {
-      "id": "1781259620617",
-      "source": "1781199177070",
-      "target": "1781259576903"
+      "id": "e_1782223628545_1782223648343_1782223780892",
+      "source": "1782223628545",
+      "target": "1782223648343",
+      "visible": true
     },
     {
-      "id": "1781259623471",
-      "source": "1781259560929",
-      "target": "1781259566971"
+      "id": "e_1782223648343_1782223650160_1782223782790",
+      "source": "1782223648343",
+      "target": "1782223650160",
+      "visible": true
     },
     {
-      "id": "1781259625750",
-      "source": "1781259562241",
-      "target": "1781259563408"
+      "id": "e_1782223632033_1782223633413_1782223785470",
+      "source": "1782223632033",
+      "target": "1782223633413",
+      "visible": true
     },
     {
-      "id": "1781259628332",
-      "source": "1781259566971",
-      "target": "1781259565445"
+      "id": "e_1782223630230_1782223635306_1782223788694",
+      "source": "1782223630230",
+      "target": "1782223635306",
+      "visible": true
     },
     {
-      "id": "1781259633957",
-      "source": "1781259570276",
-      "target": "1781259574624"
+      "id": "e_1782223639301_1782223642438_1782223791500",
+      "source": "1782223639301",
+      "target": "1782223642438",
+      "visible": true
     },
     {
-      "id": "1781259638874",
-      "source": "1781199243402",
-      "target": "1781259549846"
+      "id": "e_1782223641062_1782223644216_1782223794752",
+      "source": "1782223641062",
+      "target": "1782223644216",
+      "visible": true
     },
     {
-      "id": "1781259641396",
-      "source": "1781199243402",
-      "target": "1781259547804"
+      "id": "e_1782223642438_1782223645642_1782223797604",
+      "source": "1782223642438",
+      "target": "1782223645642",
+      "visible": true
     },
     {
-      "id": "1781259719389",
-      "source": "1781259674430",
-      "target": "1781259685902"
+      "id": "e_1782223584608_1782223587287_1782223800384",
+      "source": "1782223584608",
+      "target": "1782223587287",
+      "visible": true
     },
     {
-      "id": "1781259739278",
-      "source": "1781259685902",
-      "target": "1781199094782"
+      "id": "e_1782223598176_1782223602040_1782223804717",
+      "source": "1782223598176",
+      "target": "1782223602040",
+      "visible": true
     },
     {
-      "id": "1781259743890",
-      "source": "1781259696388",
-      "target": "1781259685902"
+      "id": "e_1782223608459_1782223606753_1782223833475",
+      "source": "1782223608459",
+      "target": "1782223606753",
+      "visible": true
     },
     {
-      "id": "1781259830636",
-      "source": "1781259554241",
-      "target": "1781198178717"
+      "id": "e_1782223608459_1782223607555_1782223835620",
+      "source": "1782223608459",
+      "target": "1782223607555",
+      "visible": true
     },
     {
-      "id": "1781259833217",
-      "source": "1781259552686",
-      "target": "1781198205764"
+      "id": "e_1782223621573_1782223620755_1782223845895",
+      "source": "1782223621573",
+      "target": "1782223620755",
+      "visible": true
     },
     {
-      "id": "1781259869975",
-      "source": "1781259528109",
-      "target": "1781259864093"
+      "id": "e_1781449457527_1782223622397_1782223848616",
+      "source": "1781449457527",
+      "target": "1782223622397",
+      "visible": true
     },
     {
-      "id": "1781259887794",
-      "source": "1781259528109",
-      "target": "1781259866176"
+      "id": "e_1782223598176_1782223600581_1782223890882",
+      "source": "1782223598176",
+      "target": "1782223600581",
+      "visible": true
     },
     {
-      "id": "1781259925344",
-      "source": "1781259572005",
-      "target": "1781198556760"
+      "id": "e_1782223610617_1782223615767_1782223905431",
+      "source": "1782223610617",
+      "target": "1782223615767",
+      "visible": true
     },
     {
-      "id": "1781259928579",
-      "source": "1781259574624",
-      "target": "1781259919697"
+      "id": "e_1782223612028_1782223613312_1782223907653",
+      "source": "1782223612028",
+      "target": "1782223613312",
+      "visible": true
     },
     {
-      "id": "1781259948088",
-      "source": "1781259566971",
-      "target": "1781259942184"
+      "id": "e_1782223621573_1782223622397_1782223913183",
+      "source": "1782223621573",
+      "target": "1782223622397",
+      "visible": true
     },
     {
-      "id": "bridge_floor_1_1_1781197519029_1781259866176",
-      "source": "1781197519029",
-      "target": "1781259866176",
-      "visible": false
+      "id": "e_1782223617972_1782223621573_1782223916946",
+      "source": "1782223617972",
+      "target": "1782223621573",
+      "visible": true
     },
     {
-      "id": "bridge_floor_1_2_1781259864093_1781197563001",
-      "source": "1781259864093",
-      "target": "1781197563001",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_3_1781199178853_1781197908315",
-      "source": "1781199178853",
-      "target": "1781197908315",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_4_1781199177070_1781199117289",
-      "source": "1781199177070",
-      "target": "1781199117289",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_5_1781259576903_1781259713702",
-      "source": "1781259576903",
-      "target": "1781259713702",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_6_1781198364437_1781259549846",
-      "source": "1781198364437",
-      "target": "1781259549846",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_7_1781198456809_1781259563408",
-      "source": "1781198456809",
-      "target": "1781259563408",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_8_1781198472735_1781259565445",
-      "source": "1781198472735",
-      "target": "1781259565445",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_9_1781259942184_1781198537692",
-      "source": "1781259942184",
-      "target": "1781198537692",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_10_1781198556760_1781259917315",
-      "source": "1781198556760",
-      "target": "1781259917315",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_11_1781198587299_1781259919697",
-      "source": "1781198587299",
-      "target": "1781259919697",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_12_1781148136543_1781259541505",
-      "source": "1781148136543",
-      "target": "1781259541505",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_13_1781259864093_1781198205764",
-      "source": "1781259864093",
-      "target": "1781198205764",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_14_1781199177070_1781199243402",
-      "source": "1781199177070",
-      "target": "1781199243402",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_15_1781199247383_1781199115035",
-      "source": "1781199247383",
-      "target": "1781199115035",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_16_1781199177070_1781199177944",
-      "source": "1781199177070",
-      "target": "1781199177944",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_17_1781199177070_1781199244673",
-      "source": "1781199177070",
-      "target": "1781199244673",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_18_1781199244673_1781199116220",
-      "source": "1781199244673",
-      "target": "1781199116220",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_19_1781199115035_1781199246056",
-      "source": "1781199115035",
-      "target": "1781199246056",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_20_1781259685902_1781259694938",
-      "source": "1781259685902",
-      "target": "1781259694938",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_21_1781259554241_1781199164957",
-      "source": "1781259554241",
-      "target": "1781199164957",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_22_1781198178717_1781259822281",
-      "source": "1781198178717",
-      "target": "1781259822281",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_23_1781259562241_1781259570276",
-      "source": "1781259562241",
-      "target": "1781259570276",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_24_1781259674430_1781197414993",
-      "source": "1781259674430",
-      "target": "1781197414993",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_25_1781259696388_1781259574624",
-      "source": "1781259696388",
-      "target": "1781259574624",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_26_1781199178853_1781198355817",
-      "source": "1781199178853",
-      "target": "1781198355817",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_27_1781259822281_1781259824343",
-      "source": "1781259822281",
-      "target": "1781259824343",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_28_1781162040533_1781259560929",
-      "source": "1781162040533",
-      "target": "1781259560929",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_29_1781259942184_1781198556760",
-      "source": "1781259942184",
-      "target": "1781198556760",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_30_1781199177070_1781259560929",
-      "source": "1781199177070",
-      "target": "1781259560929",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_31_1781199113872_1781259824343",
-      "source": "1781199113872",
-      "target": "1781259824343",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_1_1781199178853_1781449457527",
-      "source": "1781199178853",
-      "target": "1781449457527",
-      "visible": false
-    },
-    {
-      "id": "bridge_floor_1_2_1781259528109_1781449466199",
-      "source": "1781259528109",
+      "id": "e_1782223603985_1781449466199_1782223926009",
+      "source": "1782223603985",
       "target": "1781449466199",
-      "visible": false
+      "visible": true
+    },
+    {
+      "id": "e_1781449466199_1782223606753_1782223927939",
+      "source": "1781449466199",
+      "target": "1782223606753",
+      "visible": true
+    },
+    {
+      "id": "e_1782223602040_1781162040533_1782308960597",
+      "source": "1782223602040",
+      "target": "1781162040533",
+      "visible": true
+    },
+    {
+      "id": "e_1782223592790_1782223617972_1782332437405",
+      "source": "1782223592790",
+      "target": "1782223617972",
+      "visible": true
+    },
+    {
+      "id": "e_1782223587287_1781148136543_1782332462845",
+      "source": "1782223587287",
+      "target": "1781148136543",
+      "visible": true
+    },
+    {
+      "id": "e_1782223600581_1781197908315_1782332487059",
+      "source": "1782223600581",
+      "target": "1781197908315",
+      "visible": true
+    },
+    {
+      "id": "e_1782223608459_1782223603985_1782375756134",
+      "source": "1782223608459",
+      "target": "1782223603985",
+      "visible": true
+    },
+    {
+      "id": "e_1782223592790_1782223625242_1782375772741",
+      "source": "1782223592790",
+      "target": "1782223625242",
+      "visible": true
+    },
+    {
+      "id": "e_1782223628545_1782223630230_1782375776396",
+      "source": "1782223628545",
+      "target": "1782223630230",
+      "visible": true
+    },
+    {
+      "id": "e_1782223648343_1781198537692_1782375985143",
+      "source": "1782223648343",
+      "target": "1781198537692",
+      "visible": true
     }
   ],
   "buildings": {
     "building_1": {
       "position": [
-        -5,
+        -4.5,
         0,
         -1
       ],
       "size": [
-        10,
-        15
+        12,
+        14
       ],
       "color": "#ffffff",
-      "name": "Building 1"
+      "name": "Building 1",
+      "removed_cells": [
+        "1_4",
+        "0_4",
+        "2_4",
+        "2_5",
+        "2_6",
+        "2_7",
+        "2_8",
+        "2_9",
+        "2_10",
+        "2_11",
+        "2_12",
+        "2_13",
+        "1_13",
+        "0_13",
+        "0_12",
+        "0_10",
+        "0_11",
+        "0_9",
+        "0_8",
+        "0_7",
+        "0_6",
+        "0_5",
+        "1_5",
+        "1_6",
+        "1_7",
+        "1_8",
+        "1_9",
+        "1_10",
+        "1_11",
+        "1_12",
+        "2_3",
+        "1_3",
+        "0_3"
+      ]
     },
     "building_2": {
       "position": [
-        10,
+        11,
         0,
         -1
       ],
       "size": [
-        20,
-        16
+        18,
+        14
       ],
-      "color": "#a5f3fc",
-      "name": "Building 2"
+      "color": "#ffffff",
+      "name": "Building 2",
+      "removed_cells": [
+        "1_3",
+        "1_4",
+        "1_5",
+        "1_6",
+        "1_7",
+        "1_8",
+        "1_9",
+        "1_10",
+        "2_10",
+        "3_10",
+        "4_10",
+        "5_10",
+        "6_10",
+        "7_10",
+        "8_10",
+        "9_10",
+        "9_9",
+        "9_8",
+        "9_7",
+        "9_6",
+        "9_5",
+        "9_4",
+        "9_3",
+        "8_3",
+        "7_3",
+        "6_3",
+        "5_3",
+        "4_3",
+        "3_3",
+        "2_3",
+        "2_4",
+        "2_5",
+        "2_6",
+        "2_7",
+        "2_8",
+        "2_9",
+        "3_9",
+        "3_8",
+        "3_7",
+        "3_6",
+        "3_5",
+        "3_4",
+        "4_4",
+        "4_5",
+        "4_6",
+        "4_7",
+        "4_8",
+        "4_9",
+        "5_9",
+        "5_8",
+        "5_7",
+        "5_6",
+        "5_5",
+        "5_4",
+        "6_4",
+        "7_4",
+        "8_4",
+        "8_5",
+        "7_5",
+        "6_5",
+        "6_6",
+        "6_7",
+        "6_8",
+        "6_9",
+        "7_9",
+        "7_8",
+        "7_7",
+        "7_6",
+        "8_6",
+        "8_7",
+        "8_8",
+        "8_9"
+      ]
     }
   },
   "format": "3d"

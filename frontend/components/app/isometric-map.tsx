@@ -146,8 +146,8 @@ const getRoomTheme = (label: string) => {
   if (lower.includes("lecture hall")) return { color: "#1e3a8a", icon: "🎓" };
   if (lower.includes("laboratory") || lower.includes("lab"))
     return { color: "#4c1d95", icon: "🔬" };
-  if (lower.includes("office")) return { color: "#0f766e", icon: "🏢" };
-  if (lower.includes("washroom")) return { color: "#115e59", icon: "🚻" };
+  if (lower.includes("office")) return { color: "#089d91ff", icon: "🏢" };
+  if (lower.includes("washroom")) return { color: "#949090", icon: "🚻" };
   if (lower.includes("desk") || lower.includes("evaluator"))
     return { color: "#3730a3", icon: "💁" };
   return { color: "#334155", icon: "📍" }; // default sleek slate
@@ -165,7 +165,7 @@ const AnimatedFloorGroup = ({
 }) => {
   const groupRef = useRef<THREE.Group>(null);
   const lastFloorRef = useRef<string>(currentFloor);
-  
+
   // Spring state refs
   const velocityRef = useRef<number>(0);
   const positionYRef = useRef<number>(0);
@@ -175,7 +175,7 @@ const AnimatedFloorGroup = ({
       if (lastFloorRef.current && lastFloorRef.current !== currentFloor) {
         const lastNum = parseInt(lastFloorRef.current.replace(/\D/g, "")) || 1;
         const currentNum = parseInt(currentFloor.replace(/\D/g, "")) || 1;
-        
+
         // Reset spring position and velocity on floor change so they always animate in
         const startY = currentNum > lastNum ? 10 : -10;
         groupRef.current.position.y = startY;
@@ -443,20 +443,18 @@ export default function NavigationMap({
                   cancelAnim();
                   setCurrentFloor(f as string);
                 }}
-                className={`w-full min-h-[52px] px-3 py-2.5 rounded-3xl font-bold flex flex-col items-center justify-center border transition-all duration-300 shadow-lg backdrop-blur-md overflow-hidden ${
-                  isButtonActive
+                className={`w-full min-h-[52px] px-3 py-2.5 rounded-3xl font-bold flex flex-col items-center justify-center border transition-all duration-300 shadow-lg backdrop-blur-md overflow-hidden ${isButtonActive
                     ? "bg-blue-500/80 text-white border-blue-400/30"
                     : "bg-black/60 text-white border-white/10"
-                }`}
+                  }`}
               >
                 <span className="text-[14px] leading-tight">
                   {(f as string).replace("floor_", "Floor ")}
                 </span>
                 {badge ? (
                   <span
-                    className={`text-[10px] mt-0.5 font-semibold leading-tight ${
-                      isButtonActive ? "opacity-85 text-white" : "opacity-70 text-white"
-                    }`}
+                    className={`text-[10px] mt-0.5 font-semibold leading-tight ${isButtonActive ? "opacity-85 text-white" : "opacity-70 text-white"
+                      }`}
                   >
                     {badge}
                   </span>
@@ -468,8 +466,8 @@ export default function NavigationMap({
       )}
 
       {/* 3D Canvas */}
-      <div 
-        className="w-full h-full" 
+      <div
+        className="w-full h-full"
         onClick={(e) => e.stopPropagation()}
         onWheel={(e) => {
           e.stopPropagation();
@@ -562,7 +560,7 @@ export default function NavigationMap({
                   node.label?.toLowerCase() === destination.toLowerCase();
                 const theme = getRoomTheme(node.label);
                 // Use a vibrant indigo for the destination instead of green
-                const boxColor = isDestination ? "#2563EB" : theme.color;
+                const boxColor = isDestination ? "#2563EB" : (node.color || theme.color);
 
                 // Elevate ALL labels and alternate heights to prevent crossing
                 const staggerHeight = 1.0 + (index % 2) * 0.8;
@@ -626,15 +624,15 @@ export default function NavigationMap({
               {!isStandalone &&
                 destNode &&
                 destNode.floor === currentFloor && (
-                <DestinationMarker
-                  position={[
-                    destNode.world[0],
-                    destNode.world[1],
-                    destNode.world[2],
-                  ]}
-                  label={destination}
-                />
-              )}
+                  <DestinationMarker
+                    position={[
+                      destNode.world[0],
+                      destNode.world[1],
+                      destNode.world[2],
+                    ]}
+                    label={destination}
+                  />
+                )}
             </AnimatedFloorGroup>
 
             <OrbitControls

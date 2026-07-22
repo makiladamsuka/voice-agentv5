@@ -182,10 +182,10 @@ async def _voice_ws_endpoint(websocket) -> None:
                 _norm_incoming = _normalize_text(original_text)
                 _now = _time.monotonic()
                 _dt = _now - _echo["ts"]
-                is_duplicate_prompt = (_norm_incoming == _echo["norm"])
                 is_reply_echo = (
                     bool(_echo["reply_norm"])
-                    and len(_norm_incoming) >= 3
+                    and len(_norm_incoming) >= 10
+                    and len(_norm_incoming) >= 0.7 * len(_echo["reply_norm"])
                     and _norm_incoming in _echo["reply_norm"]
                 )
 
@@ -331,7 +331,7 @@ async def _voice_ws_endpoint(websocket) -> None:
             elif msg_type == "tts_done":
                 _echo["speaking"] = False
                 _echo["ts"] = _time.monotonic()
-                _echo["suppress_sec"] = 5.0
+                _echo["suppress_sec"] = 1.5
                 sync = get_speech_sync_service()
                 if sync is not None:
                     sync.end_playback()

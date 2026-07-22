@@ -343,14 +343,13 @@ export function useNluVoice({
       dgWs.current = null;
     }
 
-    // Deepgram's own VAD + endpointing — no Silero / ONNX in the browser.
     const params = new URLSearchParams({
       model: "nova-3",
       smart_format: "true",
       interim_results: "true",
       vad_events: "true",
-      endpointing: "200", // Fast endpoint detection for low latency
-      utterance_end_ms: "800",
+      endpointing: "300", // Official Deepgram recommended VAD endpointing
+      utterance_end_ms: "1000",
     });
 
     const cleanKw = (text: string) => 
@@ -359,7 +358,7 @@ export function useNluVoice({
     const baseKeywords = [
       "lab 8",
       "lab 7",
-      "deans office", // Removed apostrophe explicitly
+      "deans office",
       "undergraduate department",
       "lecture hall",
       "front desk",
@@ -373,15 +372,17 @@ export function useNluVoice({
       ...eventKeywordsRef.current,
     ];
     
-    // Deduplicate! Deepgram might 400 if the same keyterm is passed multiple times
-    const uniqueKeywords = Array.from(new Set(rawDomainKeywords));
+    // Deduplicate and filter out empty strings
+    const uniqueKeywords = Array.from(new Set(rawDomainKeywords)).filter(k => k && k.length > 1);
     uniqueKeywords.forEach((kw) => params.append("keyterm", kw));
 
     const url = `wss://api.deepgram.com/v1/listen?${params}`;
     console.log("[NluVoice] Opening Deepgram stream (built-in VAD)…");
 
+    const cleanKey = apiKey.trim();
+
     return new Promise((resolve, reject) => {
-      const dg = new WebSocket(url, ["token", apiKey]);
+      const dg = new WebSocket(url, ["token", cleanKey]);
       dgWs.current = dg;
       let settled = false;
 

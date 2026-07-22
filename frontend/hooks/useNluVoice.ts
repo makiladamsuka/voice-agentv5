@@ -110,6 +110,10 @@ export function useNluVoice({
   const dgKeepAliveIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startMicCaptureRef = useRef<() => Promise<void>>(null as any);
   const eventKeywordsRef = useRef<string[]>([]);
+  /** Timestamp when speaking ends — used to reject Deepgram echo transcripts */
+  const speakingEndedAtRef = useRef<number>(0);
+  /** How long (ms) to reject Deepgram results after TTS ends (echo cooldown) */
+  const ECHO_COOLDOWN_MS = 2000;
 
   const apiKey =
     deepgramApiKey ?? process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY ?? "";
@@ -171,13 +175,15 @@ export function useNluVoice({
       const resumeAfter = () => {
         sentUtteranceRef.current = false;
         pendingTranscriptRef.current = "";
+        // Mark when speaking ended so we can reject echo transcripts
+        speakingEndedAtRef.current = Date.now();
         if (resumeTimeoutRef.current) {
           clearTimeout(resumeTimeoutRef.current);
         }
         resumeTimeoutRef.current = setTimeout(() => {
           setVoiceState("listening");
           resumeTimeoutRef.current = null;
-        }, 800); // 800ms guard to prevent audio tail-echo from triggering VAD
+        }, ECHO_COOLDOWN_MS);
       };
 
       if (resolvedUrl) {
@@ -261,10 +267,16 @@ export function useNluVoice({
       const busy =
         stateRef.current === "speaking" || stateRef.current === "thinking";
 
+      // Reject anything from Deepgram during the echo cooldown window.
+      // After TTS ends, the mic may still pick up speaker tail-echo
+      // which Deepgram transcribes and sends back — causing an infinite loop.
+      const msSinceSpeaking = Date.now() - speakingEndedAtRef.current;
+      const inEchoCooldown = msSinceSpeaking < ECHO_COOLDOWN_MS;
+
       // Deepgram VAD: user started talking → barge-in (only while listening)
       if (data.type === "SpeechStarted") {
-        if (busy) {
-          // Ignore speaker echo while we play a reply / wait for NLU
+        if (busy || inEchoCooldown) {
+          // Ignore speaker echo while we play a reply / wait for NLU / cooldown
           return;
         }
         console.log("[Deepgram VAD] SpeechStarted");
@@ -277,8 +289,8 @@ export function useNluVoice({
         return;
       }
 
-      // Ignore STT while robot is thinking/speaking (echo + overlap)
-      if (busy) return;
+      // Ignore STT while robot is thinking/speaking or during echo cooldown
+      if (busy || inEchoCooldown) return;
 
       // End-of-utterance (word-timing based). Flush pending if speech_final missed.
       if (data.type === "UtteranceEnd") {

@@ -23,12 +23,21 @@ SERVO_SEND_MIN_DEG = 0.06
 SERVO_SEND_HZ = 25.0
 SERVO_ANGLE_QUANTUM_DEG = 0.2
 _SERVO_ACK_RE = re.compile(r"^OK\s+P(-?\d+)\s+T(-?\d+)\s*$")
+_ARM_HOME_RE = re.compile(r"^HOME\s+A0=")
 _BASE_ACK_RE = re.compile(r"^OK\s+B(-?\d+(?:\.\d+)?)\s*$")
 _OK_C_RE = re.compile(r"^OK\s+C(-?\d+(?:\.\d+)?)\s*$")
 _OK_E_RE = re.compile(r"^OK\s+E(-?\d+)\s*$")
 _BASE_STATUS_RE = re.compile(
     r"^POS\s+(-?\d+)\s+DEG\s+(-?\d+(?:\.\d+)?)\s+CPD\s+(-?\d+(?:\.\d+)?)\s+BUSY\s+([01])\s*$"
 )
+_PROX_EVENT_RE = re.compile(
+    r"^PROX\s+A=([LCR])\s+V=(-?\d+)\s+D=(\d+)\s+C=(\d+)\s*$"
+)
+_PROX_DEPART_RE = re.compile(
+    r"^PROX\s+D=([LCR])\s+V=(-?\d+)\s+D=(\d+)\s+C=(\d+)\s*$"
+)
+_PROX_CLEAR_RE = re.compile(r"^PROX\s+CLEAR\s*$")
+_ZONE_RE = re.compile(r"^ZONE\s+L=([01])\s+C=([01])\s+R=([01])\s*$")
 
 
 @dataclass(frozen=True)
@@ -66,6 +75,10 @@ class ArduinoServoLink:
         self._connected = False
         self._last_pan: Optional[float] = None
         self._last_tilt: Optional[float] = None
+        self._last_a0: Optional[float] = None
+        self._last_a1: Optional[float] = None
+        self._last_a2: Optional[float] = None
+        self._last_a3: Optional[float] = None
         self._last_base_ack: Optional[float] = None
         self._last_send_ts = 0.0
         self.servo_send_min_deg = SERVO_SEND_MIN_DEG
@@ -74,9 +87,29 @@ class ArduinoServoLink:
         self.home_smooth_sec = 0.9
         self.home_smooth_hz = 30.0
         self.base_command_scale = 1.0
+        self.encoder_sign = -1.0
         self.base_move_timeout_sec = BASE_MOVE_TIMEOUT_SEC
         self.last_base_error: Optional[str] = None
         self._error_logged = False
+        self._boot_banner = ""
+        self._prox_callback = None  # callable(line: str) for PROX/ZONE events
+
+    def firmware_banner(self) -> str:
+        return self._boot_banner
+
+    def arm_firmware_hint(self) -> str:
+        banner = self._boot_banner
+        if "head_servo_hands" in banner:
+            return ""
+        if "head_servo_v5_base" in banner:
+            return (
+                "Detected head-only firmware (FW head_servo_v5_base). "
+                "Flash firmware/head_servo_hands/ for arm servos."
+            )
+        return (
+            "ESP32 did not answer V with HOME A0=... "
+            "(wrong sketch, serial noise, or retry after reboot)."
+        )
 
     @property
     def connected(self) -> bool:
@@ -86,9 +119,16 @@ class ArduinoServoLink:
         if self._ser is None:
             return
         try:
-            if self._ser.in_waiting:
-                # Non-blocking flush: avoids hanging if garbage bytes keep streaming.
-                self._ser.reset_input_buffer()
+            while self._ser.in_waiting:
+                line = self._ser.readline().decode("utf-8", errors="ignore").strip()
+                if not line:
+                    break
+                # Route PROX / ZONE events to registered callback
+                if (line.startswith("PROX") or line.startswith("ZONE")) and self._prox_callback:
+                    try:
+                        self._prox_callback(line)
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -109,6 +149,7 @@ class ArduinoServoLink:
                     buf += chunk.decode("utf-8", errors="ignore")
                     if len(buf) > 2048:
                         buf = buf[-1024:]
+                    self._boot_banner = buf
                     if "READY" in buf or "FW head_servo" in buf:
                         return True
                 time.sleep(0.02)
@@ -162,6 +203,13 @@ class ArduinoServoLink:
             line = self._ser.readline().decode("utf-8", errors="ignore").strip()
             if not line:
                 continue
+            # Route PROX / ZONE events to registered callback even while waiting for ACK
+            if (line.startswith("PROX") or line.startswith("ZONE")) and self._prox_callback:
+                try:
+                    self._prox_callback(line)
+                except Exception:
+                    pass
+                continue
             if line.startswith("ERR B"):
                 self.last_base_error = line
                 print(line)
@@ -171,6 +219,12 @@ class ArduinoServoLink:
                 if pattern.match(line):
                     return line
         return None
+
+    def mute_tof(self) -> bool:
+        return self.send_line("TM", drain_after=False)
+
+    def unmute_tof(self) -> bool:
+        return self.send_line("TU", drain_after=False)
 
     def _read_ack(self, timeout: float = ACK_TIMEOUT_SEC) -> Optional[Tuple[int, int]]:
         line = self._read_line_matching(timeout, _SERVO_ACK_RE)
@@ -269,6 +323,118 @@ class ArduinoServoLink:
             self._last_send_ts = now
         return ok
 
+    @staticmethod
+    def _format_arm_cmd(a0: float, a1: float, a2: float, a3: float) -> str:
+        return f"A0={a0:.1f} A1={a1:.1f} A2={a2:.1f} A3={a3:.1f}"
+
+    def has_arm_firmware(self) -> bool:
+        """True if ESP32 responds to V with HOME A0= (head_servo_hands sketch)."""
+        if "head_servo_hands" not in self._boot_banner:
+            if "head_servo_v5_base" in self._boot_banner:
+                return False
+        for _ in range(3):
+            if not self.send_line("V", drain_after=False):
+                time.sleep(0.1)
+                continue
+            if self._read_line_matching(ACK_TIMEOUT_SEC, _ARM_HOME_RE) is not None:
+                return True
+            time.sleep(0.12)
+        return False
+
+    def write_arms(
+        self,
+        a0: float,
+        a1: float,
+        a2: float,
+        a3: float,
+        *,
+        force: bool = False,
+    ) -> bool:
+        a0 = _quantize_servo_angle(a0, self.servo_angle_quantum_deg)
+        a1 = _quantize_servo_angle(a1, self.servo_angle_quantum_deg)
+        a2 = _quantize_servo_angle(a2, self.servo_angle_quantum_deg)
+        a3 = _quantize_servo_angle(a3, self.servo_angle_quantum_deg)
+        now = time.time()
+        send_interval = 1.0 / max(1.0, self.servo_send_hz)
+        moved = (
+            self._last_a0 is None
+            or self._last_a1 is None
+            or self._last_a2 is None
+            or self._last_a3 is None
+            or abs(a0 - self._last_a0) >= self.servo_send_min_deg
+            or abs(a1 - self._last_a1) >= self.servo_send_min_deg
+            or abs(a2 - self._last_a2) >= self.servo_send_min_deg
+            or abs(a3 - self._last_a3) >= self.servo_send_min_deg
+        )
+        due = (now - self._last_send_ts) >= send_interval
+        if not force and not (moved and due):
+            return True
+        ok = self.send_line(self._format_arm_cmd(a0, a1, a2, a3), drain_after=False)
+        if ok:
+            self._last_a0 = a0
+            self._last_a1 = a1
+            self._last_a2 = a2
+            self._last_a3 = a3
+            self._last_send_ts = now
+        return ok
+
+    def detach_arms(self) -> bool:
+        """Stop PCA9685 PWM on arm channels only (AO). Head pan/tilt unaffected."""
+        self._last_a0 = None
+        self._last_a1 = None
+        self._last_a2 = None
+        self._last_a3 = None
+        return self.send_line("AO", drain_after=False)
+
+    def write_angles_and_arms(
+        self,
+        pan: float,
+        tilt: float,
+        a0: float,
+        a1: float,
+        a2: float,
+        a3: float,
+        *,
+        force: bool = False,
+        wait_ack: bool = False,
+    ) -> bool:
+        pan = _quantize_servo_angle(pan, self.servo_angle_quantum_deg)
+        tilt = _quantize_servo_angle(tilt, self.servo_angle_quantum_deg)
+        a0 = _quantize_servo_angle(a0, self.servo_angle_quantum_deg)
+        a1 = _quantize_servo_angle(a1, self.servo_angle_quantum_deg)
+        a2 = _quantize_servo_angle(a2, self.servo_angle_quantum_deg)
+        a3 = _quantize_servo_angle(a3, self.servo_angle_quantum_deg)
+        now = time.time()
+        send_interval = 1.0 / max(1.0, self.servo_send_hz)
+        moved = (
+            self._last_pan is None
+            or self._last_tilt is None
+            or self._last_a0 is None
+            or self._last_a1 is None
+            or self._last_a2 is None
+            or self._last_a3 is None
+            or abs(pan - self._last_pan) >= self.servo_send_min_deg
+            or abs(tilt - self._last_tilt) >= self.servo_send_min_deg
+            or abs(a0 - self._last_a0) >= self.servo_send_min_deg
+            or abs(a1 - self._last_a1) >= self.servo_send_min_deg
+            or abs(a2 - self._last_a2) >= self.servo_send_min_deg
+            or abs(a3 - self._last_a3) >= self.servo_send_min_deg
+        )
+        due = (now - self._last_send_ts) >= send_interval
+        if not force and not (moved and due):
+            return True
+        cmd = f"P{pan:.1f} T{tilt:.1f} {self._format_arm_cmd(a0, a1, a2, a3)}"
+        ok = self.send_line(cmd, wait_servo=wait_ack)
+        if ok:
+            self._last_pan = pan
+            self._last_tilt = tilt
+            self._last_a0 = a0
+            self._last_a1 = a1
+            self._last_a2 = a2
+            self._last_a3 = a3
+            self._last_send_ts = now
+        return ok
+
     def _scale_base_command(self, deg: float) -> float:
         return deg * self.base_command_scale
 
@@ -284,31 +450,67 @@ class ArduinoServoLink:
         pan = _quantize_servo_angle(pan, self.servo_angle_quantum_deg)
         tilt = _quantize_servo_angle(tilt, self.servo_angle_quantum_deg)
         parts = [f"P{pan:.1f}", f"T{tilt:.1f}"]
-        if base_rel is not None and abs(base_rel) > 0.001:
-            base_rel = self._scale_base_command(base_rel)
-            sign = "+" if base_rel >= 0 else ""
-            parts.append(f"B{sign}{base_rel:.1f}")
         ok = self.send_line(
             " ".join(parts),
             wait_servo=wait_servo,
-            wait_base=wait_base and base_rel is not None,
+            wait_base=False,
         )
         if ok:
             self._last_pan = pan
             self._last_tilt = tilt
             self._last_send_ts = time.time()
-        return ok
-
-    def write_base_relative(self, deg: float, *, wait: bool = False) -> bool:
-        deg = self._scale_base_command(deg)
-        sign = "+" if deg >= 0 else ""
-        return self.send_line(f"B{sign}{deg:.1f}", wait_base=wait, drain_after=not wait)
+        if not ok or base_rel is None or abs(base_rel) <= 0.001:
+            return ok
+        return self.write_base_step_spin(
+            base_rel,
+            timeout_sec=self.base_move_timeout_sec if wait_base else 12.0,
+        )
 
     def zero_base(self) -> bool:
         return self.send_line("Z")
 
     def write_base_stop(self) -> bool:
         return self.send_line("X", drain_after=False)
+
+    def write_base_spin_left(self) -> bool:
+        return self.send_line("L", drain_after=False)
+
+    def write_base_spin_right(self) -> bool:
+        return self.send_line("R", drain_after=False)
+
+    def write_base_step_spin(
+        self,
+        plate_deg: float,
+        *,
+        tolerance_deg: float = 1.5,
+        timeout_sec: float | None = None,
+        poll_hz: float = 25.0,
+        positive_uses_left: bool = False,
+    ) -> bool:
+        """Move base using firmware L/R spin until encoder reaches target (robottest style)."""
+        from base_spin_motion import write_base_step_spin
+
+        if timeout_sec is None:
+            timeout_sec = self.base_move_timeout_sec
+        ok, _delta, _reason = write_base_step_spin(
+            self,
+            plate_deg,
+            tolerance_deg=tolerance_deg,
+            timeout_sec=timeout_sec,
+            poll_hz=poll_hz,
+            positive_uses_left=positive_uses_left,
+            encoder_sign=self.encoder_sign,
+        )
+        return ok
+
+    def write_base_relative(self, deg: float, *, wait: bool = False) -> bool:
+        """Plate-degree relative move (B+deg / B-deg)."""
+        ok = self.write_base_step_spin(deg, timeout_sec=self.base_move_timeout_sec if wait else 12.0)
+        return ok
+
+    def write_base_absolute(self, deg: float, *, wait: bool = True) -> bool:
+        """Closed-loop move to absolute encoder degrees (B0.0 = startup forward)."""
+        return self.send_line(f"B{deg:.1f}", wait_base=wait, drain_after=not wait)
 
     def write_base_jog(self, pwm: int, ms: int) -> bool:
         pwm = max(-150, min(150, int(pwm)))
@@ -338,6 +540,46 @@ class ArduinoServoLink:
         self._last_pan = pan
         self._last_tilt = tilt
 
+    def home_smooth_pose(
+        self,
+        pan: float,
+        tilt: float,
+        a0: float,
+        a1: float,
+        a2: float,
+        a3: float,
+        *,
+        duration_sec: float | None = None,
+    ) -> None:
+        """Smoothstep pan/tilt/arms to target (used on shutdown)."""
+        start_pan = self._last_pan if self._last_pan is not None else pan
+        start_tilt = self._last_tilt if self._last_tilt is not None else tilt
+        start = (
+            self._last_a0 if self._last_a0 is not None else a0,
+            self._last_a1 if self._last_a1 is not None else a1,
+            self._last_a2 if self._last_a2 is not None else a2,
+            self._last_a3 if self._last_a3 is not None else a3,
+        )
+        max_arm_delta = max(abs(start[i] - v) for i, v in enumerate((a0, a1, a2, a3)))
+        duration = duration_sec
+        if duration is None:
+            duration = max(self.home_smooth_sec, max_arm_delta / 45.0, 0.6)
+        if duration <= 0.0:
+            self.write_angles_and_arms(pan, tilt, a0, a1, a2, a3, force=True)
+            return
+
+        steps = max(2, int(duration * self.home_smooth_hz))
+        delay = duration / steps
+        for i in range(1, steps + 1):
+            t = i / steps
+            eased = t * t * (3.0 - 2.0 * t)
+            p = start_pan + (pan - start_pan) * eased
+            q = start_tilt + (tilt - start_tilt) * eased
+            arms = tuple(start[j] + (target - start[j]) * eased for j, target in enumerate((a0, a1, a2, a3)))
+            self.write_angles_and_arms(p, q, *arms, force=True)
+            time.sleep(delay)
+        time.sleep(0.25)
+
     def set_counts_per_degree(self, cpd: float) -> bool:
         ok = self.send_line(f"C{cpd:.4f}", drain_after=False)
         if not ok:
@@ -347,6 +589,7 @@ class ArduinoServoLink:
 
     def set_encoder_sign(self, sign: float) -> bool:
         sign_val = -1.0 if sign < 0.0 else 1.0
+        self.encoder_sign = sign_val
         ok = self.send_line(f"E{sign_val:.0f}", drain_after=False)
         if not ok:
             return False
@@ -381,16 +624,49 @@ class ArduinoServoLink:
         self._last_tilt = None
         return ok
 
-    def close(self, *, home_pan: float | None = None, home_tilt: float | None = None, skip_home: bool = False) -> None:
+    def close(
+        self,
+        *,
+        home_pan: float | None = None,
+        home_tilt: float | None = None,
+        home_arm0: float | None = None,
+        home_arm1: float | None = None,
+        home_arm2: float | None = None,
+        home_arm3: float | None = None,
+        skip_home: bool = False,
+        home_arm_settle_sec: float = 1.5,
+        skip_arm_detach: bool = False,
+    ) -> None:
         if self._ser is not None:
             try:
                 if self._ser.is_open:
                     self.write_base_stop()
-                    if not skip_home and home_pan is not None and home_tilt is not None:
-                        self.home_smooth(home_pan, home_tilt)
-                        time.sleep(0.12)
+                    if not skip_home:
+                        arms = (home_arm0, home_arm1, home_arm2, home_arm3)
+                        has_arms = all(v is not None for v in arms)
+                        has_head = home_pan is not None and home_tilt is not None
+                        if has_arms and has_head:
+                            self.home_smooth_pose(
+                                home_pan,  # type: ignore[arg-type]
+                                home_tilt,  # type: ignore[arg-type]
+                                arms[0],  # type: ignore[arg-type]
+                                arms[1],
+                                arms[2],
+                                arms[3],
+                                duration_sec=home_arm_settle_sec,
+                            )
+                            if not skip_arm_detach:
+                                self.detach_arms()
+                        elif has_arms:
+                            self.write_arms(*arms, force=True)  # type: ignore[arg-type]
+                            time.sleep(home_arm_settle_sec)
+                            if not skip_arm_detach:
+                                self.detach_arms()
+                        elif has_head:
+                            self.home_smooth(home_pan, home_tilt)
+                            time.sleep(0.12)
                     self._ser.close()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[ArduinoServoLink] close homing failed: {e}")
         self._ser = None
         self._connected = False

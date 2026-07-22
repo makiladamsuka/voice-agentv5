@@ -13,8 +13,10 @@
  *   C1.222        -> set counts per base degree
  *   E-1 / E1      -> encoder sign (+deg command maps to sign*cpd counts)
  *   Z              -> zero base encoder reference
- *   X              -> stop base motor
- *   ?              -> POS <count> DEG <deg> CPD <cpd> BUSY 0|1
+ *   L / R          -> spin base left / right (until X)
+ *   X              -> stop base motor (spin, jog, or encoder move)
+ *   RL             -> restore pan/tilt limits from firmware defaults
+ *   U              -> unlock pan/tilt to 0-180 (manual limit finding)
  *   S              -> bench sweep
  */
 
@@ -28,12 +30,17 @@ const int LED_PIN = 2;
 
 const uint8_t PAN_CH = 4;
 const uint8_t TILT_CH = 5;
-const float PAN_MIN = 55.0f;
-const float PAN_MAX = 90.0f;
-const float TILT_MIN = 112.0f;
-const float TILT_MAX = 116.0f;
-const float PAN_CENTER = 73.0f;
-const float TILT_CENTER = 114.0f;
+const float PAN_MIN = 25.0f;
+const float PAN_MAX = 150.0f;
+const float TILT_MIN = 75.0f;
+const float TILT_MAX = 150.0f;
+const float PAN_CENTER = 100.0f;
+const float TILT_CENTER = 110.0f;
+// Runtime limits (writable via U/R for manual limit finding).
+float panLimitMin = PAN_MIN;
+float panLimitMax = PAN_MAX;
+float tiltLimitMin = TILT_MIN;
+float tiltLimitMax = TILT_MAX;
 const int PULSE_MIN_US = 450;
 const int PULSE_MAX_US = 2600;
 
@@ -49,13 +56,14 @@ const int COARSE_ERR_COUNTS = 48;
 const int COARSE_PWM = 150;
 const int FINE_MIN_PWM = 82;
 const int PWM_MAX = 150;
+const int SPIN_PWM = 75;  // lower = gentler open-loop L/R spins from Pi
 const unsigned long STALL_MS = 4000;
-const int MOTOR_DIR_SIGN = 1;
+const int MOTOR_DIR_SIGN = -1;
 const int STALL_MIN_PROGRESS = 1;
 const unsigned long MOVE_TIMEOUT_MS = 12000;
 const float FINE_KP = 1.8f;
 const float FINE_PWM_PER_COUNT = 4.0f;
-const float MAX_ABS_BASE_DEG = 140.0f;   // Hard safety envelope from startup zero.
+const float MAX_ABS_BASE_DEG = 124.0f;   // Hard safety envelope from startup zero (120 + margin).
 const float ABS_LIMIT_MARGIN_DEG = 4.0f; // Allow tiny transient/noise before fault.
 const float OVERSHOOT_ALLOW_RATIO = 0.35f;
 const long OVERSHOOT_ALLOW_MIN_COUNTS = 140;
@@ -94,6 +102,7 @@ long moveMaxTravelCounts = 0;
 int overshootCycles = 0;
 float ackBaseDeg = 0.0f;
 bool pendingBaseAck = false;
+int spinPwm = 0;
 float countsPerBaseDeg = 1.0f;
 float encoderSign = 1.0f;
 
@@ -200,12 +209,12 @@ void motorDrive(int pwm) {
     return;
   }
   if (pwm > 0) {
-    digitalWrite(MOTOR_AIN1_PIN, HIGH);
-    digitalWrite(MOTOR_AIN2_PIN, LOW);
-    motorPwmWrite(pwm);
-  } else {
     digitalWrite(MOTOR_AIN1_PIN, LOW);
     digitalWrite(MOTOR_AIN2_PIN, HIGH);
+    motorPwmWrite(pwm);
+  } else {
+    digitalWrite(MOTOR_AIN1_PIN, HIGH);
+    digitalWrite(MOTOR_AIN2_PIN, LOW);
     motorPwmWrite(-pwm);
   }
 }
@@ -213,8 +222,30 @@ void motorDrive(int pwm) {
 void stopBaseMotion() {
   moveActive = false;
   jogActive = false;
+  spinPwm = 0;
   baseBusy = false;
   motorStop();
+}
+
+void startBaseSpin(int pwm) {
+  moveActive = false;
+  jogActive = false;
+  pendingBaseAck = false;
+  spinPwm = constrain(pwm, -SPIN_PWM, SPIN_PWM);
+  baseBusy = spinPwm != 0;
+  if (spinPwm != 0) {
+    motorDrive(spinPwm);
+  } else {
+    motorStop();
+  }
+}
+
+void startBaseSpinLeft() {
+  startBaseSpin(-SPIN_PWM);
+}
+
+void startBaseSpinRight() {
+  startBaseSpin(SPIN_PWM);
 }
 
 void printServoAck() {
@@ -234,14 +265,16 @@ void printBaseBusy() {
 }
 
 void writeAngles(float pan, float tilt, bool emitAck) {
-  panAngle = clampf(pan, PAN_MIN, PAN_MAX);
-  tiltAngle = clampf(tilt, TILT_MIN, TILT_MAX);
+  panAngle = clampf(pan, panLimitMin, panLimitMax);
+  tiltAngle = clampf(tilt, tiltLimitMin, tiltLimitMax);
   if (!pcaReady) {
     if (emitAck) Serial.println(F("ERR PCA9685"));
     return;
   }
-  setServoPulseUs(PAN_CH, mapAngleToUs(panAngle, PAN_MIN, PAN_MAX));
-  setServoPulseUs(TILT_CH, mapAngleToUs(tiltAngle, TILT_MIN, TILT_MAX));
+  
+  // Standard 0-180 degree mapping
+  setServoPulseUs(PAN_CH, mapAngleToUs(panAngle, 0.0f, 180.0f));
+  setServoPulseUs(TILT_CH, mapAngleToUs(tiltAngle, 0.0f, 180.0f));
   digitalWrite(LED_PIN, HIGH);
   digitalWrite(LED_PIN, LOW);
   if (emitAck) printServoAck();
@@ -350,6 +383,16 @@ void handleLine() {
   if (lineLen == 0) return;
   lineBuffer[lineLen] = '\0';
 
+  if (lineLen == 2 && lineBuffer[0] == 'R' && lineBuffer[1] == 'L') {
+    panLimitMin = PAN_MIN;
+    panLimitMax = PAN_MAX;
+    tiltLimitMin = TILT_MIN;
+    tiltLimitMax = TILT_MAX;
+    Serial.println(F("OK RL"));
+    lineLen = 0;
+    return;
+  }
+
   if (lineLen == 1) {
     if (lineBuffer[0] == 'H') {
       Serial.println(F("READY"));
@@ -373,6 +416,27 @@ void handleLine() {
     }
     if (lineBuffer[0] == 'X') {
       stopBaseMotion();
+      lineLen = 0;
+      return;
+    }
+    if (lineBuffer[0] == 'L') {
+      startBaseSpinLeft();
+      Serial.println(F("OK L"));
+      lineLen = 0;
+      return;
+    }
+    if (lineBuffer[0] == 'R') {
+      startBaseSpinRight();
+      Serial.println(F("OK R"));
+      lineLen = 0;
+      return;
+    }
+    if (lineBuffer[0] == 'U') {
+      panLimitMin = 0.0f;
+      panLimitMax = 180.0f;
+      tiltLimitMin = 0.0f;
+      tiltLimitMax = 180.0f;
+      Serial.println(F("OK U"));
       lineLen = 0;
       return;
     }
@@ -603,6 +667,10 @@ void loop() {
 
   updateBaseMotor();
   updateBaseJog();
+
+  if (spinPwm != 0) {
+    motorDrive(spinPwm);
+  }
 
   if (pendingBaseAck) {
     pendingBaseAck = false;

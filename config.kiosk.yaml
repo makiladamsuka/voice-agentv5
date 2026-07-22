@@ -1,0 +1,470 @@
+# Voice Agent V5 — Pi kiosk profile (lower CPU/RAM than config.yaml)
+# Usage: CONFIG_PATH=config.kiosk.yaml python start_robot.py
+
+camera:
+  face_model_path: face_detection_yunet_2023mar.onnx
+  main_res: [1920, 1080]     # max camera sensor resolution
+  detect_res: [1280, 720]    # max detection resolution
+  full_sensor_fov: false     # use full sensor FOV for higher res
+  confidence_threshold: 0.6
+  nms_threshold: 0.3
+  rotate_180: false
+  stream_swap_rb: true
+
+hand_fallback:
+  enabled: true
+  max_hands: 1
+  hi_gesture: true
+  bye_gesture: true
+  wave_threshold: true         # Require waving motion (not just static hand)
+  wave_reversals_min: 2        # Minimum swings/reversals to trigger (easier - just 2 swings!)
+  wave_amplitude_min: 40.0     # Minimum pixel sweep amplitude
+  wave_history_len: 25         # History buffer length for motion detection
+  wave_dead_zone_px: 10        # Ignore movements smaller than this
+
+stream:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8083   # not 8081 — LiveKit worker health server uses 8081 in start mode
+  fps: 8
+  jpeg_quality: 70
+  render_fps: 24
+  vision_fps: 10
+  vision_fps_voice: 2        # slower detect between voice turns (when not hearing/speaking)
+  vision_pause_on_audio: true # skip camera+YuNet while user/agent audio is active
+  vision_pause_poll_hz: 2     # blackboard poll only while paused (no capture)
+  res: [320, 180]
+
+debug_viz:
+  enabled: true
+  auto_start: true
+  host: "0.0.0.0"
+  port: 8082
+  manual_control_enabled: false  # true = browser WASD/Z/R work alongside face tracking
+  head_step_deg: 5.0
+  map_poll_ms: 30
+  base_yaw_sign: 1.0          # flip 3D base rotation in world frame
+  pan_yaw_sign: -1.0          # 3D neck pan; flip if viz pan left/right is mirrored
+  tilt_sign: 1.0              # flip head tilt (W/S); flip to -1.0 if viz tilts opposite
+  imu_pitch_sign: -1.0        # flip IMU pitch chip on head mesh
+
+person_memory:
+  enabled: true
+  timeout_sec: 20.0
+  merge_angle_deg: 12.0
+  camera_hfov_deg: 62.0
+  camera_vfov_deg: 37.0
+  max_items: 6
+  track_gain: 0.75
+  max_pan_step_deg: 10.0
+  reacquire_angle_deg: 28.0
+  reacquire_after_sec: 5.0   # keep normal tracking/search first; then go to memory instead of wander
+  face_confidence: 1.0
+  base_enabled: true
+  base_min_yaw_error_deg: 10.0
+  base_min_step_deg: 1.5
+  base_max_step_deg: 2.5
+  base_yaw_to_step_gain: 0.08
+  base_cooldown_sec: 3.0
+  base_compensation_gain: 0.55
+
+last_seen_search:
+  enabled: true
+  edge_norm: 0.0               # 0.0 = ALWAYS remember exit direction (not just at edge)
+  timeout_sec: 5.0             # search last-seen bearing until this (then memory/wander)
+  track_gain: 0.65
+  max_pan_step_deg: 8.0
+  base_enabled: true
+  base_min_yaw_error_deg: 8.0
+  base_min_step_deg: 1.5
+  base_max_step_deg: 2.5
+  base_yaw_to_step_gain: 0.08
+  base_cooldown_sec: 2.5
+  base_compensation_gain: 0.50
+  edge_track_base: true        # only when pan is stuck at limit
+
+imu:
+  enabled: true
+  auto_level_on_start: true   # zero pitch/roll at startup upright pose
+  auto_level_sec: 2.0         # still-sample window after servos settle
+  auto_level_settle_sec: 0.8  # wait after T112 upright before IMU samples
+  auto_level_warmup_sec: 0.3   # filter settle after IMU thread starts
+  auto_level_gyro_max_dps: 8.0  # only average low-motion samples
+  auto_level_min_samples: 40
+  i2c_bus: 1
+  address: 0x69
+  sample_hz: 25
+  roll_pitch_alpha: 0.02
+  # PCB on head: +X up, +Y left, +Z back → forward=-Z, left=+Y, yaw-about-up=+X
+  # Values are 1-based sensor axes (1=X, 2=Y, 3=Z); negative flips sign.
+  axis_remap: [-3, 2, -1]
+  # Used only when auto_level_on_start is false (manual test_imu.py calibration)
+  roll_offset_deg: -7.34
+  pitch_offset_deg: 12.84
+  horizon_tilt_gain: 0.85
+  horizon_tilt_sign: -1.0   # keep camera horizontal; flip if tilt runs wrong way
+  horizon_pitch_bias_deg: 0.0
+  horizon_pitch_smooth_hz: 3.5
+  horizon_max_bias_deg: 6.0
+  horizon_max_pitch_deg: 18.0
+  horizon_gyro_max_dps: 45.0       # ignore horizon when spinning/moving
+  horizon_max_up_from_center_deg: 2.0
+  horizon_max_down_from_center_deg: 4.0
+  horizon_relevel_after_sec: 0.0   # unused — IMU horizon applies continuously when idle
+  yaw_sign: -1.0             # flip if IMU yaw integral opposes encoder/base
+  drift_correction_enabled: true
+  drift_stationary_hold_sec: 0.35
+  drift_enc_stable_deg: 0.2
+  drift_pan_stable_deg: 0.2
+  drift_gyro_max_dps: 6.0
+
+base:
+  enabled: true
+  loop_hz: 25.0
+  # --- BASE CALIBRATION (change only via test_base_motor.py, not face-tracking tuning) ---
+  counts_per_degree: 31.166667  # set by --calibrate-manual
+  encoder_sign: -1  # set by --calibrate-manual (+deg → encoder counts decrease)
+  command_scale: 0.1714  # legacy; spin control uses encoder DEG directly (see spin_*)
+  spin_stop_tolerance_deg: 1.5
+  spin_timeout_sec: 4.0       # hard cap; small steps use shorter internal deadline
+  spin_stall_sec: 0.28       # stop if encoder counts stop advancing
+  spin_positive_uses_left: false  # +step = R spin; -step = L spin (encoder DEG axis)
+  home_success_tolerance_deg: 2.5
+  home_fine_threshold_deg: 6.0
+  home_imu_burst_sec: 0.45       # max L/R burst when far from HOME (IMU loop)
+  home_imu_fine_burst_sec: 0.12  # max burst when within home_fine_threshold_deg
+  home_imu_close_ratio: 0.88      # stop burst when this fraction of error is closed
+  home_imu_gyro_brake_dps: 10.0   # stop when near target and gyro is quiet
+  home_imu_overshoot_burst_scale: 0.35  # burst multiplier after crossing target
+  home_imu_poll_hz: 40.0
+  # --- behavior (safe to tune) ---
+  error_backoff_sec: 45.0
+  require_calibrated_cpd: true
+  zero_on_start: true
+  sign: -1.0          # plate rotation sign vs B command; flip if base opposes head
+  head_lead_min_deg: 12.0  # neck must turn this far before base may follow
+  follow_head_direction: true
+  trigger_norm_x: 0.50       # face must be farther off-center before base helps
+  trigger_hold_sec: 2.0      # wait longer before first base nudge
+  cooldown_sec: 4.0          # pause between base moves
+  min_step_deg: 8 
+  max_step_deg: 15 # wander/track nudges — no full spins
+  single_shot_max_deg: 15.0
+  norm_to_deg_gain: 1.8
+  pan_soft_limit_deg: 12.0
+  pan_soft_limit_scale: 0.60   # fraction of max head pan mech travel for "near limit"
+  pan_limit_margin: 0.35      # servo cmd units — head at hardware stop
+  pan_recenter_bias: 0.50
+  pan_offset_to_step_gain: 0.10   # base step scales with head pan offset (mech deg)
+  trigger_hold_at_limit_sec: 1.0  # faster base follow when head near pan limit
+  cooldown_at_limit_sec: 1.5      # shorter pause between base nudges when head is stuck
+  track_compensation_gain: 0.95   # counter-rotate neck ~1:1 with base during track
+  sustained_head_follow_enabled: true   # after ~10s neck offset, base turns and neck locks gaze
+  sustained_head_hold_sec: 10.0
+  sustained_head_min_mech_deg: 12.0
+  sustained_head_cooldown_sec: 4.0
+  sustained_head_compensation_gain: 0.95
+  body_base_enabled: false
+  body_trigger_norm_x: 0.08    # body bbox offset from frame center before base turns
+  body_base_cooldown_sec: 2.0
+  body_base_min_step_deg: 2.0
+  body_base_max_step_deg: 11.0
+  body_base_aim_to_step_gain: 5.5
+  body_base_compensation_gain: 0.90
+  limit_base_aim_to_step_gain: 3.0  # face/body when pan is stuck at min/max
+  fast_face_enabled: false
+  fast_face_velocity_norm_sec: 3.5
+  fast_face_cooldown_sec: 1.4
+  fast_face_min_step_deg: 8.0
+  fast_face_max_step_deg: 25.0
+  fast_face_velocity_to_deg_gain: 2.0
+  fast_face_compensation_gain: 0.45
+  wander_enabled: true       # idle base wander — follows head glances when settled
+  wander_step_deg: 15 # base follows head with ~15° plate steps
+  wander_cooldown_sec: 12.0
+  wander_chance: 0.15
+  wander_min_pan_offset_deg: 12.0
+  wander_min_head_step_deg: 10.0
+  wander_compensation_gain: 0.20
+  wander_random_turn_enabled: true  # occasional large idle plate turns
+  wander_random_turn_deg: 30.0
+  wander_random_turn_chunk_deg: 3.0
+  wander_random_turn_min_sec: 120.0
+  wander_random_turn_max_sec: 300.0
+  max_total_auto_deg: 24.0
+  max_yaw_deg: 120.0
+  imu_fusion_max_error_deg: 15.0   # stationary encoder vs IMU-inferred base fault threshold
+  recenter_deadband_deg: 30.0
+  recenter_step_deg: 1.5
+  heading_pid_kp: 0.22
+  heading_pid_kd: 0.14
+  use_imu_move_validation: false  # spin stop uses encoder only; IMU fusion is debug/resync
+  allow_multi_face: false
+  wait_for_ack: false
+
+servo:
+  enabled: true
+  port: ""          # empty = auto-detect /dev/ttyUSB0, /dev/ttyUSB1, /dev/ttyACM0
+  baud: 115200
+  pan_min: 25.0
+  pan_max: 150.0
+  tilt_min: 75.0
+  tilt_max: 150.0
+  pan_center: 100.0
+  tilt_center: 110.0  # mechanical upright (0°)
+  # 1 command unit = 1 physical servo degree (firmware bug fixed)
+  tilt_mechanical_scale: 1.0   # mech° = (tilt_cmd - tilt_center) * scale
+  tilt_max_mechanical_deg: 45.0
+  tilt_min_mechanical_deg: -35.0
+  pan_mech_left_deg: -40.0
+  pan_mech_right_deg: 40.0
+  pan_track_range: 26.0
+  pan_track_slew_dps: 38.0     # max pan speed (deg/s) at full PID correction
+  pan_center_hysteresis: 0.03    # extra |norm_x| before leaving center band (anti-flicker)
+  pan_track_alpha: 0.28         # smooth pan bearing — damps bbox jitter, still follows motion
+  pan_track_sign: -1.0            # flip to 1.0 if pan follows face the wrong way
+  tilt_track_sign: -1.0           # flip to 1.0 if face below center but head tilts up
+  tilt_track_alpha: 0.39 # vertical bearing filter during track (faster than face_alpha_y)
+  pan_max_step_deg: 0.75 # hard cap per loop tick (prevents overshoot on fast moves)
+  tilt_max_step_deg: 1.8 # max tilt command change per track tick
+  tilt_track_slew_dps: 28.0       # max tilt speed (cmd deg/s) at full PID correction
+  tilt_track_range: 35.0
+  pan_error_full_scale: 0.42
+  pan_track_min_gain: 0.32
+  tilt_error_full_scale: 0.35
+  tilt_track_min_gain: 0.45
+  pan_sign: -1.0
+  tilt_sign: -1.0
+  deadzone_x: 0.05
+  deadzone_y: 0.06
+  pan_center_norm_x: 0.05       # |norm_x| below this → face centered, hold pan
+  tilt_center_norm_y: 0.08
+  loop_hz: 35.0
+  no_face_home_sec: 1.2
+  debug_hz: 2.0
+  face_alpha_x: 0.12 # tilt/velocity only
+  face_alpha_y: 0.24 
+  pan_pid_kp: 0.7 
+  pan_pid_ki: 0.065 
+  pan_pid_kd: 0.3 
+  tilt_pid_kp: 0.66 
+  tilt_pid_ki: 0 
+  tilt_pid_kd: 0.06 
+  pid_integral_limit: 0.5 
+  predict_hold_sec: 1.0
+  predict_edge_norm: 0.55
+  predict_gain: 0.72
+  lost_search_hold_sec: 0.6
+  lost_search_velocity_gain: 0.30
+  lost_search_min_norm_x: 0.22
+  lost_search_base_step_deg: 2.0
+  lost_search_base_cooldown_sec: 2.0
+  forward_return_timeout_sec: 12.0   # stare off-forward this long → glide back to center
+  forward_return_min_pan_deg: 15.0   # |mech pan| above this counts as off-forward
+  forward_return_min_tilt_deg: 10.0  # |mech tilt| above this counts as off-forward
+  forward_return_smooth_hz: 4.5
+  wander_pan_amp_deg: 28.0    # smaller head glances — less base follow trigger
+  wander_step_min_deg: 7.5 
+  wander_step_max_deg: 18 
+  wander_jump_chance: 0.0     # no sudden jumps
+  wander_arrival_deg: 1.2
+  wander_tilt_step_max_deg: 10.0
+  wander_tilt_max_up_deg: 10.0
+  wander_tilt_max_down_deg: 16.0
+  wander_hold_min_sec: 1.0
+  wander_hold_max_sec: 3.0
+  wander_thinking_hold_chance: 0.38
+  wander_thinking_hold_min_sec: 3.0
+  wander_thinking_hold_max_sec: 8.0
+  wander_long_stare_chance: 0.14
+  wander_pan_smooth_hz: 5.5 
+  wander_tilt_smooth_hz: 6 
+  wander_track_loss_hold_min_sec: 1.2   # hold last track pose before first wander glance
+  wander_track_loss_hold_max_sec: 2.8
+  wander_imu_tilt_blend: 1.0            # 1.0 = wander glances relative to IMU horizon
+  motion_emotion_min_sec: 2.6
+  attention_hold_min_sec: 3.2
+  attention_hold_max_sec: 6.5
+  multi_face_debounce_sec: 0.85
+  multi_face_center_chance: 0.38
+  multi_face_alternate_chance: 0.34
+  multi_face_track_servo_alpha: 0.34
+  multi_face_track_gain: 0.62
+  social_multi_grace_sec: 2.4
+  target_smooth_hz: 15 
+  pan_smooth_hz: 7.0
+  pan_track_smooth_hz: 16.25 # always applied during track — limits overshoot
+  tilt_smooth_hz: 5.5 
+  servo_send_min_deg: 0.04
+  servo_send_hz: 35.0
+  servo_angle_quantum_deg: 0.05
+  pan_send_smooth_hz: 6.0    # softer final serial smoothing for pan
+  tilt_send_smooth_hz: 5.0
+  home_smooth_sec: 0.9
+  home_smooth_hz: 30.0
+
+arms:
+  enabled: true
+  presets_path: tests/arm_pose_presets.json
+  limits_path: tests/captured_arm_limits.json
+  base_pose: home
+  turn_step_delta_deg: 4.0
+  ref_step_deg: 8.0
+  turn_sweep_factor: 0.45
+  blend_hz: 0.5
+  keepalive_sec: 0.8
+  min_spin_moved_deg: 2.0
+  detach_on_shutdown: false
+  turn_sign: 1.0
+  loop_hz: 35.0
+
+bye_wave:
+  enabled: true
+  hand_gesture_enabled: true
+  port: 8000
+  host: "0.0.0.0"
+  cooldown_sec: 10.0
+  max_hands: 2
+  presets_path: "tests/arm_pose_presets.json"
+  vertical_speed: 0.5        # Bye wave vertical speed (VERY SLOW - 0.25 = 4x slower than normal)
+  horizontal_speed: 0.47     # Bye wave horizontal speed (VERY SLOW)
+  smoothness: 3.0            # Bye wave easing smoothness
+
+face_greeting:
+  enabled: true
+  cooldown_sec: 60.0
+  hold_sec: 0.45
+  min_face_area_ratio: 0.008
+
+face_greeting_arm:
+  enabled: true
+  memory_timeout_minutes: 30.0   # Remember faces for 30 minutes
+  min_face_area_ratio: 0.012     # Minimum face size to trigger greeting
+  hold_sec: 0.5                  # Face must be stable this long before greeting
+  cosine_threshold: 0.85         # Cosine similarity threshold (0.85 strict; lower = more lenient)
+  cleanup_interval_sec: 60.0     # How often to prune expired cache entries
+  greeting_cooldown_sec: 30.0    # Global min time between any two greetings
+  vertical_speed: 0.9           # Speed multiplier for a0/a1 (shoulder) during greeting poses
+  horizontal_speed: 1.2          # Speed multiplier for a2/a3 (elbow/wrist) during greeting poses
+  
+eyes:
+  render_fps: 12          # ST7735 eye update rate (independent of camera stream)
+  blink_speed_min: 3.2
+  blink_speed_max: 4.2
+  eye_color: [255, 255, 255]
+
+kiosk:
+  port: 8080
+  facebook_cache_minutes: 10
+  weather_cache_minutes: 10
+  upload_categories: [events, competitions, posts]
+
+face_tracking:
+  far_squint_chance: 0.08
+  face_track_default: attentive
+
+surroundings_emotion:
+  no_face_grace_sec: 0.9
+  no_person_hold_min_sec: 2.8
+  no_person_hold_max_sec: 5.2
+  person_hold_min_sec: 1.1
+  person_hold_max_sec: 2.8
+  direction_trigger_norm_x: 0.22
+  direction_hold_min_sec: 0.6
+  direction_hold_max_sec: 1.2
+  direction_cooldown_sec: 0.9
+  close_face_enter_ratio: 0.05
+  far_face_area_ratio: 0.018
+  near_exit_ratio: 0.041
+  far_exit_ratio: 0.0225
+  emotion_history_len: 3
+  no_face_sad_min_sec: 150.0   # ~2.5 min without a face before sad can appear
+
+voice:
+  enabled: true
+  nlu_mode: true
+  nlu_port: 8765
+
+# Lower loop rates while LiveKit mic session is active (reduces audio jitter on Pi)
+voice_profile:
+  arms_loop_hz: 12
+  servo_loop_hz: 16
+  servo_send_hz: 16
+  mixer_loop_hz: 16
+  base_loop_hz: 10
+  emotion_loop_hz: 6
+  freeze_base_during_voice: true
+  conv_nod_scale: 0.2
+  viz_pose_hz: 0              # off unless debug_viz.auto_start
+  viz_pose_voice_hz: 0
+
+talk_gesture:
+  enabled: false             # OFF during TTS isolation — primary serial/GIL jitter source
+  pose_duration: 0.4
+  poll_interval: 0.08
+  vertical_speed: 0.5
+  horizontal_speed: 0.5
+  smoothness: 5.0
+  
+proximity:
+  enabled: true
+  # Mirror L/R when side ToF sensors are swapped vs mux labels (set false if you
+  # reflash firmware with TOF_MUX_CH {2,1,0} instead of {0,1,2})
+  swap_left_right: true
+  # Post-turn suppression: ignore PROX events for this long after a proximity turn
+  post_turn_lockout_sec: 2.0
+  # ESP32 approach confidence count before reacting
+  min_confidence: 3
+  # Budget: max proximity-triggered base turns in a time window
+  max_turns_per_window: 6
+  turn_window_sec: 30.0
+  # How far to turn toward a side sensor (~45° mounting angle)
+  turn_step_deg: 20.0
+  # Approach harness: turn base toward live ToF fused bearing (not only PROX velocity)
+  tof_turn_enabled: true
+  tof_min_bearing_deg: 3.0
+  tof_min_dist_mm: 80
+  tof_max_dist_mm: 2000
+  tof_confirm_ticks: 2
+  tof_merge_radius_mm: 350
+  tof_aim_tolerance_deg: 5.0
+  tof_bearing_undershoot_deg: 3.5
+  tof_undershoot_close_mm: 450   # at/below this distance → zero undershoot (aim full bearing)
+  tof_undershoot_far_mm: 1500    # at/above this distance → full undershoot_deg
+  tof_aim_obstacle_close_mm: 900  # still aim at nearby obstacle tracks (still person)
+  tof_bearing_flip_reject_deg: 20.0
+  tof_align_cooldown_sec: 0.25
+  tof_stale_sec: 0.55
+  tof_spin_settle_sec: 0.65
+  tof_gyro_settle_dps: 12.0
+  tof_align_blanking_sec: 0.5
+  tof_target_lock_sec: 2.5
+  clear_return_enabled: true
+  clear_return_sec: 5.0          # wait this long after scene clear before HOME return
+  clear_return_tolerance_deg: 6.0
+  # Min time between proximity turns
+  cooldown_sec: 5.0
+  # Counter-rotate neck to keep gaze during turn
+  compensation_gain: 0.90
+  # Ignore PROX after any base motion ends
+  post_motion_blanking_sec: 0.5
+  # How long to hold forward-search after prox turn
+  search_timeout_sec: 3.0
+  # How long to glance toward approach (during voice)
+  glance_toward_sec: 0.8
+  # How long to return gaze to person
+  glance_return_sec: 0.6
+  # How far to turn head during glance (0=none, 1=full)
+  glance_blend: 0.4
+  investigate:
+    enabled: true
+    motion_fade_sec: 5.0
+    verified_ttl_sec: 5.0
+    scan_duration_sec: 2.5
+    scan_tilt_down_deg: 12.0
+    scan_tilt_up_deg: 8.0
+    zone_yaw_deg: 20.0
+    glance_blend_track: 0.35
+    revisit_enabled: true
+    revisit_max_age_sec: 5.0
+    revisit_aim_tolerance_deg: 15.0

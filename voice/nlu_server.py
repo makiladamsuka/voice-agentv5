@@ -117,7 +117,19 @@ async def _voice_ws_endpoint(websocket) -> None:
     speculative_cache = {}
     pending_ambiguity_category = None
     last_discussed_category = None
-    
+    # ── Echo / duplicate suppression ──────────────────────────────────────
+    # Use a mutable dict so reassignment works correctly in all scopes.
+    import time as _time
+    _echo = {
+        "norm": "",
+        "reply_norm": "",
+        "ts": 0.0,
+        "suppress_sec": 10.0,
+        "speaking": False,
+    }
+    # ── Speculative throttle ──────────────────────────────────────────────
+    _spec = {"last_norm": "", "last_ts": 0.0, "min_interval": 1.0}
+
     def _normalize_text(t: str) -> str:
         return t.lower().strip(" \t\r\n.,?!;:")
 
@@ -140,6 +152,13 @@ async def _voice_ws_endpoint(websocket) -> None:
                     if pending_ambiguity_category:
                         user_text = f"{pending_ambiguity_category} {user_text}"
                     norm_text = _normalize_text(user_text)
+                    # ── Throttle: skip if same text or too soon ───────────
+                    _snow = _time.monotonic()
+                    if norm_text == _spec["last_norm"] or (_snow - _spec["last_ts"]) < _spec["min_interval"]:
+                        continue
+                    _spec["last_norm"] = norm_text
+                    _spec["last_ts"] = _snow
+                    # ─────────────────────────────────────────────────────
                     runtime = _get_runtime()
                     loop = asyncio.get_running_loop()
                     result = await loop.run_in_executor(
@@ -156,6 +175,28 @@ async def _voice_ws_endpoint(websocket) -> None:
                 original_text = msg.get("text", "").strip()
                 if not original_text:
                     continue
+
+                # ── Duplicate / echo suppression ──────────────────────────
+                # If the robot is currently speaking OR we are in the echo suppression window,
+                # reject incoming transcripts that match the previous user query or the robot's reply.
+                _norm_incoming = _normalize_text(original_text)
+                _now = _time.monotonic()
+                _dt = _now - _echo["ts"]
+                is_duplicate_prompt = (_norm_incoming == _echo["norm"])
+                is_reply_echo = (
+                    bool(_echo["reply_norm"])
+                    and len(_norm_incoming) >= 3
+                    and _norm_incoming in _echo["reply_norm"]
+                )
+
+                if _echo["speaking"] or (_dt < _echo["suppress_sec"]):
+                    if is_duplicate_prompt or is_reply_echo:
+                        print(f"[NLU] Echo suppressed (speaking={_echo['speaking']}, {_dt:.1f}s < {_echo['suppress_sec']:.1f}s): '{original_text}'")
+                        await websocket.send_text(json.dumps({"type": "state", "conv_state": "speaking" if _echo["speaking"] else "listening"}))
+                        continue
+
+                _echo["norm"] = _norm_incoming
+                _echo["ts"] = _now
 
                 log.info(f"[NLU] Transcript: '{original_text}'")
                 print(f"[NLU] Transcript: '{original_text}'")
@@ -258,6 +299,12 @@ async def _voice_ws_endpoint(websocket) -> None:
                 elif _bb is not None:
                     _bb.write(conv_state="speaking", agent_speaking=True)
 
+                _dur_sec = (duration_ms / 1000.0) if duration_ms else 6.0
+                _echo["reply_norm"] = _normalize_text(result.get("reply_text", ""))
+                _echo["ts"] = _time.monotonic()
+                _echo["suppress_sec"] = max(15.0, _dur_sec + 6.0)
+                _echo["speaking"] = True
+
                 await websocket.send_text(json.dumps({
                     "type": "response",
                     "reply_text": result["reply_text"],
@@ -272,6 +319,8 @@ async def _voice_ws_endpoint(websocket) -> None:
                 )
 
             elif msg_type == "playback_start":
+                _echo["speaking"] = True
+                _echo["ts"] = _time.monotonic()
                 utterance_id = str(msg.get("utterance_id", "") or "")
                 sync = get_speech_sync_service()
                 if sync is not None:
@@ -280,6 +329,9 @@ async def _voice_ws_endpoint(websocket) -> None:
                     _bb.write(conv_state="speaking", agent_speaking=True)
 
             elif msg_type == "tts_done":
+                _echo["speaking"] = False
+                _echo["ts"] = _time.monotonic()
+                _echo["suppress_sec"] = 5.0
                 sync = get_speech_sync_service()
                 if sync is not None:
                     sync.end_playback()
@@ -468,6 +520,22 @@ def _match_intent(runtime, user_text: str) -> dict:
         # ── Navigate intents: run live pathfinding and enrich the action ─────
         if action.get("action") == "navigate" and action.get("destination"):
             return _navigate_response(action["destination"])
+
+        # ── Events ambiguity: show all event buttons instead of a single event ──
+        if intent.get("_events_ambiguous"):
+            buttons = _get_event_buttons()
+            if buttons:
+                reply_text = "Here are the latest events on campus! Tap one to find out more."
+                audio_file = _generate_dynamic_tts(reply_text)
+                audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
+                return _with_audio_path({
+                    "reply_text": reply_text,
+                    "audio_url": audio_url,
+                    "action": {
+                        "action": "show_events",
+                        "suggested_buttons": buttons,
+                    },
+                }, audio_file)
 
         audio_file = intent.get("audio_file")
         

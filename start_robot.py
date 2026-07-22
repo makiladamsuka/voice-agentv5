@@ -746,109 +746,57 @@ def main():
             )
         )
 
-    # ── Phase 3: Voice Backend (LiveKit OR NLU Server) ───────────────────────
+    # ── Phase 3: Voice Backend (Local NLU Server) ───────────────────────────
     voice_cfg = cfg.get("voice", {}) or {}
-    voice_devmode = voice_cfg.get("devmode", True)
-    if len(sys.argv) > 1 and sys.argv[1] == "start":
-        voice_devmode = False
-    elif len(sys.argv) > 1 and sys.argv[1] == "dev":
-        voice_devmode = True
-
-    # NLU mode: replaces LiveKit with a lightweight FastAPI WebSocket server.
-    # Enable in config.yaml under voice: { enabled: true, nlu_mode: true }
-    nlu_mode = voice_cfg.get("nlu_mode", False)
     nlu_port = int(voice_cfg.get("nlu_port", 8765))
 
     voice_thread: threading.Thread | None = None
-    if voice_cfg.get("enabled", False):
-        if nlu_mode:
-            from voice.nlu_server import run_nlu_server
-            from core.speech_sync_service import SpeechSyncService
+    if voice_cfg.get("enabled", True):
+        from voice.nlu_server import run_nlu_server
+        from core.speech_sync_service import SpeechSyncService
 
-            speech_sync_cfg = voice_cfg.get("speech_sync", {}) or {}
-            if speech_sync_cfg.get("enabled", True):
-                threads.append(
-                    threading.Thread(
-                        target=SpeechSyncService(
-                            bb,
-                            tick_hz=float(speech_sync_cfg.get("tick_hz", 50.0)),
-                        ).run,
-                        daemon=True,
-                        name="SpeechSync",
-                    )
+        speech_sync_cfg = voice_cfg.get("speech_sync", {}) or {}
+        if speech_sync_cfg.get("enabled", True):
+            threads.append(
+                threading.Thread(
+                    target=SpeechSyncService(
+                        bb,
+                        tick_hz=float(speech_sync_cfg.get("tick_hz", 50.0)),
+                    ).run,
+                    daemon=True,
+                    name="SpeechSync",
                 )
-                print("[Bootstrap] SpeechSyncService enabled — NLU amplitude sync")
-
-            # Preload the Wayfinder so navigate intents can return live paths
-            # for the kiosk's 3D NavigationMap.
-            nlu_wayfinder = None
-            try:
-                from voice.wayfinding import Wayfinder
-
-                nlu_wayfinder = Wayfinder()
-                print("[Bootstrap] Wayfinder ready for NLU navigation.")
-            except Exception as exc:
-                print(f"[Bootstrap] Wayfinder unavailable for NLU mode: {exc}")
-
-            voice_thread = threading.Thread(
-                target=run_nlu_server,
-                kwargs={
-                    "bb": bb,
-                    "port": nlu_port,
-                    "wayfinder": nlu_wayfinder,
-                },
-                daemon=True,
-                name="NluServer",
             )
-            threads.append(voice_thread)
-            print(
-                f"[Bootstrap] NLU voice mode enabled — "
-                f"WebSocket server on port {nlu_port} "
-                f"(no LiveKit, browser VAD + Deepgram STT)."
-            )
-        else:
-            from voice.voice_service import run_voice_service
+            print("[Bootstrap] SpeechSyncService enabled — NLU amplitude sync")
 
-            voice_thread = threading.Thread(
-                target=run_voice_service,
-                kwargs={"bb": bb, "devmode": voice_devmode},
-                daemon=True,  # allow process exit if LiveKit aclose hangs on Ctrl+C
-                name="VoiceService",
-            )
-            threads.append(voice_thread)
+        # Preload the Wayfinder so navigate intents can return live paths
+        # for the kiosk's 3D NavigationMap.
+        nlu_wayfinder = None
+        try:
+            from voice.wayfinding import Wayfinder
 
-        # DISABLED: TalkGestureService - only using ByeWaveService for arm movements
-        # talk_cfg = cfg.get("talk_gesture", {}) or {}
-        # if arms_cfg.get("enabled", False) and talk_cfg.get("enabled", True):
-        #     from core.talk_gesture_service import TalkGestureService
-        #
-        #     presets_path = Path(arms_cfg.get("presets_path", "tests/arm_pose_presets.json"))
-        #     if not presets_path.is_absolute():
-        #         presets_path = APP_DIR / presets_path
-        #
-        #     talk_gesture_svc = TalkGestureService(
-        #         bb=bb,
-        #         presets_path=presets_path,
-        #         pose_duration=float(talk_cfg.get("pose_duration", 0.4)),
-        #         poll_interval=float(talk_cfg.get("poll_interval", 0.02)),
-        #         vertical_speed=float(talk_cfg.get("vertical_speed", 0.8)),
-        #         horizontal_speed=float(talk_cfg.get("horizontal_speed", 1.5)),
-        #     )
-        #     threads.append(
-        #         threading.Thread(
-        #             target=talk_gesture_svc.run,
-        #             daemon=True,
-        #             name="TalkGestureService",
-        #         )
-        #     )
-        #     v_speed = talk_cfg.get("vertical_speed", 0.8)
-        #     h_speed = talk_cfg.get("horizontal_speed", 1.5)
-        #     print(
-        #         f"[Bootstrap] TalkGestureService enabled — "
-        #         f"arms animate while speaking (v={v_speed}x, h={h_speed}x)"
-        #     )
+            nlu_wayfinder = Wayfinder()
+            print("[Bootstrap] Wayfinder ready for NLU navigation.")
+        except Exception as exc:
+            print(f"[Bootstrap] Wayfinder unavailable for NLU mode: {exc}")
 
-    from voice.voice_service import ensure_media_server
+        voice_thread = threading.Thread(
+            target=run_nlu_server,
+            kwargs={
+                "bb": bb,
+                "port": nlu_port,
+                "wayfinder": nlu_wayfinder,
+            },
+            daemon=True,
+            name="NluServer",
+        )
+        threads.append(voice_thread)
+        print(
+            f"[Bootstrap] NLU voice mode enabled — "
+            f"WebSocket server on port {nlu_port}."
+        )
+
+    from voice.media_server import ensure_media_server
     from voice.compiler.watchdog import run_watchdog
 
     ensure_media_server(bb, cfg)
@@ -937,13 +885,8 @@ def main():
                 base_cfg=base_cfg,
             )
         if voice_thread is not None and voice_thread.is_alive():
-            print("[Bootstrap] Waiting for LiveKit VoiceService to stop...")
-            voice_thread.join(timeout=8.0)
-            if voice_thread.is_alive():
-                print(
-                    "[Bootstrap] WARNING: VoiceService still stopping "
-                    "(daemon — will exit with process)."
-                )
+            print("[Bootstrap] Stopping NLU voice server...")
+            voice_thread.join(timeout=3.0)
         for t in worker_threads:
             if t is voice_thread:
                 continue
@@ -962,15 +905,8 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    if voice_cfg.get("enabled", False):
-        if nlu_mode:
-            print("Voice agent enabled (Local NLU mode). Listening on ws://localhost:8765")
-        else:
-            mode_label = "dev" if voice_devmode else "start"
-            print(
-                f"Voice agent enabled (LiveKit {mode_label}). "
-                "Connect via frontend with AGENT_NAME=campus-greeting-agent."
-            )
+    if voice_cfg.get("enabled", True):
+        print(f"Voice agent enabled (Local NLU mode). Listening on ws://localhost:{nlu_port}")
 
     print("Robot running. Press Ctrl+C to exit.")
 

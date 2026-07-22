@@ -319,3 +319,38 @@ class MediaServer:
 
 # Backward-compatible alias
 ImageServer = MediaServer
+
+_media_server: MediaServer | None = None
+_media_server_lock = threading.Lock()
+
+
+def ensure_media_server(bb: Blackboard, cfg: dict | None = None) -> MediaServer:
+    """Ensure a singleton MediaServer instance is running on port 8080."""
+    global _media_server
+    with _media_server_lock:
+        if _media_server is None:
+            app_dir = Path(__file__).resolve().parent.parent
+            assets_dir = app_dir / "assets"
+            kiosk_cfg = (cfg or {}).get("kiosk") or {}
+
+            def _trigger_reindex() -> None:
+                try:
+                    from voice.event_indexer import index_posters
+
+                    index_posters(assets_dir)
+                except Exception as exc:
+                    print(f"[MediaServer] reindex posters failed: {exc}")
+
+            _media_server = MediaServer(
+                assets_dir=assets_dir,
+                app_dir=app_dir,
+                port=int(kiosk_cfg.get("port", 8080)),
+                on_reindex=_trigger_reindex,
+                blackboard=bb,
+                kiosk_config=kiosk_cfg,
+            )
+            _media_server.start()
+        else:
+            _media_server.set_blackboard(bb)
+    return _media_server
+

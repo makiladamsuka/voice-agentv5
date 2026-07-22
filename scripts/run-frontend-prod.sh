@@ -20,15 +20,10 @@ fi
 if [[ -f "$ENV_FILE" && ! -f "$LOCAL_ENV" ]]; then
   echo "Creating $LOCAL_ENV from $ENV_FILE"
   {
-    grep -E '^(LIVEKIT_URL|LIVEKIT_API_KEY|LIVEKIT_API_SECRET)=' "$ENV_FILE" || true
-    grep -E '^AGENT_NAME=' "$ENV_FILE" || grep -E '^LIVEKIT_AGENT_NAME=' "$ENV_FILE" || echo "AGENT_NAME=campus-greeting-agent"
+    grep -E '^(DEEPGRAM_API_KEY|NEXT_PUBLIC_DEEPGRAM_API_KEY)=' "$ENV_FILE" || true
     echo "KIOSK_API_URL=http://127.0.0.1:8080"
+    echo "NEXT_PUBLIC_NLU_SERVER_URL=ws://127.0.0.1:8765/ws/voice"
   } > "$LOCAL_ENV"
-fi
-
-if [[ ! -f "$LOCAL_ENV" ]]; then
-  echo "Missing $LOCAL_ENV — copy frontend/.env.local.example and fill in LiveKit creds." >&2
-  exit 1
 fi
 
 cd "$FRONTEND"

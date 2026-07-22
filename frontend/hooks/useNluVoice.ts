@@ -96,9 +96,6 @@ export function useNluVoice({
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const volumeAnimRef = useRef<number | null>(null);
   
   const stateRef = useRef<NluVoiceState>("idle");
   const isActiveRef = useRef(false);
@@ -456,12 +453,6 @@ export function useNluVoice({
     const isStreamActive = stream && stream.getAudioTracks().some(track => track.readyState === "live");
 
     if (!isStreamActive) {
-      if (audioCtxRef.current) {
-        try {
-          audioCtxRef.current.close();
-        } catch (e) {}
-        audioCtxRef.current = null;
-      }
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -515,59 +506,6 @@ export function useNluVoice({
     // Small timeslice → low-latency chunks for Deepgram VAD
     recorder.start(250);
     console.log("[NluVoice] Mic capture started", mime ?? "(default mime)");
-
-    // Volume Analysis
-    try {
-      if (!stream) return;
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      const actx = new AudioContext();
-      audioCtxRef.current = actx;
-      const source = actx.createMediaStreamSource(stream);
-      const analyser = actx.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      analyserRef.current = analyser;
-      
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      let lastCall = 0;
-      let smoothedVol = 0;
-      
-      const updateVolume = (now: number) => {
-        if (!isActiveRef.current) return;
-        
-        if (now - lastCall > 50) { // Limit to ~20fps
-          analyser.getByteFrequencyData(dataArray);
-          let sum = 0;
-          for (let i = 0; i < dataArray.length; i++) {
-            sum += dataArray[i];
-          }
-          const avg = sum / dataArray.length;
-          
-          let rawVol = 0;
-          // Noise Gate: Ignore ambient room noise and keyboard typing (typically avg < 15)
-          if (avg > 15) {
-            // Normalize volume relative to the threshold
-            rawVol = Math.min(1, (avg - 15) / 35);
-            // Boost lower talking volumes slightly
-            rawVol = Math.pow(rawVol, 0.8);
-          }
-          
-          // Apply fast-attack, slow-release smoothing to prevent UI thrashing
-          const smoothing = rawVol > smoothedVol ? 0.4 : 0.1;
-          smoothedVol = smoothedVol + (rawVol - smoothedVol) * smoothing;
-          
-          if (stateRef.current === "listening" && onVolumeChangeRef.current) {
-             onVolumeChangeRef.current(smoothedVol);
-          }
-          lastCall = now;
-        }
-        volumeAnimRef.current = requestAnimationFrame(updateVolume);
-      };
-      volumeAnimRef.current = requestAnimationFrame(updateVolume);
-    } catch(e) {
-      console.warn("AudioContext init failed", e);
-    }
-
   }, []);
 
   startMicCaptureRef.current = startMicCapture;
@@ -746,16 +684,6 @@ export function useNluVoice({
       /* ignore */
     }
     recorderRef.current = null;
-
-    if (volumeAnimRef.current) {
-      cancelAnimationFrame(volumeAnimRef.current);
-      volumeAnimRef.current = null;
-    }
-    if (audioCtxRef.current) {
-      audioCtxRef.current.close().catch(() => {});
-      audioCtxRef.current = null;
-    }
-    analyserRef.current = null;
 
     mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
     mediaStreamRef.current = null;

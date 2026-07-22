@@ -113,7 +113,7 @@ export function useNluVoice({
   /** Timestamp when speaking ends — used to reject Deepgram echo transcripts */
   const speakingEndedAtRef = useRef<number>(0);
   /** How long (ms) to reject Deepgram results after TTS ends (echo cooldown) */
-  const ECHO_COOLDOWN_MS = 400;
+  const ECHO_COOLDOWN_MS = 2000;
 
   const apiKey =
     deepgramApiKey ?? process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY ?? "";
@@ -179,9 +179,11 @@ export function useNluVoice({
         speakingEndedAtRef.current = Date.now();
         if (resumeTimeoutRef.current) {
           clearTimeout(resumeTimeoutRef.current);
-          resumeTimeoutRef.current = null;
         }
-        setVoiceState("listening");
+        resumeTimeoutRef.current = setTimeout(() => {
+          setVoiceState("listening");
+          resumeTimeoutRef.current = null;
+        }, ECHO_COOLDOWN_MS);
       };
 
       if (resolvedUrl) {
@@ -488,19 +490,19 @@ export function useNluVoice({
       if (
         event.data.size > 0 &&
         dgWs.current?.readyState === WebSocket.OPEN &&
-        isActiveRef.current
+        isActiveRef.current &&
+        // Do not stream mic→Deepgram while NLU is thinking or TTS is playing
+        // (speaker echo would fake SpeechStarted and kill the reply).
+        stateRef.current !== "speaking" &&
+        stateRef.current !== "thinking"
       ) {
         event.data.arrayBuffer().then((buf) => {
-          if (dgWs.current?.readyState === WebSocket.OPEN) {
-            // While speaking/thinking, send zeroed audio buffers instead of dropping chunks.
-            // This preserves WebM container structure & timestamp alignment so Deepgram
-            // STT doesn't corrupt/drop the stream.
-            if (stateRef.current === "speaking" || stateRef.current === "thinking") {
-              const silentBuf = new ArrayBuffer(buf.byteLength);
-              dgWs.current.send(silentBuf);
-            } else {
-              dgWs.current.send(buf);
-            }
+          if (
+            dgWs.current?.readyState === WebSocket.OPEN &&
+            stateRef.current !== "speaking" &&
+            stateRef.current !== "thinking"
+          ) {
+            dgWs.current.send(buf);
           }
         });
       }
@@ -513,6 +515,59 @@ export function useNluVoice({
     // Small timeslice → low-latency chunks for Deepgram VAD
     recorder.start(250);
     console.log("[NluVoice] Mic capture started", mime ?? "(default mime)");
+
+    // Volume Analysis
+    try {
+      if (!stream) return;
+      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+      const actx = new AudioContext();
+      audioCtxRef.current = actx;
+      const source = actx.createMediaStreamSource(stream);
+      const analyser = actx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+      
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      let lastCall = 0;
+      let smoothedVol = 0;
+      
+      const updateVolume = (now: number) => {
+        if (!isActiveRef.current) return;
+        
+        if (now - lastCall > 50) { // Limit to ~20fps
+          analyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+          }
+          const avg = sum / dataArray.length;
+          
+          let rawVol = 0;
+          // Noise Gate: Ignore ambient room noise and keyboard typing (typically avg < 15)
+          if (avg > 15) {
+            // Normalize volume relative to the threshold
+            rawVol = Math.min(1, (avg - 15) / 35);
+            // Boost lower talking volumes slightly
+            rawVol = Math.pow(rawVol, 0.8);
+          }
+          
+          // Apply fast-attack, slow-release smoothing to prevent UI thrashing
+          const smoothing = rawVol > smoothedVol ? 0.4 : 0.1;
+          smoothedVol = smoothedVol + (rawVol - smoothedVol) * smoothing;
+          
+          if (stateRef.current === "listening" && onVolumeChangeRef.current) {
+             onVolumeChangeRef.current(smoothedVol);
+          }
+          lastCall = now;
+        }
+        volumeAnimRef.current = requestAnimationFrame(updateVolume);
+      };
+      volumeAnimRef.current = requestAnimationFrame(updateVolume);
+    } catch(e) {
+      console.warn("AudioContext init failed", e);
+    }
+
   }, []);
 
   startMicCaptureRef.current = startMicCapture;

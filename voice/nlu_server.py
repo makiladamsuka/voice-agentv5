@@ -120,7 +120,13 @@ async def _voice_ws_endpoint(websocket) -> None:
     # ── Echo / duplicate suppression ──────────────────────────────────────
     # Use a mutable dict so reassignment works correctly in all scopes.
     import time as _time
-    _echo = {"norm": "", "ts": 0.0, "suppress_sec": 10.0}
+    _echo = {
+        "norm": "",
+        "reply_norm": "",
+        "ts": 0.0,
+        "suppress_sec": 10.0,
+        "speaking": False,
+    }
     # ── Speculative throttle ──────────────────────────────────────────────
     _spec = {"last_norm": "", "last_ts": 0.0, "min_interval": 1.0}
 
@@ -171,15 +177,24 @@ async def _voice_ws_endpoint(websocket) -> None:
                     continue
 
                 # ── Duplicate / echo suppression ──────────────────────────
-                # If the exact same transcript arrives again within the
-                # suppression window, it's the speaker echo.  Drop it.
+                # If the robot is currently speaking OR we are in the echo suppression window,
+                # reject incoming transcripts that match the previous user query or the robot's reply.
                 _norm_incoming = _normalize_text(original_text)
                 _now = _time.monotonic()
                 _dt = _now - _echo["ts"]
-                if _norm_incoming == _echo["norm"] and _dt < _echo["suppress_sec"]:
-                    print(f"[NLU] Echo suppressed ({_dt:.1f}s < {_echo['suppress_sec']}s): '{original_text}'")
-                    await websocket.send_text(json.dumps({"type": "state", "conv_state": "listening"}))
-                    continue
+                is_duplicate_prompt = (_norm_incoming == _echo["norm"])
+                is_reply_echo = (
+                    bool(_echo["reply_norm"])
+                    and len(_norm_incoming) >= 3
+                    and _norm_incoming in _echo["reply_norm"]
+                )
+
+                if _echo["speaking"] or (_dt < _echo["suppress_sec"]):
+                    if is_duplicate_prompt or is_reply_echo:
+                        print(f"[NLU] Echo suppressed (speaking={_echo['speaking']}, {_dt:.1f}s < {_echo['suppress_sec']:.1f}s): '{original_text}'")
+                        await websocket.send_text(json.dumps({"type": "state", "conv_state": "speaking" if _echo["speaking"] else "listening"}))
+                        continue
+
                 _echo["norm"] = _norm_incoming
                 _echo["ts"] = _now
 
@@ -284,6 +299,12 @@ async def _voice_ws_endpoint(websocket) -> None:
                 elif _bb is not None:
                     _bb.write(conv_state="speaking", agent_speaking=True)
 
+                _dur_sec = (duration_ms / 1000.0) if duration_ms else 6.0
+                _echo["reply_norm"] = _normalize_text(result.get("reply_text", ""))
+                _echo["ts"] = _time.monotonic()
+                _echo["suppress_sec"] = max(15.0, _dur_sec + 6.0)
+                _echo["speaking"] = True
+
                 await websocket.send_text(json.dumps({
                     "type": "response",
                     "reply_text": result["reply_text"],
@@ -298,6 +319,8 @@ async def _voice_ws_endpoint(websocket) -> None:
                 )
 
             elif msg_type == "playback_start":
+                _echo["speaking"] = True
+                _echo["ts"] = _time.monotonic()
                 utterance_id = str(msg.get("utterance_id", "") or "")
                 sync = get_speech_sync_service()
                 if sync is not None:
@@ -306,6 +329,9 @@ async def _voice_ws_endpoint(websocket) -> None:
                     _bb.write(conv_state="speaking", agent_speaking=True)
 
             elif msg_type == "tts_done":
+                _echo["speaking"] = False
+                _echo["ts"] = _time.monotonic()
+                _echo["suppress_sec"] = 5.0
                 sync = get_speech_sync_service()
                 if sync is not None:
                     sync.end_playback()

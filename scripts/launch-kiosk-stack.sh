@@ -118,6 +118,7 @@ if [[ -f "$ENV_FILE" && ! -f "$LOCAL_ENV" ]]; then
     grep -E '^(LIVEKIT_URL|LIVEKIT_API_KEY|LIVEKIT_API_SECRET)=' "$ENV_FILE" || true
     grep -E '^AGENT_NAME=' "$ENV_FILE" || grep -E '^LIVEKIT_AGENT_NAME=' "$ENV_FILE" || echo "AGENT_NAME=campus-greeting-agent"
     echo "KIOSK_API_URL=http://127.0.0.1:${KIOSK_API_PORT}"
+    grep -E '^(DEEPGRAM_API_KEY|NEXT_PUBLIC_DEEPGRAM_API_KEY|NEXT_PUBLIC_NLU_MODE|NEXT_PUBLIC_NLU_SERVER_URL|NEXT_PUBLIC_LOCAL_SPEAKER)=' "$ENV_FILE" || true
   } > "$LOCAL_ENV"
 fi
 

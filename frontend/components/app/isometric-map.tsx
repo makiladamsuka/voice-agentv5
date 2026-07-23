@@ -2,7 +2,7 @@
 
 import React, { useRef, useMemo, useState, useEffect, useCallback } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, Line, Box, Grid, Text } from "@react-three/drei";
+import { OrbitControls, Line, Box, Grid, Text, Html } from "@react-three/drei";
 import * as THREE from "three";
 
 // Animated glowing path that flows toward the destination
@@ -143,15 +143,20 @@ interface NavigationMapProps {
 const getRoomTheme = (label: string) => {
   if (!label) return { color: "#334155", icon: "📍" };
   const lower = label.toLowerCase();
-  if (lower.includes("lecture hall")) return { color: "#0c4af3ff", icon: "🎓" };
-  if (lower.includes("laboratory") || lower.includes("lab"))
-    return { color: "#d3c90cff", icon: "🔬" };
-  if (lower.includes("office")) return { color: "#166ac3ff", icon: "🏢" };
-  if (lower.includes("washroom")) return { color: "#949090", icon: "🚻" };
-  if (lower.includes("desk") || lower.includes("evaluator"))
-    return { color: "#3730a3", icon: "💁" };
-  if (lower.includes("stair")) return { color: "#3d3d3dff", icon: "🪜" }; // structural slate color
-  return { color: "#334155", icon: "📍" }; // default sleek slate
+  if (lower.includes("director") || lower.includes("undergraduate")) return { color: "#6A329F", icon: "🏢" };
+  if (lower.includes("department")) return { color: "#3F51B5", icon: "🏢" };
+  if (lower.includes("lecture")) return { color: "#FFB74D", icon: "🎓" };
+  if (lower.includes("auditorium")) return { color: "#BE81CC", icon: "🏛️" };
+  if (lower.includes("laboratory") || lower.includes("lab")) return { color: "#A9DCAE", icon: "🔬" };
+  if (lower.includes("female washroom")) return { color: "#6BCFE3", icon: "🚺" };
+  if (lower.includes("male washroom")) return { color: "#6BCFE3", icon: "🚹" };
+  if (lower.includes("washroom")) return { color: "#6BCFE3", icon: "🚻" };
+  if (lower.includes("evaluator")) return { color: "#9DA8B3", icon: "💁" };
+  if (lower.includes("desk")) return { color: "#9CA7B1", icon: "💁" };
+  if (lower.includes("exit")) return { color: "#E53935", icon: "🚪" };
+  if (lower.includes("stair")) return { color: "#4a4a4aff", icon: "🪜" };
+  if (lower.includes("unit") || lower.includes("room") || lower.includes("division") || lower.includes("devision") || lower.includes("board") || lower.includes("office") || lower.includes("microcontroller")) return { color: "#A3E0D8", icon: "🏢" };
+  return { color: "#334155", icon: "📍" };
 };
 
 // Realistic Foundation Staircase Component
@@ -603,6 +608,8 @@ export default function NavigationMap({
                           },
                         ),
                     )}
+                    {/* Building names hidden by user request */}
+                    {/*
                     <Text
                       position={[0, 1, b.size[1] / 2 + 0.5]}
                       rotation={[-Math.PI / 2, 0, 0]}
@@ -613,6 +620,7 @@ export default function NavigationMap({
                     >
                       {b.name.replace(" ", "\n")}
                     </Text>
+                    */}
                   </group>
                 );
               })}
@@ -626,13 +634,15 @@ export default function NavigationMap({
                 // Use a vibrant indigo for the destination instead of green
                 // If it's a staircase, always force the theme color to ignore server overrides
                 const isStair = node.label?.toLowerCase().includes("stair");
-                const boxColor = isDestination ? "#2563EB" : (isStair ? theme.color : (node.color || theme.color));
+                const boxColor = isDestination ? "#2563EB" : theme.color;
 
                 // Elevate ALL labels and alternate heights to prevent crossing
                 const staggerHeight = 1.0 + (index % 2) * 0.8;
                 const textY = size[1] / 2 + staggerHeight;
 
                 const isStaircase = node.label?.toLowerCase().includes("stair");
+                const isWashroom = node.label?.toLowerCase().includes("washroom");
+                const isYouAreHere = node.label?.toLowerCase() === "you are here";
 
                 return (
                   <group
@@ -657,7 +667,14 @@ export default function NavigationMap({
                       }
                     }}
                   >
-                    {isStaircase ? (
+                    {isYouAreHere ? (
+                      <Html center position={[0, size[1] / 2 - 0.5, 0]}>
+                        <svg viewBox="0 0 24 24" width="60" height="60" style={{ filter: "drop-shadow(0px 10px 5px rgba(0,0,0,0.5))", transform: "translateY(-50%)" }}>
+                          <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#ff0000" />
+                          <circle cx="12" cy="9" r="3.5" fill="#000000" />
+                        </svg>
+                      </Html>
+                    ) : isStaircase ? (
                       <RealisticStaircase size={size} isDestination={isDestination} boxColor={boxColor} />
                     ) : (
                       <Box args={size} castShadow>
@@ -670,11 +687,11 @@ export default function NavigationMap({
                     )}
 
                     {/* Text label painted directly on the top of the item */}
-                    {!isStaircase && (
+                    {!isStaircase && !isYouAreHere && (
                       <Text
                         position={[0, size[1] / 2 + 0.05, 0]}
                         rotation={[-Math.PI / 2, 0, 0]}
-                        fontSize={0.35}
+                        fontSize={isWashroom ? 0.5 : 0.35}
                         color="#ffffff"
                         anchorX="center"
                         anchorY="middle"
@@ -682,7 +699,7 @@ export default function NavigationMap({
                         textAlign="center"
                         lineHeight={1.1}
                       >
-                        {`${theme.icon}\n${node.label.replace(" ", "\n")}`}
+                        {isWashroom ? theme.icon : `${theme.icon}\n${node.label.replace(" ", "\n")}`}
                       </Text>
                     )}
                   </group>

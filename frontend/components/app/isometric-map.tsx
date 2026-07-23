@@ -604,10 +604,10 @@ export default function NavigationMap({
                         ),
                     )}
                     <Text
-                      position={[0, 0.02, b.size[1] / 2 + 0.5]}
+                      position={[0, 1, b.size[1] / 2 + 0.5]}
                       rotation={[-Math.PI / 2, 0, 0]}
-                      fontSize={0.7}
-                      color={b.color}
+                      fontSize={0.6}
+                      color="#000000"
                       fontWeight="bold"
                       textAlign="center"
                     >

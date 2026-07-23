@@ -3,7 +3,7 @@
     {
       "id": "1781148136543",
       "x": -2.5,
-      "z": 6,
+      "z": 5,
       "building": "building_2",
       "label": "Department of Computational Mathematics",
       "type": "room",
@@ -358,7 +358,7 @@
     {
       "id": "1782231033808",
       "x": 2.5,
-      "z": 6,
+      "z": 5,
       "building": "building_2",
       "label": "Waypoint",
       "type": "waypoint"

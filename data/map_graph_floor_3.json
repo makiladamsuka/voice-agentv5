@@ -3,7 +3,7 @@
     {
       "id": "1781148136543",
       "x": -3,
-      "z": 6,
+      "z": 5,
       "building": "building_2",
       "label": "Department of Interdisciplinary Studies",
       "type": "room",
@@ -23,7 +23,7 @@
       "size": [
         7,
         1,
-        10.5
+        9
       ]
     },
     {
@@ -403,7 +403,7 @@
     {
       "id": "1782233955933",
       "x": 2.5,
-      "z": 6,
+      "z": 5,
       "building": "building_2",
       "label": "Waypoint",
       "type": "waypoint"

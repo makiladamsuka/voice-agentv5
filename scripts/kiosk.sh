@@ -88,18 +88,19 @@ exec "$CHROMIUM" \
   --no-first-run \
   --check-for-update-interval=31536000 \
   --disable-smooth-scrolling \
-  --disable-gpu \
-  --disable-gpu-compositing \
-  --disable-accelerated-2d-canvas \
-  --disable-accelerated-video-decode \
+  --enable-webgl \
+  --ignore-gpu-blocklist \
+  --enable-gpu-rasterization \
   --renderer-process-limit=1 \
-  --num-raster-threads=1 \
+  --num-raster-threads=2 \
   --autoplay-policy=no-user-gesture-required \
   --disable-background-networking \
   --disable-sync \
   --disable-default-apps \
   --disable-component-update \
+  --enable-low-end-device-mode \
   --disable-features=TranslateUI,MediaRouter \
+  --enable-features=LowEndDeviceMode \
   --use-fake-ui-for-media-stream \
   --log-level=3 \
   --disable-logging \

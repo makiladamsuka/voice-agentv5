@@ -81,7 +81,7 @@
     },
     {
       "id": "1781198205764",
-      "x": -5.5,
+      "x": -5,
       "z": -6,
       "building": "building_2",
       "label": "Instructor Room",
@@ -253,7 +253,7 @@
     },
     {
       "id": "1782225339438",
-      "x": -5.5,
+      "x": -5,
       "z": -4.5,
       "building": "building_2",
       "label": "Waypoint",

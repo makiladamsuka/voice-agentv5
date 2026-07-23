@@ -74,7 +74,7 @@
       "label": "Audio Visual Unit Extension",
       "type": "room",
       "size": [
-        2.5,
+        2,
         1,
         2
       ]
@@ -87,7 +87,7 @@
       "label": "Microcontroller Based System",
       "type": "room",
       "size": [
-        2.5,
+        2,
         1,
         2
       ]

@@ -32,7 +32,7 @@ stream:
   jpeg_quality: 70
   render_fps: 24
   vision_fps: 10
-  vision_fps_voice: 2        # slower detect between voice turns (when not hearing/speaking)
+  vision_fps_voice: 0        # fully pause vision during voice (saves ~50ms/frame CPU on Pi)
   vision_pause_on_audio: true # skip camera+YuNet while user/agent audio is active
   vision_pause_poll_hz: 2     # blackboard poll only while paused (no capture)
   res: [320, 180]
@@ -386,6 +386,8 @@ voice:
   enabled: true
   nlu_mode: true
   nlu_port: 8765
+  speech_sync:
+    tick_hz: 25              # 25 Hz is perceptually identical for jaw/eye sync (saves GIL time vs 50)
 
 # Lower loop rates while LiveKit mic session is active (reduces audio jitter on Pi)
 voice_profile:

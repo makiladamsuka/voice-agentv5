@@ -770,6 +770,18 @@ def run_nlu_server(
     log.info(f"[NluServer] Starting on ws://{host}:{port}/ws/voice")
     print(f"[NluServer] WebSocket server starting on port {port}...")
 
+    # Pre-build amplitude sidecars for all cached MP3s so ffmpeg is never
+    # called during a live voice turn (eliminates CPU spikes on Pi).
+    try:
+        from voice.audio_envelope import build_all_sidecars
+        audio_cache = APP_DIR / "assets" / "audio_cache"
+        if audio_cache.is_dir():
+            n = build_all_sidecars(audio_cache)
+            if n:
+                print(f"[NluServer] Pre-built {n} amplitude sidecar(s).")
+    except Exception as exc:
+        log.warning(f"Sidecar pre-build failed: {exc}")
+
     config = uvicorn.Config(
         app,
         host=host,

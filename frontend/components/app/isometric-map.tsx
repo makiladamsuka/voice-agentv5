@@ -514,7 +514,7 @@ export default function NavigationMap({
           </div>
         ) : (
           <Canvas
-            shadows
+            shadows={isStandalone}
             orthographic
             camera={{ position: [20, 20, 20], zoom: isStandalone ? 35 : 28 }}
           >
@@ -655,7 +655,8 @@ export default function NavigationMap({
 
               <OrbitControls
                 enableZoom={false}
-                enablePan={true}
+                enablePan={isStandalone}
+                enableRotate={isStandalone}
                 maxPolarAngle={Math.PI / 2 - 0.1}
                 target={[0, 0, 0]}
               />

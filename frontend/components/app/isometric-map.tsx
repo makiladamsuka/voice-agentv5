@@ -231,6 +231,17 @@ export default function NavigationMap({
   const lastScrollRef = useRef<number>(0);
   const [highlightedFloor, setHighlightedFloor] = useState<string | null>(null);
   const animTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const [webglSupported, setWebglSupported] = useState<boolean>(true);
+
+  useEffect(() => {
+    try {
+      const canvas = document.createElement("canvas");
+      const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+      if (!gl) setWebglSupported(false);
+    } catch {
+      setWebglSupported(false);
+    }
+  }, []);
 
   const cancelAnim = useCallback(() => {
     animTimersRef.current.forEach(clearTimeout);
@@ -495,154 +506,162 @@ export default function NavigationMap({
           }
         }}
       >
-        <Canvas
-          shadows
-          orthographic
-          camera={{ position: [20, 20, 20], zoom: isStandalone ? 35 : 28 }}
-        >
-          <React.Suspense fallback={null}>
-            <ambientLight intensity={0.6} />
-            <directionalLight
-              position={[10, 20, 10]}
-              intensity={1}
-              castShadow
-            />
-            <pointLight
-              position={[0, 5, 0]}
-              intensity={0.35}
-              color="#93C5FD"
-              distance={15}
-            />
+        {!webglSupported ? (
+          <div className="flex h-full w-full flex-col items-center justify-center text-center p-6 bg-black/40 text-white/80 rounded-3xl backdrop-blur-md border border-white/10">
+            <span className="material-symbols-outlined text-4xl text-amber-400 mb-2">map</span>
+            <p className="text-[18px] font-bold text-amber-400 mb-1">WebGL Disabled or Unsupported</p>
+            <p className="text-[14px] text-white/70 max-w-sm">The 3D navigation map requires WebGL to render properly.</p>
+          </div>
+        ) : (
+          <Canvas
+            shadows
+            orthographic
+            camera={{ position: [20, 20, 20], zoom: isStandalone ? 35 : 28 }}
+          >
+            <React.Suspense fallback={null}>
+              <ambientLight intensity={0.6} />
+              <directionalLight
+                position={[10, 20, 10]}
+                intensity={1}
+                castShadow
+              />
+              <pointLight
+                position={[0, 5, 0]}
+                intensity={0.35}
+                color="#93C5FD"
+                distance={15}
+              />
 
-            <AnimatedFloorGroup currentFloor={currentFloor} destFloor={destFloorKey}>
-              {/* Building Grids */}
-              {buildingEntries.map(([bId, b]) => (
-                <group key={bId} position={b.position}>
-                  {/* Floor Cells (skipping removed cells) */}
-                  {Array.from({ length: Math.round(b.size[0] || 1) }).map(
-                    (_, c) =>
-                      Array.from({ length: Math.round(b.size[1] || 1) }).map(
-                        (_, r) => {
-                          const cellId = `${c}_${r}`;
-                          if (b.removed_cells?.includes(cellId)) return null;
-                          const cx = c - b.size[0] / 2 + 0.5;
-                          const cz = r - b.size[1] / 2 + 0.5;
-                          return (
-                            <mesh
-                              key={cellId}
-                              position={[cx, -0.5, cz]}
-                              receiveShadow
-                            >
-                              <boxGeometry args={[1, 1, 1]} />
-                              <meshStandardMaterial color={b.color} />
-                            </mesh>
-                          );
-                        },
-                      ),
-                  )}
-                  <Text
-                    position={[0, 0.02, b.size[1] / 2 + 0.5]}
-                    rotation={[-Math.PI / 2, 0, 0]}
-                    fontSize={0.7}
-                    color={b.color}
-                    fontWeight="bold"
-                    textAlign="center"
-                  >
-                    {b.name.replace(" ", "\n")}
-                  </Text>
-                </group>
-              ))}
-
-              {/* Room Blocks */}
-              {floorNodes.map((node: any, index: number) => {
-                const size = node.size || [1, 1, 1];
-                const isDestination =
-                  node.label?.toLowerCase() === destination.toLowerCase();
-                const theme = getRoomTheme(node.label);
-                // Use a vibrant indigo for the destination instead of green
-                const boxColor = isDestination ? "#2563EB" : (node.color || theme.color);
-
-                // Elevate ALL labels and alternate heights to prevent crossing
-                const staggerHeight = 1.0 + (index % 2) * 0.8;
-                const textY = size[1] / 2 + staggerHeight;
-
-                return (
-                  <group
-                    key={node.id}
-                    position={[node.world[0], size[1] / 2, node.world[2]]}
-                    onClick={(e) => {
-                      if (onNodeClick) {
-                        e.stopPropagation();
-                        onNodeClick(node.label);
-                      }
-                    }}
-                    onPointerOver={(e) => {
-                      if (onNodeClick) {
-                        e.stopPropagation();
-                        document.body.style.cursor = "pointer";
-                      }
-                    }}
-                    onPointerOut={(e) => {
-                      if (onNodeClick) {
-                        e.stopPropagation();
-                        document.body.style.cursor = "auto";
-                      }
-                    }}
-                  >
-                    <Box args={size} castShadow>
-                      <meshStandardMaterial
-                        color={boxColor}
-                        emissive={isDestination ? "#2563EB" : "#000000"}
-                        emissiveIntensity={isDestination ? 0.4 : 0}
-                      />
-                    </Box>
-
-                    {/* Text label painted directly on the top of the item */}
+              <AnimatedFloorGroup currentFloor={currentFloor} destFloor={destFloorKey}>
+                {/* Building Grids */}
+                {buildingEntries.map(([bId, b]) => (
+                  <group key={bId} position={b.position}>
+                    {/* Floor Cells (skipping removed cells) */}
+                    {Array.from({ length: Math.round(b.size[0] || 1) }).map(
+                      (_, c) =>
+                        Array.from({ length: Math.round(b.size[1] || 1) }).map(
+                          (_, r) => {
+                            const cellId = `${c}_${r}`;
+                            if (b.removed_cells?.includes(cellId)) return null;
+                            const cx = c - b.size[0] / 2 + 0.5;
+                            const cz = r - b.size[1] / 2 + 0.5;
+                            return (
+                              <mesh
+                                key={cellId}
+                                position={[cx, -0.5, cz]}
+                                receiveShadow
+                              >
+                                <boxGeometry args={[1, 1, 1]} />
+                                <meshStandardMaterial color={b.color} />
+                              </mesh>
+                            );
+                          },
+                        ),
+                    )}
                     <Text
-                      position={[0, size[1] / 2 + 0.05, 0]}
+                      position={[0, 0.02, b.size[1] / 2 + 0.5]}
                       rotation={[-Math.PI / 2, 0, 0]}
-                      fontSize={0.35}
-                      color="#ffffff"
-                      anchorX="center"
-                      anchorY="middle"
+                      fontSize={0.7}
+                      color={b.color}
                       fontWeight="bold"
                       textAlign="center"
-                      lineHeight={1.1}
                     >
-                      {`${theme.icon}\n${node.label.replace(" ", "\n")}`}
+                      {b.name.replace(" ", "\n")}
                     </Text>
                   </group>
-                );
-              })}
+                ))}
 
-              {/* Glowing route — navigation only, never in explore mode */}
-              {!isStandalone && pathPoints.length >= 2 && (
-                <GlowingPath points={pathPoints} />
-              )}
+                {/* Room Blocks */}
+                {floorNodes.map((node: any, index: number) => {
+                  const size = node.size || [1, 1, 1];
+                  const isDestination =
+                    node.label?.toLowerCase() === destination.toLowerCase();
+                  const theme = getRoomTheme(node.label);
+                  // Use a vibrant indigo for the destination instead of green
+                  const boxColor = isDestination ? "#2563EB" : (node.color || theme.color);
 
-              {/* Destination marker — navigation only */}
-              {!isStandalone &&
-                destNode &&
-                destNode.floor === currentFloor && (
-                  <DestinationMarker
-                    position={[
-                      destNode.world[0],
-                      destNode.world[1],
-                      destNode.world[2],
-                    ]}
-                    label={destination}
-                  />
+                  // Elevate ALL labels and alternate heights to prevent crossing
+                  const staggerHeight = 1.0 + (index % 2) * 0.8;
+                  const textY = size[1] / 2 + staggerHeight;
+
+                  return (
+                    <group
+                      key={node.id}
+                      position={[node.world[0], size[1] / 2, node.world[2]]}
+                      onClick={(e) => {
+                        if (onNodeClick) {
+                          e.stopPropagation();
+                          onNodeClick(node.label);
+                        }
+                      }}
+                      onPointerOver={(e) => {
+                        if (onNodeClick) {
+                          e.stopPropagation();
+                          document.body.style.cursor = "pointer";
+                        }
+                      }}
+                      onPointerOut={(e) => {
+                        if (onNodeClick) {
+                          e.stopPropagation();
+                          document.body.style.cursor = "auto";
+                        }
+                      }}
+                    >
+                      <Box args={size} castShadow>
+                        <meshStandardMaterial
+                          color={boxColor}
+                          emissive={isDestination ? "#2563EB" : "#000000"}
+                          emissiveIntensity={isDestination ? 0.4 : 0}
+                        />
+                      </Box>
+
+                      {/* Text label painted directly on the top of the item */}
+                      <Text
+                        position={[0, size[1] / 2 + 0.05, 0]}
+                        rotation={[-Math.PI / 2, 0, 0]}
+                        fontSize={0.35}
+                        color="#ffffff"
+                        anchorX="center"
+                        anchorY="middle"
+                        fontWeight="bold"
+                        textAlign="center"
+                        lineHeight={1.1}
+                      >
+                        {`${theme.icon}\n${node.label.replace(" ", "\n")}`}
+                      </Text>
+                    </group>
+                  );
+                })}
+
+                {/* Glowing route — navigation only, never in explore mode */}
+                {!isStandalone && pathPoints.length >= 2 && (
+                  <GlowingPath points={pathPoints} />
                 )}
-            </AnimatedFloorGroup>
 
-            <OrbitControls
-              enableZoom={false}
-              enablePan={true}
-              maxPolarAngle={Math.PI / 2 - 0.1}
-              target={[0, 0, 0]}
-            />
-          </React.Suspense>
-        </Canvas>
+                {/* Destination marker — navigation only */}
+                {!isStandalone &&
+                  destNode &&
+                  destNode.floor === currentFloor && (
+                    <DestinationMarker
+                      position={[
+                        destNode.world[0],
+                        destNode.world[1],
+                        destNode.world[2],
+                      ]}
+                      label={destination}
+                    />
+                  )}
+              </AnimatedFloorGroup>
+
+              <OrbitControls
+                enableZoom={false}
+                enablePan={true}
+                maxPolarAngle={Math.PI / 2 - 0.1}
+                target={[0, 0, 0]}
+              />
+            </React.Suspense>
+          </Canvas>
+        )}
       </div>
 
       {/* Bottom hint */}

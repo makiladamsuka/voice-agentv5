@@ -92,7 +92,6 @@ exec "$CHROMIUM" \
   --disable-gpu-compositing \
   --disable-accelerated-2d-canvas \
   --disable-accelerated-video-decode \
-  --disable-webgl \
   --renderer-process-limit=1 \
   --num-raster-threads=1 \
   --autoplay-policy=no-user-gesture-required \

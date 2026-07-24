@@ -22,21 +22,28 @@ def _clients() -> list[tuple[OpenAI, str]]:
     """Return a list of (client, model) pairs to try in order."""
     options: list[tuple[OpenAI, str]] = []
     if os.getenv("OPENROUTER_API_KEY"):
-        # Try OpenRouter Free Gemini 2.5 Flash first
+        # Try OpenRouter Free Auto-Router (picks active free vision models automatically)
         options.append((
             OpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=os.getenv("OPENROUTER_API_KEY"),
             ),
-            "google/gemini-2.5-flash:free",
+            "openrouter/free",
         ))
-        # Try OpenRouter Free Llama 3.2 Vision next
+        # Try specific Free Vision models as secondary fallbacks
         options.append((
             OpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=os.getenv("OPENROUTER_API_KEY"),
             ),
-            "meta-llama/llama-3.2-11b-vision-instruct:free",
+            "google/gemma-4-31b-it:free",
+        ))
+        options.append((
+            OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=os.getenv("OPENROUTER_API_KEY"),
+            ),
+            "nvidia/nemotron-nano-12b-v2-vl:free",
         ))
     if os.getenv("GROQ_API_KEY"):
         # Groq vision model as fallback

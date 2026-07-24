@@ -126,6 +126,12 @@ class IntentMatcher:
             embedding_function=embedding_functions.DefaultEmbeddingFunction(),
         )
         self.intents_map = {}
+        self.exact_match_map = {}
+
+    def match_exact(self, text: str) -> dict | None:
+        """Instant exact lookup for pre-defined queries (0.01ms cost) to bypass vector search."""
+        norm_text = text.lower().strip(" \t\r\n.,?!;:")
+        return self.exact_match_map.get(norm_text)
 
     def _load_intent_lists(self, compiled_json_path: Path) -> list[tuple[str, dict]]:
         """Load all domain intent files. Returns a list of (domain, intent) pairs."""
@@ -153,8 +159,13 @@ class IntentMatcher:
             print("No compiled intents found. Run intent_compiler.py first.")
             return
 
+        self.exact_match_map = {}
         for _, intent in pairs:
             self.intents_map[intent["id"]] = intent
+            for utt in intent.get("utterances") or []:
+                norm_utt = utt.lower().strip(" \t\r\n.,?!;:")
+                if norm_utt:
+                    self.exact_match_map[norm_utt] = intent
 
         expected_docs = sum(len(i.get("utterances") or []) for _, i in pairs)
 

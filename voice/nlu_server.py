@@ -154,12 +154,19 @@ async def _voice_ws_endpoint(websocket) -> None:
                     norm_text = _normalize_text(user_text)
                     # ── Throttle: skip if same text or too soon ───────────
                     _snow = _time.monotonic()
-                    if norm_text == _spec["last_norm"] or (_snow - _spec["last_ts"]) < _spec["min_interval"]:
-                        continue
+                    
+                    # ── Tier-1 Check First (0.01ms cost) ──
+                    runtime = _get_runtime()
+                    is_exact_match = runtime.matcher.match_exact(user_text) is not None
+                    
+                    if not is_exact_match:
+                        # Throttle non-exact speculative matching to once every 1.5s to prevent Pi CPU spikes
+                        if norm_text == _spec["last_norm"] or (_snow - _spec["last_ts"]) < 1.5:
+                            continue
+                    
                     _spec["last_norm"] = norm_text
                     _spec["last_ts"] = _snow
                     # ─────────────────────────────────────────────────────
-                    runtime = _get_runtime()
                     loop = asyncio.get_running_loop()
                     result = await loop.run_in_executor(
                         None, _match_intent, runtime, user_text
@@ -502,17 +509,22 @@ def _match_intent(runtime, user_text: str) -> dict:
             "action": {},
         }
 
-    intent = runtime.matcher.match(user_text, domain=domain)
-    
-    # Fallback for STT mishearings: If the strict regex router sent it to the wrong domain,
-    # the vector database will return no matches. We trust ChromaDB to find it in other domains.
-    if not intent:
-        for fallback_domain in ["navigate", "events", "smalltalk"]:
-            if fallback_domain != domain:
-                intent = runtime.matcher.match(user_text, domain=fallback_domain)
-                if intent:
-                    log.info(f"  [Fallback] AI matched in '{fallback_domain}' domain despite missing trigger words!")
-                    break
+    # ── Tier-1 Exact Match lookup (0.01ms cost) ──────────────────────────────
+    intent = runtime.matcher.match_exact(user_text)
+    if intent:
+        log.info(f"  [Exact Match] matched intent '{intent.get('id')}' instantly via hashmap!")
+    else:
+        intent = runtime.matcher.match(user_text, domain=domain)
+        
+        # Fallback for STT mishearings: If the strict regex router sent it to the wrong domain,
+        # the vector database will return no matches. We trust ChromaDB to find it in other domains.
+        if not intent:
+            for fallback_domain in ["navigate", "events", "smalltalk"]:
+                if fallback_domain != domain:
+                    intent = runtime.matcher.match(user_text, domain=fallback_domain)
+                    if intent:
+                        log.info(f"  [Fallback] AI matched in '{fallback_domain}' domain despite missing trigger words!")
+                        break
 
     if intent:
         action = intent.get("action", {}) or {}

@@ -236,7 +236,11 @@ export default function NavigationMap({
   useEffect(() => {
     try {
       const canvas = document.createElement("canvas");
-      const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+      const opts = { failIfMajorPerformanceCaveat: false };
+      const gl =
+        canvas.getContext("webgl2", opts) ||
+        canvas.getContext("webgl", opts) ||
+        canvas.getContext("experimental-webgl", opts);
       if (!gl) setWebglSupported(false);
     } catch {
       setWebglSupported(false);

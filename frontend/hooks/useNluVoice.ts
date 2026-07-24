@@ -188,14 +188,6 @@ export function useNluVoice({
         audio.preload = "auto";
         audioRef.current = audio;
         try {
-          // Wait for Chromium to fully buffer the MP3 before playing.
-          // On Pi4 with a single renderer process, immediate play() causes
-          // audio decode and playback to fight for CPU → audible stutter.
-          await new Promise<void>((resolve) => {
-            audio.oncanplaythrough = () => resolve();
-            audio.onerror = () => resolve();
-            setTimeout(() => resolve(), 3000); // fallback timeout
-          });
           await audio.play();
           sendPlaybackStart(utteranceId ?? "");
           await new Promise<void>((resolve) => {

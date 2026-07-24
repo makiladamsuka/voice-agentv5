@@ -602,11 +602,10 @@ class OfflineVoiceRuntime:
             audio_file = intent.get("audio_file")
             audio_path = APP_DIR / "assets" / "audio_cache" / audio_file if (audio_file and action.get("action") != "navigate") else None
             
-            if audio_path and audio_path.exists():
-                print(f"🔊 Playing audio: {audio_file}")
-                played = play_audio(audio_path)
-                if not played:
-                    print(f"🔊 [Audio Fallback] {reply_text}")
+            from voice.local_speaker import is_enabled as local_speaker_enabled
+            if local_speaker_enabled() and audio_path and audio_path.exists():
+                print(f"🔊 Playing local speaker audio: {audio_file}")
+                play_audio(audio_path)
             else:
                 print(f"🔊 [Audio Playback] {reply_text}")
                 
@@ -621,11 +620,10 @@ class OfflineVoiceRuntime:
                 current_action={}
             )
             audio_path = APP_DIR / "assets" / "audio_cache" / "intent_fallback.mp3"
-            if audio_path.exists():
-                print("🔊 Playing fallback audio...")
-                played = play_audio(audio_path)
-                if not played:
-                    print("🔊 [Audio Fallback] I'm a campus guide! Try asking me about events or locations.")
+            from voice.local_speaker import is_enabled as local_speaker_enabled
+            if local_speaker_enabled() and audio_path.exists():
+                print("🔊 Playing local speaker fallback audio...")
+                play_audio(audio_path)
             else:
                 print("🔊 [Audio Playback] I'm a campus guide! Try asking me about events or locations.")
             

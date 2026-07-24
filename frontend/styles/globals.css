@@ -542,3 +542,15 @@ html.kiosk-mode * {
     opacity: 0.12;
   }
 }
+
+/* Touch Screen Optimization: Disable double-tap-to-zoom 300ms delay on all interactive elements */
+button, a, select, input, [role="button"], .interactive-element {
+  touch-action: manipulation !important;
+}
+
+/* Momentum Touch Scrolling for all lists and panels */
+.scrollable-list, .scroll-container, [data-radix-scroll-area-viewport] {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}

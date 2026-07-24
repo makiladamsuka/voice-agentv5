@@ -31,6 +31,8 @@ stream:
   jpeg_quality: 70
   render_fps: 24
   vision_fps: 10
+  vision_fps_voice: 0        # fully pause vision during voice (saves ~50ms/frame CPU on Pi)
+  vision_pause_on_audio: true # skip camera+YuNet while user/agent audio is active
   res: [320, 180]
 
 debug_viz:

@@ -188,6 +188,19 @@ export function useNluVoice({
         audio.preload = "auto";
         audioRef.current = audio;
         try {
+          // Pre-buffer audio to prevent Chromium decode jitter on Pi 4
+          await new Promise<void>((res) => {
+            let done = false;
+            const finish = () => {
+              if (!done) {
+                done = true;
+                res();
+              }
+            };
+            audio.oncanplaythrough = finish;
+            audio.oncanplay = finish;
+            setTimeout(finish, 250);
+          });
           await audio.play();
           sendPlaybackStart(utteranceId ?? "");
           await new Promise<void>((resolve) => {
@@ -224,6 +237,18 @@ export function useNluVoice({
         const audio = new Audio(url);
         audio.preload = "auto";
         audioRef.current = audio;
+        await new Promise<void>((res) => {
+          let done = false;
+          const finish = () => {
+            if (!done) {
+              done = true;
+              res();
+            }
+          };
+          audio.oncanplaythrough = finish;
+          audio.oncanplay = finish;
+          setTimeout(finish, 250);
+        });
         await audio.play();
         sendPlaybackStart(utteranceId ?? "");
         await new Promise<void>((resolve) => {

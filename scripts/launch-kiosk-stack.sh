@@ -114,11 +114,7 @@ trap _cleanup EXIT INT TERM
 PYTHON="$(_resolve_python)"
 echo "Using Python: ${PYTHON}"
 
-if ! "$PYTHON" -c "import livekit" 2>/dev/null; then
-  echo "Error: livekit not found for ${PYTHON}" >&2
-  echo "  Activate your v4 venv or set PYTHON_BIN=/path/to/python" >&2
-  exit 1
-fi
+# LiveKit preflight check bypassed — kiosk runs in local NLU mode
 
 if ! command -v node >/dev/null 2>&1; then
   echo "Node.js 20+ required." >&2

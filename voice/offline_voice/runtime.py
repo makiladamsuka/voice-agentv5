@@ -378,49 +378,75 @@ def transcribe_audio(audio_data: bytes) -> str:
         return ""
 
 
-def play_audio(audio_path: Path) -> bool:
-    """Plays an audio file using system players (mpv, ffplay) or pygame to avoid compilation issues."""
+def play_audio(audio_path: Path, block: bool = False) -> bool:
+    """Plays an audio file using mpv or ffplay.
+
+    Non-blocking by default (block=False) — matches Pepper/Temi industrial pattern.
+    Returns True immediately after launching the audio subprocess.
+    The caller should set conv_state='listening' right after calling this.
+
+    Args:
+        audio_path: Path to the audio file to play.
+        block: If True, waits for playback to finish (legacy behaviour).
+               Always False in kiosk NLU mode so the mic opens immediately.
+    """
     import subprocess
     import shutil
-    
+
     if not audio_path.exists():
         return False
-        
+
     # 1. Try mpv (extremely low latency and quiet)
     if shutil.which("mpv"):
         try:
-            subprocess.run(
-                ["mpv", "--no-video", "--really-quiet", str(audio_path)],
-                check=True
-            )
+            if block:
+                subprocess.run(
+                    ["mpv", "--no-video", "--really-quiet", str(audio_path)],
+                    check=True
+                )
+            else:
+                subprocess.Popen(
+                    ["mpv", "--no-video", "--really-quiet", str(audio_path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
             return True
         except Exception as e:
             print(f"  [Audio] mpv error: {e}")
-            
+
     # 2. Try ffplay
     if shutil.which("ffplay"):
         try:
-            subprocess.run(
-                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(audio_path)],
-                check=True
-            )
+            if block:
+                subprocess.run(
+                    ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(audio_path)],
+                    check=True
+                )
+            else:
+                subprocess.Popen(
+                    ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(audio_path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
             return True
         except Exception as e:
             print(f"  [Audio] ffplay error: {e}")
-            
-    # 3. Try pygame as a last fallback
+
+    # 3. Pygame last-resort fallback (always blocking — it has no async API)
     global pygame
     if pygame is not None:
         try:
             pygame.mixer.music.load(str(audio_path))
             pygame.mixer.music.play()
-            while pygame.mixer.music.get_busy():
-                pygame.time.Clock().tick(10)
+            if block:
+                while pygame.mixer.music.get_busy():
+                    pygame.time.Clock().tick(10)
             return True
         except Exception as e:
             print(f"  [Audio] Pygame error: {e}")
-            
+
     return False
+
 
 
 class OfflineVoiceRuntime:

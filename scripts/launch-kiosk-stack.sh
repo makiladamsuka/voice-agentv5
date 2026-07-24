@@ -46,6 +46,14 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
 export OPENCV_NUM_THREADS="${OPENCV_NUM_THREADS:-1}"
 
+# ── Phase 3: CPU governor → performance (eliminates thermal throttle micro-stutters) ──
+# Requires: sudo tee /sys/devices/system/cpu/*/cpufreq/scaling_governor
+# Set once via sudoers: nema ALL=(ALL) NOPASSWD: /usr/bin/tee /sys/devices/system/cpu/*/cpufreq/scaling_governor
+echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor > /dev/null 2>&1 || \
+  echo "[Perf] WARNING: Could not set performance governor (add passwordless sudo — see README)"
+current_gov=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo unknown)
+echo "[Perf] CPU governor: ${current_gov}"
+
 mkdir -p "$LOG_DIR"
 
 _port_listening() {
@@ -160,7 +168,13 @@ else
     export CONFIG_PATH
     export PYTHONUNBUFFERED=1
     export LIVEKIT_LOG_LEVEL
-    exec "$PYTHON" start_robot.py start
+    # Phase 1: Pin Python robot process to cores 0-2 (core 3 reserved for Chromium/audio)
+    # nice -n -5 gives Python higher scheduling priority than Chromium (default nice=0)
+    if command -v taskset > /dev/null 2>&1; then
+      exec taskset -c 0-2 nice -n -5 "$PYTHON" start_robot.py start
+    else
+      exec nice -n -5 "$PYTHON" start_robot.py start
+    fi
   ) >>"$LOG_DIR/backend.log" 2>&1 &
   BACKEND_PID=$!
   echo "  Backend PID ${BACKEND_PID}  log: ${LOG_DIR}/backend.log"
@@ -206,7 +220,12 @@ fi
 
 echo "=== Starting kiosk Chromium ==="
 export FRONTEND_PORT
-"$SCRIPT_DIR/kiosk.sh" &
+# Phase 1: Pin Chromium to core 3 only — fully isolated from Python audio/vision threads
+if command -v taskset > /dev/null 2>&1; then
+  taskset -c 3 "$SCRIPT_DIR/kiosk.sh" &
+else
+  "$SCRIPT_DIR/kiosk.sh" &
+fi
 KIOSK_PID=$!
 
 echo ""

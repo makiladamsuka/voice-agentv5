@@ -5,7 +5,7 @@ export default function LoadingOverlay({ label = 'Loading…' }: { label?: strin
     <div
       role="status"
       aria-live="polite"
-      className="fixed inset-0 flex items-center justify-center bg-black/30 backdrop-blur-sm z-50"
+      className="fixed inset-0 flex items-center justify-center bg-neutral-950/85 z-50"
     >
       <div className="flex flex-col items-center gap-4 text-white">
         <svg

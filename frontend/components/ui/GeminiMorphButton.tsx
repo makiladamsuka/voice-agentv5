@@ -69,6 +69,7 @@ export function GeminiMorphButton({
   const animRef = useRef<number | null>(null);
   const segIdx = useRef(0);
   const segStart = useRef(0);
+  const lastTick = useRef(0);
   const SEGMENT_MS = 4000;
 
   useEffect(() => {
@@ -79,6 +80,7 @@ export function GeminiMorphButton({
 
     segIdx.current = 0;
     segStart.current = 0;
+    lastTick.current = 0;
 
     // Set initial path immediately to prevent blank SVG flash during mount
     const initialKey = SEQUENCE[0];
@@ -88,21 +90,24 @@ export function GeminiMorphButton({
     }
 
     const tick = (now: number) => {
-      if (segStart.current === 0) segStart.current = now;
+      if (now - lastTick.current >= 50) {
+        lastTick.current = now;
+        if (segStart.current === 0) segStart.current = now;
 
-      const elapsed = now - segStart.current;
-      const t = easeInOut(Math.min(elapsed / SEGMENT_MS, 1));
+        const elapsed = now - segStart.current;
+        const t = easeInOut(Math.min(elapsed / SEGMENT_MS, 1));
 
-      const fromKey = SEQUENCE[segIdx.current % SEQUENCE.length];
-      const toKey = SEQUENCE[(segIdx.current + 1) % SEQUENCE.length];
-      const current = lerpShapes(SHAPES[fromKey], SHAPES[toKey], t);
-      const d = buildPath(current, 38, 40, 40);
+        const fromKey = SEQUENCE[segIdx.current % SEQUENCE.length];
+        const toKey = SEQUENCE[(segIdx.current + 1) % SEQUENCE.length];
+        const current = lerpShapes(SHAPES[fromKey], SHAPES[toKey], t);
+        const d = buildPath(current, 38, 40, 40);
 
-      mainRef.current?.setAttribute("d", d);
+        mainRef.current?.setAttribute("d", d);
 
-      if (elapsed >= SEGMENT_MS) {
-        segIdx.current = (segIdx.current + 1) % SEQUENCE.length;
-        segStart.current = now;
+        if (elapsed >= SEGMENT_MS) {
+          segIdx.current = (segIdx.current + 1) % SEQUENCE.length;
+          segStart.current = now;
+        }
       }
 
       animRef.current = requestAnimationFrame(tick);

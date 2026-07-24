@@ -507,13 +507,14 @@ export default function NavigationMap({
         }}
       >
         {!webglSupported ? (
-          <div className="flex h-full w-full flex-col items-center justify-center text-center p-6 bg-black/40 text-white/80 rounded-3xl backdrop-blur-md border border-white/10">
+          <div className="flex h-full w-full flex-col items-center justify-center text-center p-6 bg-neutral-900/95 text-white/80 rounded-3xl border border-white/10">
             <span className="material-symbols-outlined text-4xl text-amber-400 mb-2">map</span>
             <p className="text-[18px] font-bold text-amber-400 mb-1">WebGL Disabled or Unsupported</p>
             <p className="text-[14px] text-white/70 max-w-sm">The 3D navigation map requires WebGL to render properly.</p>
           </div>
         ) : (
           <Canvas
+            frameloop="demand"
             shadows={isStandalone}
             orthographic
             camera={{ position: [20, 20, 20], zoom: isStandalone ? 35 : 28 }}

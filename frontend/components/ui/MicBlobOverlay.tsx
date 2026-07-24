@@ -58,18 +58,25 @@ export function MicBlobOverlay({
   const animRef = useRef<number | null>(null);
   const startTime = useRef(Date.now());
 
-  // Animate the blob on every frame
+  const lastFrame = useRef(0);
+
+  // Animate the blob at 15 FPS cap to preserve CPU
   useEffect(() => {
     if (!visible) return;
     startTime.current = Date.now();
+    lastFrame.current = 0;
 
     const animate = () => {
-      const t = (Date.now() - startTime.current) / 1000;
-      const s = t * 0.55; // main seed
-      setBlobPath(generateBlobPath(200, 200, 140, 12, s));
-      setInnerPath(generateBlobPath(200, 200, 100, 10, s * 1.3 + 1.1));
-      setOuterPath(generateBlobPath(200, 200, 175, 8, s * 0.7 - 0.5));
-      setSeed(t);
+      const now = Date.now();
+      if (now - lastFrame.current >= 66) {
+        lastFrame.current = now;
+        const t = (now - startTime.current) / 1000;
+        const s = t * 0.55; // main seed
+        setBlobPath(generateBlobPath(200, 200, 140, 12, s));
+        setInnerPath(generateBlobPath(200, 200, 100, 10, s * 1.3 + 1.1));
+        setOuterPath(generateBlobPath(200, 200, 175, 8, s * 0.7 - 0.5));
+        setSeed(t);
+      }
       animRef.current = requestAnimationFrame(animate);
     };
 
@@ -110,31 +117,12 @@ export function MicBlobOverlay({
 
           {/* SVG blob stack */}
           <div className="relative flex items-center justify-center select-none">
-            {/* SVG filter defs */}
-            <svg width="0" height="0" className="absolute">
-              <defs>
-                <filter id="gooey" x="-50%" y="-50%" width="200%" height="200%">
-                  <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur" />
-                  <feColorMatrix
-                    in="blur"
-                    mode="matrix"
-                    values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -9"
-                    result="goo"
-                  />
-                </filter>
-                <filter id="soft-blur">
-                  <feGaussianBlur in="SourceGraphic" stdDeviation="3" />
-                </filter>
-              </defs>
-            </svg>
-
             {/* Main animated blob SVG */}
             <svg
               viewBox="0 0 400 400"
               width={340}
               height={340}
               className="relative z-10"
-              style={{ filter: "url(#gooey)" }}
             >
               {/* Outer ghost layer */}
               <path

@@ -15,6 +15,8 @@ import speech_recognition as sr
 from voice.sentiment import write_conv_emotion
 
 try:
+    import os as _os
+    _os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
     import pygame
     pygame.mixer.init()
 except ImportError:
@@ -608,9 +610,9 @@ class OfflineVoiceRuntime:
         r = sr.Recognizer()
         
         # Optimize for fast interactions
-        r.energy_threshold = 1000
+        r.energy_threshold = 1200        # slightly higher = fewer false starts on Pi
         r.dynamic_energy_threshold = False
-        r.pause_threshold = 0.8  # Stop listening slightly faster when user pauses
+        r.pause_threshold = 0.5          # 0.5 s → ~300 ms faster response than 0.8
         
         print("\n=== Offline Voice Runtime Started ===")
         with sr.Microphone() as source:

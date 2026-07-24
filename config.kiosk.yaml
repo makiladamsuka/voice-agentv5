@@ -389,6 +389,8 @@ voice:
   enabled: true
   nlu_mode: true
   nlu_port: 8765
+  speaker_blocksize: 4096      # larger DAC buffer → prevents underrun clicks under CPU load
+  speaker_latency: high        # keep PortAudio in high-latency mode (less jitter on Pi)
   speech_sync:
     tick_hz: 25              # 25 Hz is perceptually identical for jaw/eye sync (saves GIL time vs 50)
 

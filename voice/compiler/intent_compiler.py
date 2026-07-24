@@ -42,7 +42,7 @@ def generate_tts_audio(text: str, output_path: Path):
     if not DEEPGRAM_API_KEY:
         raise ValueError("Missing DEEPGRAM_API_KEY in .env")
         
-    url = "https://api.deepgram.com/v1/speak?model=aura-luna-en"
+    url = "https://api.deepgram.com/v1/speak?model=aura-luna-en&encoding=linear16&container=wav&sample_rate=48000"
     headers = {
         "Authorization": f"Token {DEEPGRAM_API_KEY}",
         "Content-Type": "application/json"
@@ -96,7 +96,7 @@ def build_cache():
                 
             # Create a safe filename for the audio
             safe_name = event.get('source_file', f'item_{i}').replace('.', '_')
-            audio_filename = f"event_{i}_{safe_name}.mp3"
+            audio_filename = f"event_{i}_{safe_name}.wav"
             audio_path = audio_dir / audio_filename
             
             print(f"  Generated {len(intent_data['utterances'])} keyword intents.")

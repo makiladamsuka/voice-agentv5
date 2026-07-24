@@ -95,7 +95,7 @@ export function useNluVoice({
   const dgWs = useRef<WebSocket | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRef = useRef<any>(null);
   
   const stateRef = useRef<NluVoiceState>("idle");
   const isActiveRef = useRef(false);
@@ -129,8 +129,15 @@ export function useNluVoice({
 
   const stopCurrentAudio = useCallback(() => {
     if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+      if (typeof audioRef.current.pause === "function") {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+      if (typeof audioRef.current.stop === "function") {
+        try {
+          audioRef.current.stop();
+        } catch (e) {}
+      }
     }
     if (resumeTimeoutRef.current) {
       clearTimeout(resumeTimeoutRef.current);
@@ -183,37 +190,49 @@ export function useNluVoice({
         }, ECHO_COOLDOWN_MS);
       };
 
+      const playWithWebAudio = async (url: string, uid?: string) => {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioContextClass) {
+          throw new Error("Web Audio API not supported");
+        }
+        let ctx = (window as any)._globalAudioCtx;
+        if (!ctx) {
+          ctx = new AudioContextClass({ sampleRate: 48000 });
+          (window as any)._globalAudioCtx = ctx;
+        }
+        if (ctx.state === "suspended") {
+          await ctx.resume();
+        }
+
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Failed to fetch audio: ${response.status}`);
+        const arrayBuffer = await response.arrayBuffer();
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(ctx.destination);
+
+        audioRef.current = source;
+
+        sendPlaybackStart(uid ?? "");
+        source.start(0);
+
+        return new Promise<void>((resolve) => {
+          source.onended = () => resolve();
+        });
+      };
+
       if (resolvedUrl) {
-        const audio = new Audio(resolvedUrl);
-        audio.preload = "auto";
-        audioRef.current = audio;
         try {
-          // Pre-buffer audio to prevent Chromium decode jitter on Pi 4
-          await new Promise<void>((res) => {
-            let done = false;
-            const finish = () => {
-              if (!done) {
-                done = true;
-                res();
-              }
-            };
-            audio.oncanplaythrough = finish;
-            audio.oncanplay = finish;
-            setTimeout(finish, 250);
-          });
-          await audio.play();
-          sendPlaybackStart(utteranceId ?? "");
-          await new Promise<void>((resolve) => {
-            audio.onended = () => resolve();
-            audio.onerror = () => resolve();
-          });
+          await playWithWebAudio(resolvedUrl, utteranceId);
           if (nluWs.current?.readyState === WebSocket.OPEN) {
             nluWs.current.send(JSON.stringify({ type: "tts_done" }));
           }
           resumeAfter();
           return;
         } catch (e) {
-          console.warn("[NluVoice] Cached audio play blocked/failed:", e);
+          console.warn("[NluVoice] Cached audio play blocked/failed via Web Audio:", e);
           // fall through to Deepgram TTS
         }
       }
@@ -234,27 +253,7 @@ export function useNluVoice({
 
       try {
         const url = `/api/tts?text=${encodeURIComponent(replyText)}`;
-        const audio = new Audio(url);
-        audio.preload = "auto";
-        audioRef.current = audio;
-        await new Promise<void>((res) => {
-          let done = false;
-          const finish = () => {
-            if (!done) {
-              done = true;
-              res();
-            }
-          };
-          audio.oncanplaythrough = finish;
-          audio.oncanplay = finish;
-          setTimeout(finish, 250);
-        });
-        await audio.play();
-        sendPlaybackStart(utteranceId ?? "");
-        await new Promise<void>((resolve) => {
-          audio.onended = () => resolve();
-          audio.onerror = () => resolve();
-        });
+        await playWithWebAudio(url, utteranceId);
       } catch (e) {
         console.error("[NluVoice] TTS playback failed:", e);
       }
@@ -484,9 +483,9 @@ export function useNluVoice({
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
         },
       });
       mediaStreamRef.current = stream;

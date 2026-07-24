@@ -568,7 +568,7 @@ def _match_intent(runtime, user_text: str) -> dict:
         }, audio_file if audio_url else None)
 
     # No intent matched — return fallback
-    fallback_audio = "intent_fallback.mp3"
+    fallback_audio = "intent_fallback.wav"
     fallback_url = (
         f"/assets/audio_cache/{fallback_audio}"
         if (audio_base / fallback_audio).exists()

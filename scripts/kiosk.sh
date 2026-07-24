@@ -70,13 +70,20 @@ if command -v unclutter >/dev/null 2>&1; then
 fi
 
 export PULSE_LATENCY_MSEC=100
-export PIPEWIRE_LATENCY="1024/48000"
+export PIPEWIRE_LATENCY="4096/48000"
 amixer -q sset Master 100% unmute 2>/dev/null || true
 amixer -q sset PCM 100% unmute 2>/dev/null || true
 amixer -q sset Headphone 100% unmute 2>/dev/null || true
 amixer -q sset Capture 100% unmute 2>/dev/null || true
 amixer -q sset Mic 100% unmute 2>/dev/null || true
-pactl set-default-sink alsa_output.platform-fe00b840.mailbox.2.stereo-fallback 2>/dev/null || true
+USB_SINK=$(pactl list sinks short | grep "usb-" | head -n1 | cut -f2 || true)
+if [[ -n "$USB_SINK" ]]; then
+  echo "Setting default audio sink to USB: $USB_SINK"
+  pactl set-default-sink "$USB_SINK" 2>/dev/null || true
+else
+  echo "No USB audio detected, using internal 3.5mm headphone jack fallback"
+  pactl set-default-sink alsa_output.platform-fe00b840.mailbox.2.stereo-fallback 2>/dev/null || true
+fi
 
 echo "Opening kiosk UI: ${URL}"
 echo "  (API backend :${KIOSK_API_PORT} — not opened in browser)"
@@ -94,7 +101,7 @@ exec "$CHROMIUM" \
   --enable-webgl \
   --ignore-gpu-blocklist \
   --enable-gpu-rasterization \
-  --audio-buffer-size=4096 \
+  --audio-buffer-size=8192 \
   --renderer-process-limit=1 \
   --num-raster-threads=2 \
   --autoplay-policy=no-user-gesture-required \

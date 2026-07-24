@@ -619,7 +619,9 @@ class OfflineVoiceRuntime:
                 agent_text=fallback_text,
                 current_action={}
             )
-            audio_path = APP_DIR / "assets" / "audio_cache" / "intent_fallback.mp3"
+            audio_path = APP_DIR / "assets" / "audio_cache" / "intent_fallback.wav"
+            if not audio_path.exists():
+                audio_path = APP_DIR / "assets" / "audio_cache" / "intent_fallback.mp3"
             from voice.local_speaker import is_enabled as local_speaker_enabled
             if local_speaker_enabled() and audio_path.exists():
                 print("🔊 Playing local speaker fallback audio...")

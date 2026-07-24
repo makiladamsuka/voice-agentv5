@@ -206,13 +206,20 @@ def build_envelope_for_audio(
 
     if audio_path.exists():
         try:
-            pcm = decode_mp3_to_pcm(audio_path)
-            envelope = envelope_from_pcm(pcm)
+            if audio_path.suffix.lower() == ".wav":
+                import wave
+                with wave.open(str(audio_path), "rb") as wf:
+                    framerate = wf.getframerate()
+                    pcm = wf.readframes(wf.getnframes())
+                    envelope = envelope_from_pcm(pcm, sample_rate=framerate)
+            else:
+                pcm = decode_mp3_to_pcm(audio_path)
+                envelope = envelope_from_pcm(pcm)
             if write_cache:
                 save_sidecar(envelope, sc)
             return envelope
         except Exception as exc:
-            print(f"[AudioEnvelope] MP3 decode failed ({audio_path.name}): {exc}")
+            print(f"[AudioEnvelope] Audio decode failed ({audio_path.name}): {exc}")
 
     duration_ms = probe_duration_ms(audio_path) if audio_path.exists() else None
     return synthetic_envelope(fallback_text, duration_ms=duration_ms)

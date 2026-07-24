@@ -22,15 +22,24 @@ def _clients() -> list[tuple[OpenAI, str]]:
     """Return a list of (client, model) pairs to try in order."""
     options: list[tuple[OpenAI, str]] = []
     if os.getenv("OPENROUTER_API_KEY"):
+        # Try OpenRouter Free Gemini 2.5 Flash first
         options.append((
             OpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=os.getenv("OPENROUTER_API_KEY"),
             ),
-            "google/gemini-2.5-flash",
+            "google/gemini-2.5-flash:free",
+        ))
+        # Try OpenRouter Free Llama 3.2 Vision next
+        options.append((
+            OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=os.getenv("OPENROUTER_API_KEY"),
+            ),
+            "meta-llama/llama-3.2-11b-vision-instruct:free",
         ))
     if os.getenv("GROQ_API_KEY"):
-        # Groq free-tier vision model — good quality, zero cost
+        # Groq vision model as fallback
         options.append((
             OpenAI(
                 base_url="https://api.groq.com/openai/v1",

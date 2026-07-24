@@ -189,6 +189,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                 _norm_incoming = _normalize_text(original_text)
                 _now = _time.monotonic()
                 _dt = _now - _echo["ts"]
+                is_duplicate_prompt = (_norm_incoming == _echo["norm"])
                 is_reply_echo = (
                     bool(_echo["reply_norm"])
                     and len(_norm_incoming) >= 10

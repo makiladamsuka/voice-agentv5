@@ -80,6 +80,78 @@ function pickRecorderMime(): string | undefined {
   return undefined;
 }
 
+const playStartChime = () => {
+  if (typeof window === "undefined") return;
+  const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+  if (!AudioContextClass) return;
+  let ctx = (window as any)._globalAudioCtx;
+  if (!ctx) {
+    ctx = new AudioContextClass({ sampleRate: 48000 });
+    (window as any)._globalAudioCtx = ctx;
+  }
+  if (ctx.state === "suspended") {
+    ctx.resume();
+  }
+
+  const now = ctx.currentTime;
+  
+  // Tone 1: C5
+  const osc1 = ctx.createOscillator();
+  const gain1 = ctx.createGain();
+  osc1.type = "sine";
+  osc1.connect(gain1);
+  gain1.connect(ctx.destination);
+  osc1.frequency.setValueAtTime(523.25, now);
+  gain1.gain.setValueAtTime(0.0, now);
+  gain1.gain.linearRampToValueAtTime(0.05, now + 0.02);
+  gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+  osc1.start(now);
+  osc1.stop(now + 0.16);
+
+  // Tone 2: E5 (offset by 80ms)
+  const osc2 = ctx.createOscillator();
+  const gain2 = ctx.createGain();
+  osc2.type = "sine";
+  osc2.connect(gain2);
+  gain2.connect(ctx.destination);
+  osc2.frequency.setValueAtTime(659.25, now + 0.08);
+  gain2.gain.setValueAtTime(0.0, now + 0.08);
+  gain2.gain.linearRampToValueAtTime(0.05, now + 0.10);
+  gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+  osc2.start(now + 0.08);
+  osc2.stop(now + 0.30);
+};
+
+const playStopChime = () => {
+  if (typeof window === "undefined") return;
+  const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+  if (!AudioContextClass) return;
+  let ctx = (window as any)._globalAudioCtx;
+  if (!ctx) {
+    ctx = new AudioContextClass({ sampleRate: 48000 });
+    (window as any)._globalAudioCtx = ctx;
+  }
+  if (ctx.state === "suspended") {
+    ctx.resume();
+  }
+
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  
+  osc.frequency.setValueAtTime(440, now); // A4
+  osc.frequency.exponentialRampToValueAtTime(330, now + 0.16); // E4
+  gain.gain.setValueAtTime(0.0, now);
+  gain.gain.linearRampToValueAtTime(0.04, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+  
+  osc.start(now);
+  osc.stop(now + 0.20);
+};
+
 export function useNluVoice({
   nluServerUrl = "ws://localhost:8765/ws/voice",
   deepgramApiKey,
@@ -117,9 +189,19 @@ export function useNluVoice({
 
   const setVoiceState = useCallback(
     (newState: NluVoiceState) => {
+      const oldState = stateRef.current;
       stateRef.current = newState;
       setState(newState);
       onStateChange?.(newState);
+
+      // Play synthesized audio chimes on state transitions (Alexa/Pepper pattern)
+      if (oldState !== newState) {
+        if (newState === "listening") {
+          playStartChime();
+        } else if (newState === "thinking" && oldState === "listening") {
+          playStopChime();
+        }
+      }
     },
     [onStateChange],
   );

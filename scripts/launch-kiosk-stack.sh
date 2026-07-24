@@ -41,6 +41,11 @@ else
 fi
 export LOG_DIR
 
+# Optimize OpenCV/ONNX thread allocation on Pi 4
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export OPENCV_NUM_THREADS="${OPENCV_NUM_THREADS:-1}"
+
 mkdir -p "$LOG_DIR"
 
 _port_listening() {

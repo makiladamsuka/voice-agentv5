@@ -36,7 +36,7 @@ def _clients() -> list[tuple[OpenAI, str]]:
                 base_url="https://api.groq.com/openai/v1",
                 api_key=os.getenv("GROQ_API_KEY"),
             ),
-            "llama-3.2-11b-vision-preview",
+            "llama-3.2-11b-vision-instruct",
         ))
     return options
 

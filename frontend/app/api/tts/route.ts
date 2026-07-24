@@ -11,7 +11,7 @@ async function handleTts(text: string) {
   }
 
   const response = await fetch(
-    "https://api.deepgram.com/v1/speak?model=aura-luna-en",
+    "https://api.deepgram.com/v1/speak?model=aura-luna-en&encoding=linear16&container=wav&sample_rate=48000",
     {
       method: "POST",
       headers: {
@@ -33,7 +33,7 @@ async function handleTts(text: string) {
 
   return new NextResponse(response.body, {
     headers: {
-      "Content-Type": "audio/mpeg",
+      "Content-Type": "audio/wav",
       "Cache-Control": "public, max-age=3600",
     },
   });

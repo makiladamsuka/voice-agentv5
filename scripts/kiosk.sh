@@ -69,6 +69,8 @@ if command -v unclutter >/dev/null 2>&1; then
   unclutter -idle 0 -root &
 fi
 
+export PULSE_LATENCY_MSEC=100
+export PIPEWIRE_LATENCY="1024/48000"
 amixer -q sset Master 100% unmute 2>/dev/null || true
 amixer -q sset PCM 100% unmute 2>/dev/null || true
 amixer -q sset Headphone 100% unmute 2>/dev/null || true
@@ -92,6 +94,7 @@ exec "$CHROMIUM" \
   --enable-webgl \
   --ignore-gpu-blocklist \
   --enable-gpu-rasterization \
+  --audio-buffer-size=4096 \
   --renderer-process-limit=1 \
   --num-raster-threads=2 \
   --autoplay-policy=no-user-gesture-required \

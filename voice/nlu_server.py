@@ -582,8 +582,8 @@ def _match_intent(runtime, user_text: str) -> dict:
 
 
 def _generate_dynamic_tts(text: str) -> str | None:
-    """Generate TTS synchronously and cache it, avoiding Next.js API overhead."""
-    filename = f"dyn_{hashlib.md5(text.encode()).hexdigest()[:10]}.mp3"
+    """Generate TTS synchronously and cache it as 48kHz WAV for zero-resampling playout."""
+    filename = f"dyn_{hashlib.md5(text.encode()).hexdigest()[:10]}.wav"
     audio_base = APP_DIR / "assets" / "audio_cache"
     output_path = audio_base / filename
     
@@ -596,7 +596,7 @@ def _generate_dynamic_tts(text: str) -> str | None:
         return None
         
     try:
-        url = "https://api.deepgram.com/v1/speak?model=aura-luna-en"
+        url = "https://api.deepgram.com/v1/speak?model=aura-luna-en&encoding=linear16&container=wav&sample_rate=48000"
         headers = {
             "Authorization": f"Token {api_key}",
             "Content-Type": "application/json"

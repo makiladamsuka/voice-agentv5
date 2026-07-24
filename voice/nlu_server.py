@@ -783,6 +783,13 @@ def run_nlu_server(
     log.info(f"[NluServer] Starting on ws://{host}:{port}/ws/voice")
     print(f"[NluServer] WebSocket server starting on port {port}...")
 
+    # Pre-load NLU runtime at startup so the first speech is instant
+    try:
+        print("[NluServer] Pre-loading NLU runtime (ChromaDB + embeddings)...")
+        _get_runtime()
+    except Exception as exc:
+        log.warning(f"[NluServer] Pre-loading NLU runtime failed: {exc}")
+
     # Pre-build amplitude sidecars for all cached MP3s so ffmpeg is never
     # called during a live voice turn (eliminates CPU spikes on Pi).
     try:

@@ -233,6 +233,16 @@ class FaceTracker:
         self._hand_offset_y = 0.0
         self._was_hand_tracking = False
 
+        # ROI Crop tracking
+        self.roi_tracking_enabled = bool(_cfg(cam, "roi_tracking_enabled", default=True))
+        self.roi_padding_factor = float(_cfg(cam, "roi_padding_factor", default=1.6))
+        self.roi_full_scan_interval = int(_cfg(cam, "roi_full_scan_interval", default=20))
+
+        self._roi_active = False
+        self._roi_box = None  # (fx, fy, fw, fh) in detect_res space
+        self._roi_scan_count = 0
+        self._hardware_transformed = False
+
     def _vision_audio_busy(self, state: dict) -> bool:
         """True while user or agent audio is active — skip camera + YuNet."""
         if not self.vision_pause_on_audio:
@@ -305,6 +315,15 @@ class FaceTracker:
                 )
                 cam.configure(cfg)
                 mode = "main-only"
+            if self.rotate_180:
+                try:
+                    from libcamera import Transform
+                    cam.set_transform(Transform(hflip=True, vflip=True))
+                    self._hardware_transformed = True
+                except Exception:
+                    self._hardware_transformed = False
+            else:
+                self._hardware_transformed = False
             cam.start()
             print(
                 f"[FaceTracker] Camera started ({mode}): "
@@ -534,14 +553,66 @@ class FaceTracker:
                 time.sleep(0.05)
                 continue
 
-            if self.rotate_180:
+            if self.rotate_180 and not getattr(self, "_hardware_transformed", False):
                 frame_full = cv2.rotate(frame_full, cv2.ROTATE_180)
 
-            # Resize to detection resolution
-            frame = cv2.resize(frame_full, self.detect_res, interpolation=cv2.INTER_LINEAR)
-            detector.setInputSize(self.detect_res)
+            # Resize to detection resolution if needed
+            if (frame_full.shape[1], frame_full.shape[0]) != self.detect_res:
+                frame = cv2.resize(frame_full, self.detect_res, interpolation=cv2.INTER_LINEAR)
+            else:
+                frame = frame_full
 
-            _, faces = detector.detect(frame)
+            # ── ROI Crop Detection vs Full-Frame Detection ───────────────────
+            faces = None
+            use_roi = (
+                self.roi_tracking_enabled
+                and self._roi_active
+                and self._roi_box is not None
+                and self._roi_scan_count < self.roi_full_scan_interval
+            )
+
+            if use_roi:
+                fx, fy, fw, fh = self._roi_box
+                cx, cy = fx + fw * 0.5, fy + fh * 0.5
+                crop_w = max(60.0, fw * self.roi_padding_factor)
+                crop_h = max(60.0, fh * self.roi_padding_factor)
+
+                rx1 = max(0, int(cx - crop_w * 0.5))
+                ry1 = max(0, int(cy - crop_h * 0.5))
+                rx2 = min(self.detect_res[0], int(cx + crop_w * 0.5))
+                ry2 = min(self.detect_res[1], int(cy + crop_h * 0.5))
+
+                rw = rx2 - rx1
+                rh = ry2 - ry1
+
+                if rw > 30 and rh > 30:
+                    roi_patch = frame[ry1:ry2, rx1:rx2]
+                    detector.setInputSize((rw, rh))
+                    _, roi_faces = detector.detect(roi_patch)
+
+                    if roi_faces is not None and len(roi_faces) > 0:
+                        mapped_faces = []
+                        for rf in roi_faces:
+                            f_mapped = np.copy(rf)
+                            f_mapped[0] += rx1
+                            f_mapped[1] += ry1
+                            if len(f_mapped) >= 14:
+                                for li in range(4, 14, 2):
+                                    f_mapped[li] += rx1
+                                    f_mapped[li + 1] += ry1
+                            mapped_faces.append(f_mapped)
+                        faces = np.array(mapped_faces)
+                        self._roi_scan_count += 1
+                    else:
+                        self._roi_active = False
+                        self._roi_scan_count = 0
+                else:
+                    self._roi_active = False
+
+            if faces is None:
+                detector.setInputSize(self.detect_res)
+                _, faces = detector.detect(frame)
+                self._roi_scan_count = 0
 
             face_detected = False
             face_norm_x = 0.0
@@ -614,6 +685,15 @@ class FaceTracker:
                     face_detected = True
                     self._last_face_area = face_area
                     self._update_memory(face_norm_x, face_norm_y, "face", now, confidence=self.pm_face_conf)
+
+                    # Update ROI tracking box from active target face
+                    primary_f = selected_face[0] if (kind == "center" and isinstance(selected_face, tuple)) else selected_face
+                    self._roi_box = self._face_box(primary_f)
+                    self._roi_active = True
+                else:
+                    self._roi_active = False
+            else:
+                self._roi_active = False
 
             # ── Hand fallback + gesture detection ───────────────────────────
             hand_detected = False
@@ -843,6 +923,17 @@ class FaceTracker:
 
                     scale_x = self.stream_res[0] / self.detect_res[0]
                     scale_y = self.stream_res[1] / self.detect_res[1]
+
+                    if self._roi_active and self._roi_box is not None:
+                        fx, fy, fw, fh = self._roi_box
+                        cx, cy = fx + fw * 0.5, fy + fh * 0.5
+                        crop_w = max(60.0, fw * self.roi_padding_factor)
+                        crop_h = max(60.0, fh * self.roi_padding_factor)
+                        rx1 = max(0, int((cx - crop_w * 0.5) * scale_x))
+                        ry1 = max(0, int((cy - crop_h * 0.5) * scale_y))
+                        rx2 = min(self.stream_res[0], int((cx + crop_w * 0.5) * scale_x))
+                        ry2 = min(self.stream_res[1], int((cy + crop_h * 0.5) * scale_y))
+                        cv2.rectangle(stream_frame, (rx1, ry1), (rx2, ry2), (255, 120, 0), 1)
 
                     if face_count > 0:
                         ranked = sorted(

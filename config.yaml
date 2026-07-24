@@ -8,6 +8,9 @@ camera:
   nms_threshold: 0.3
   rotate_180: false
   stream_swap_rb: true
+  roi_tracking_enabled: true
+  roi_padding_factor: 1.6
+  roi_full_scan_interval: 20
 
 hand_fallback:
   enabled: true

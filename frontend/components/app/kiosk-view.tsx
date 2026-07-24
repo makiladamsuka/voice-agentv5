@@ -209,6 +209,7 @@ function KioskViewUI({
   const pendingEventRef = useRef<any | null>(null);
   // Stable ref so early useEffects can call handlePosterTap before it is declared
   const handlePosterTapRef = useRef<(post: any) => void>(() => {});
+  const processedActionRef = useRef<any>(null);
   const [navData, setNavData] = useState<any | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -343,9 +344,11 @@ function KioskViewUI({
   useEffect(() => {
     if (NLU_MODE) {
       if (!lastAction) return;
+      if (lastAction === processedActionRef.current) return;
 
       // ── 1. Navigate action → open map ───────────────────────────────────
       if (lastAction.action === "navigate" && lastAction.destination) {
+        processedActionRef.current = lastAction;
         setNavData({
           ...lastAction,
           path: lastAction.path ?? lastAction.path_coords,
@@ -360,6 +363,7 @@ function KioskViewUI({
       // ── 2. Event poster action → switch to event detail view ─────────────
       const POSTER_ACTIONS = ["show_event_poster", "show_competition_poster", "show_campus_post"];
       if (POSTER_ACTIONS.includes(lastAction.action) && lastAction.target) {
+        processedActionRef.current = lastAction;
         const targetFilename = lastAction.target as string;
         // Find the post whose image URL ends with the target filename
         const matched = fbPosts.find((p: any) => {
@@ -374,6 +378,7 @@ function KioskViewUI({
 
       // ── 3. Non-navigate response while map is open → return to chat ──────
       if (mode === "maps" && lastAction.action !== "navigate") {
+        processedActionRef.current = lastAction;
         // Close the map and go to talk mode so the transcript is visible
         setNavData(null);
         setShowExploreMap(false);
@@ -803,11 +808,7 @@ function KioskViewUI({
   const closeNav = () => {
     setNavData(null);
     setShowExploreMap(false);
-    if (mode === "maps") {
-      // stay in maps hub
-    } else {
-      setMode("idle");
-    }
+    setMode(isConnected ? "talk" : "idle");
   };
 
   // Swipe on banner

@@ -74,6 +74,7 @@ amixer -q sset PCM 100% unmute 2>/dev/null || true
 amixer -q sset Headphone 100% unmute 2>/dev/null || true
 amixer -q sset Capture 100% unmute 2>/dev/null || true
 amixer -q sset Mic 100% unmute 2>/dev/null || true
+pactl set-default-sink alsa_output.platform-fe00b840.mailbox.2.stereo-fallback 2>/dev/null || true
 
 echo "Opening kiosk UI: ${URL}"
 echo "  (API backend :${KIOSK_API_PORT} — not opened in browser)"

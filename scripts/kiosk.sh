@@ -99,6 +99,7 @@ exec "$CHROMIUM" \
   --disable-default-apps \
   --disable-component-update \
   --enable-low-end-device-mode \
+  --use-gl=egl \
   --disable-backgrounding-occluded-windows \
   --disable-renderer-backgrounding \
   --disable-features=TranslateUI,MediaRouter,BackdropFilter \

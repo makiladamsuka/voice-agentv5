@@ -604,7 +604,7 @@ def _match_intent(runtime, user_text: str) -> dict:
         }, audio_file if audio_url else None)
 
     # No intent matched — generate dynamic fallback
-    fallback_text = _generate_dynamic_fallback(text)
+    fallback_text = _generate_dynamic_fallback(user_text)
     
     return _with_audio_path({
         "reply_text": fallback_text,

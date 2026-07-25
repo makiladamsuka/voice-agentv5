@@ -194,6 +194,16 @@ export function useNluVoice({
       setState(newState);
       onStateChange?.(newState);
 
+      // Mute the mic track at the OS/browser level when not listening
+      // so we send silent valid WebM to Deepgram (prevents container corruption 
+      // without triggering echo transcripts).
+      if (mediaStreamRef.current) {
+        const shouldMute = (newState === "speaking" || newState === "thinking");
+        mediaStreamRef.current.getAudioTracks().forEach(t => {
+          t.enabled = !shouldMute;
+        });
+      }
+
       // Play synthesized audio chimes on state transitions (Alexa/Pepper pattern)
       if (oldState !== newState) {
         if (newState === "listening") {
@@ -590,18 +600,10 @@ export function useNluVoice({
       if (
         event.data.size > 0 &&
         dgWs.current?.readyState === WebSocket.OPEN &&
-        isActiveRef.current &&
-        // Do not stream mic→Deepgram while NLU is thinking or TTS is playing
-        // (speaker echo would fake SpeechStarted and kill the reply).
-        stateRef.current !== "speaking" &&
-        stateRef.current !== "thinking"
+        isActiveRef.current
       ) {
         event.data.arrayBuffer().then((buf) => {
-          if (
-            dgWs.current?.readyState === WebSocket.OPEN &&
-            stateRef.current !== "speaking" &&
-            stateRef.current !== "thinking"
-          ) {
+          if (dgWs.current?.readyState === WebSocket.OPEN) {
             dgWs.current.send(buf);
           }
         });

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
+from openai import OpenAI
 
 from voice.sentiment import clear_conv_emotion, write_conv_emotion
 from core.speech_sync_service import get_speech_sync_service
@@ -175,7 +176,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                     )
                     
                     # Prevent caching fallbacks for partial transcripts!
-                    is_fallback = result and result.get("reply_text", "").startswith("I'm NEma")
+                    is_fallback = result and result.get("is_fallback")
                     if result and not is_fallback:
                         speculative_cache[norm_text] = result
                         
@@ -260,7 +261,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                     )
 
                 if result:
-                    is_fallback = result.get("reply_text", "").startswith("I'm NEma")
+                    is_fallback = result.get("is_fallback")
                     
                     if is_fallback and not pending_ambiguity_category and last_discussed_category:
                         retry_text = f"{last_discussed_category} {original_text}"
@@ -270,7 +271,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                         retry_result = await loop.run_in_executor(
                             None, _match_intent, runtime, retry_text
                         )
-                        if retry_result and not retry_result.get("reply_text", "").startswith("I'm NEma"):
+                        if retry_result and not retry_result.get("is_fallback"):
                             result = retry_result
                             speculative_cache[_normalize_text(original_text)] = result
 
@@ -287,7 +288,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                     # has no compiled event intents yet (empty compiled_intents.json).
                     # Triggered whenever the user asks about events but we returned
                     # the generic fallback reply.
-                    is_fallback_reply = result.get("reply_text", "").startswith("I'm NEma")
+                    is_fallback_reply = result.get("is_fallback")
                     if is_fallback_reply and _is_events_query(original_text):
                         buttons = _get_event_buttons()
                         if buttons:
@@ -602,18 +603,48 @@ def _match_intent(runtime, user_text: str) -> dict:
             "ambiguity_category": intent.get("ambiguity_category"),
         }, audio_file if audio_url else None)
 
-    # No intent matched — return fallback
-    fallback_audio = "intent_fallback.wav"
-    fallback_url = (
-        f"/assets/audio_cache/{fallback_audio}"
-        if (audio_base / fallback_audio).exists()
-        else None
-    )
+    # No intent matched — generate dynamic fallback
+    fallback_text = _generate_dynamic_fallback(text)
+    
     return _with_audio_path({
-        "reply_text": "I'm NEma, your campus guide! Say hi, ask who I am, or ask about events and directions.",
-        "audio_url": fallback_url,
+        "reply_text": fallback_text,
+        "audio_url": None, # Dynamic TTS will generate this automatically
         "action": {},
-    }, fallback_audio if fallback_url else None)
+        "is_fallback": True,
+    }, None)
+
+def _generate_dynamic_fallback(transcript: str) -> str:
+    """Use an LLM to generate a conversational fallback response."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return "I didn't quite catch that. I can help you with campus events or directions!"
+        
+    try:
+        client = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=api_key,
+        )
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are NEma, a friendly campus guide robot. "
+                        "The user said something you didn't understand or don't know about. "
+                        "Reply in 1 short sentence apologizing and saying you don't know about that, "
+                        "but you can help with campus events or directions."
+                    )
+                },
+                {"role": "user", "content": transcript}
+            ],
+            max_tokens=60,
+            temperature=0.7
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        log.error(f"Dynamic fallback LLM failed: {e}")
+        return "I didn't quite catch that. I can help you with campus events or directions!"
 
 
 _tts_lock = threading.Lock()

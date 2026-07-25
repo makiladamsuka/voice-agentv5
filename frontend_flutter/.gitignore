@@ -1,0 +1,15 @@
+# Flutter / Dart ignores
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+
+# Windows desktop ignores
+build_windows/
+/windows/flutter/ephemeral/
+
+# IDE ignores
+.idea/
+.vscode/
+*.iml

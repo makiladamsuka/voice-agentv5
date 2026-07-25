@@ -10,29 +10,29 @@ export const SiriGlow: React.FC<SiriGlowProps> = ({ active }) => {
     <AnimatePresence>
       {active && (
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.4, ease: "easeInOut" }}
-          // We use inset-0 so it sits EXACTLY inside the parent boundary.
-          // z-50 ensures it stays on top of the content. 
-          // p-[3px] defines the thickness of the glow border.
-          className="absolute inset-0 z-50 rounded-[32px] pointer-events-none p-[3px]"
+          initial={{ opacity: 0, scale: 0.98 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.98 }}
+          transition={{ duration: 0.3, ease: "easeInOut" }}
+          className="absolute inset-0 z-50 rounded-[32px] pointer-events-none border-[3px] border-[#8a2be2]"
           style={{
-            // This mask technique hides the inner content box, revealing ONLY the 2px padding (border).
-            WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
-            WebkitMaskComposite: 'xor',
-            maskComposite: 'exclude',
+            boxShadow: '0 0 20px rgba(138, 43, 226, 0.5), inset 0 0 20px rgba(138, 43, 226, 0.5)'
           }}
         >
-          {/* 
-            The rotating gradient. It is intentionally oversized (250%) so it covers the corners 
-            even while spinning. We add a tiny blur to soften the harsh CSS gradient edges.
-          */}
-          <div 
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[250%] h-[250%] blur-[8px] opacity-90 animate-[spin_4s_linear_infinite]"
-            style={{
-              background: 'conic-gradient(from 0deg, transparent 15%, #ff2a85 30%, #8a2be2 45%, #4169e1 60%, #ffd700 75%, transparent 90%)',
+          {/* Simple animated pulsing border without heavy SVG masks or blurs */}
+          <motion.div 
+            className="absolute inset-0 rounded-[29px]"
+            animate={{ 
+              boxShadow: [
+                '0 0 10px rgba(255, 42, 133, 0.2), inset 0 0 10px rgba(255, 42, 133, 0.2)',
+                '0 0 30px rgba(65, 105, 225, 0.6), inset 0 0 30px rgba(65, 105, 225, 0.6)',
+                '0 0 10px rgba(255, 42, 133, 0.2), inset 0 0 10px rgba(255, 42, 133, 0.2)'
+              ]
+            }}
+            transition={{
+              duration: 2,
+              repeat: Infinity,
+              ease: "easeInOut"
             }}
           />
         </motion.div>
@@ -40,3 +40,4 @@ export const SiriGlow: React.FC<SiriGlowProps> = ({ active }) => {
     </AnimatePresence>
   );
 };
+

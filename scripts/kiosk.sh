@@ -114,7 +114,6 @@ exec "$CHROMIUM" \
   --disable-renderer-backgrounding \
   --disable-features=TranslateUI,MediaRouter,BackdropFilter,CSSFilterAnimation \
   --enable-features=LowEndDeviceMode \
-  --use-gl=egl \
   --use-fake-ui-for-media-stream \
   --log-level=3 \
   --disable-logging \

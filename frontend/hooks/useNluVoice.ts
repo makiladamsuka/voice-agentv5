@@ -296,10 +296,20 @@ export function useNluVoice({
           await ctx.resume();
         }
 
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`Failed to fetch audio: ${response.status}`);
-        const arrayBuffer = await response.arrayBuffer();
-        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        let audioBuffer;
+        
+        // Check if we have a speculatively pre-decoded buffer
+        const preloadCache = (window as any)._preloadedAudio || {};
+        if (preloadCache[url]) {
+          console.log("[NluVoice] Using pre-decoded speculative audio buffer for zero-latency playback!");
+          audioBuffer = preloadCache[url];
+          delete preloadCache[url]; // consume it
+        } else {
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(`Failed to fetch audio: ${response.status}`);
+          const arrayBuffer = await response.arrayBuffer();
+          audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        }
 
         const source = ctx.createBufferSource();
         source.buffer = audioBuffer;
@@ -464,7 +474,7 @@ export function useNluVoice({
       smart_format: "true",
       interim_results: "true",
       vad_events: "true",
-      endpointing: "300", // Official Deepgram recommended VAD endpointing
+      endpointing: "250", // Aggressive VAD endpointing for faster turnaround
       utterance_end_ms: "1000",
     });
 
@@ -689,6 +699,30 @@ export function useNluVoice({
             return;
           }
           setVoiceState(msg.conv_state as NluVoiceState);
+        } else if (msg.type === "speculative_preload" && msg.audio_url) {
+          const backendHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
+          const resolvedUrl = `http://${backendHost}:8080${msg.audio_url}`;
+          console.log("[NluVoice] Speculative preload:", resolvedUrl);
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioContextClass) {
+            let ctx = (window as any)._globalAudioCtx;
+            if (!ctx) {
+              ctx = new AudioContextClass({ sampleRate: 48000 });
+              (window as any)._globalAudioCtx = ctx;
+            }
+            if (ctx.state === "suspended") {
+              ctx.resume();
+            }
+            fetch(resolvedUrl)
+              .then((r) => r.ok ? r.arrayBuffer() : Promise.reject(r.status))
+              .then((ab) => ctx.decodeAudioData(ab))
+              .then((decoded: AudioBuffer) => {
+                (window as any)._preloadedAudio = (window as any)._preloadedAudio || {};
+                (window as any)._preloadedAudio[resolvedUrl] = decoded;
+                console.log("[NluVoice] Speculative audio decoded & ready!");
+              })
+              .catch((e: Error) => console.warn("[NluVoice] Preload failed:", e));
+          }
         }
       };
 

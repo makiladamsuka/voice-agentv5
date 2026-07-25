@@ -176,6 +176,23 @@ async def _voice_ws_endpoint(websocket) -> None:
                     is_fallback = result and result.get("reply_text", "").startswith("I'm NEma")
                     if result and not is_fallback:
                         speculative_cache[norm_text] = result
+                        
+                        # Generate TTS in the background so it's ready for the final turn
+                        reply_text = result.get("reply_text")
+                        audio_url = result.get("audio_url")
+                        
+                        if not audio_url and reply_text:
+                            audio_file = await loop.run_in_executor(
+                                None, _generate_dynamic_tts, reply_text
+                            )
+                            if audio_file:
+                                audio_url = f"/assets/audio_cache/{audio_file}"
+                                
+                        if audio_url:
+                            await websocket.send_text(json.dumps({
+                                "type": "speculative_preload",
+                                "audio_url": audio_url
+                            }))
                 continue
 
             if msg_type == "transcript":

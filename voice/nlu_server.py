@@ -260,6 +260,9 @@ async def _voice_ws_endpoint(websocket) -> None:
                     action = result.get("action", {})
                     if action.get("action") == "navigate" and action.get("destination"):
                         last_discussed_category = get_dest_category(action.get("destination"))
+                    elif not is_fallback:
+                        # Clear context if user successfully changed topics
+                        last_discussed_category = None
 
                     # ── Events fallback: inject poster buttons even when NLU
                     # has no compiled event intents yet (empty compiled_intents.json).

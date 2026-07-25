@@ -23,6 +23,8 @@ import asyncio
 import json
 import logging
 import hashlib
+import threading
+import time
 import re
 import urllib.request
 import os
@@ -614,6 +616,9 @@ def _match_intent(runtime, user_text: str) -> dict:
     }, fallback_audio if fallback_url else None)
 
 
+_tts_lock = threading.Lock()
+_tts_in_flight = set()
+
 def _generate_dynamic_tts(text: str) -> str | None:
     """Generate TTS synchronously and cache it as 48kHz WAV for zero-resampling playout."""
     filename = f"dyn_{hashlib.md5(text.encode()).hexdigest()[:10]}.wav"
@@ -622,6 +627,22 @@ def _generate_dynamic_tts(text: str) -> str | None:
     
     if output_path.exists():
         return filename
+        
+    with _tts_lock:
+        is_first = filename not in _tts_in_flight
+        if is_first:
+            _tts_in_flight.add(filename)
+
+    if not is_first:
+        # Another thread is already generating this exact audio file (speculative concurrency).
+        # We just wait up to 5 seconds for it to finish and then return the cached file!
+        for _ in range(50):
+            if output_path.exists():
+                return filename
+            if filename not in _tts_in_flight: # The other thread finished or failed
+                break
+            time.sleep(0.1)
+        return filename if output_path.exists() else None
         
     api_key = os.getenv("DEEPGRAM_API_KEY") or os.getenv("NEXT_PUBLIC_DEEPGRAM_API_KEY")
     if not api_key:
@@ -644,6 +665,9 @@ def _generate_dynamic_tts(text: str) -> str | None:
     except Exception as e:
         log.error(f"Dynamic TTS failed for text '{text}': {e}")
         return None
+    finally:
+        with _tts_lock:
+            _tts_in_flight.discard(filename)
 
 
 def _navigate_response(destination: str) -> dict:

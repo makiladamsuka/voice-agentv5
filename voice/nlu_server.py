@@ -236,8 +236,7 @@ async def _voice_ws_endpoint(websocket) -> None:
 
                 # Update blackboard — show "thinking" on robot face
                 if _bb is not None:
-                    _bb.write(conv_state="thinking", user_speaking=False)
-                write_conv_emotion(_bb, original_text, is_agent=False, log_prefix="Vader NLU")
+                    _bb.write(conv_state="thinking", user_speaking=False, conv_emotion=None)
                 await websocket.send_text(
                     json.dumps({"type": "state", "conv_state": "thinking"})
                 )

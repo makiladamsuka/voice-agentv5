@@ -88,6 +88,9 @@ class EmotionEngine:
         self._voice_glance_emotion = "idle"
         self._speak_glance_until = 0.0
         self._speak_glance_emotion = "idle"
+        self._vad_start_ts = 0.0
+        self._listening_glance_until = 0.0
+        self._listening_glance_emotion = "idle"
 
     def _set(self, name: str, intensity_scale: float = 1.0) -> None:
         resolved = resolve_emotion_name(name)
@@ -146,16 +149,36 @@ class EmotionEngine:
 
             if voice_active:
                 if user_speaking:
-                    self._set("engaged")
+                    if self._vad_start_ts == 0.0:
+                        self._vad_start_ts = now
+                    elapsed_vad = now - self._vad_start_ts
+
+                    # Step 1: Initial VAD reaction (0.0s to 0.7s) -> engaged
+                    if elapsed_vad <= 0.7:
+                        self._set("engaged")
+                    else:
+                        # Step 2: User is still speaking -> alternate idle & attentive
+                        if now >= self._listening_glance_until:
+                            choices = ["idle", "attentive", "idle"]
+                            self._listening_glance_emotion = random.choice(choices)
+                            self._listening_glance_until = now + random.uniform(1.4, 2.8)
+                        self._set(self._listening_glance_emotion)
+
                     self._voice_glance_until = 0.0
                     time.sleep(loop_delay)
                     continue
-                elif conv_state == "thinking":
+
+                # User stopped speaking -> reset VAD start timer
+                self._vad_start_ts = 0.0
+
+                if conv_state == "thinking":
+                    # Step 3: Thinking emotion while processing NLU/STT response
                     self._set("thinking")
                     self._voice_glance_until = 0.0
                     time.sleep(loop_delay)
                     continue
                 elif conv_state == "speaking":
+                    # Step 4: Robot speaking -> use VADER sentiment + talking micro-glances
                     base_emotion = conv_emotion or "engaged"
                     if now >= self._speak_glance_until:
                         # 35% chance to do a brief talking glance left/right for ~1 sec during speech
@@ -172,7 +195,7 @@ class EmotionEngine:
                     time.sleep(loop_delay)
                     continue
                 else:
-                    # Mic active & waiting for next user question
+                    # Step 5: Mic active & waiting for next user question
                     if now >= self._voice_glance_until:
                         choices = ["looking_left_natural", "looking_right_natural", "idle", "idle"]
                         self._voice_glance_emotion = random.choice(choices)

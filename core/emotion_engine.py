@@ -86,6 +86,8 @@ class EmotionEngine:
         self._conv_emotion_hold_until = 0.0
         self._voice_glance_until = 0.0
         self._voice_glance_emotion = "idle"
+        self._speak_glance_until = 0.0
+        self._speak_glance_emotion = "idle"
 
     def _set(self, name: str, intensity_scale: float = 1.0) -> None:
         resolved = resolve_emotion_name(name)
@@ -153,17 +155,19 @@ class EmotionEngine:
                     self._voice_glance_until = 0.0
                     time.sleep(loop_delay)
                     continue
-                elif conv_state == "speaking" and conv_emotion is not None:
-                    if conv_emotion != self._conv_emotion_last:
-                        if (
-                            self._conv_emotion_last is not None
-                            and now < self._conv_emotion_hold_until
-                        ):
-                            conv_emotion = self._conv_emotion_last
+                elif conv_state == "speaking":
+                    base_emotion = conv_emotion or "engaged"
+                    if now >= self._speak_glance_until:
+                        # 35% chance to do a brief talking glance left/right for ~1 sec during speech
+                        if random.random() < 0.35 and self._speak_glance_emotion == base_emotion:
+                            choices = ["looking_left_cheerful", "looking_right_cheerful"]
+                            self._speak_glance_emotion = random.choice(choices)
+                            self._speak_glance_until = now + random.uniform(0.8, 1.4)
                         else:
-                            self._conv_emotion_last = conv_emotion
-                            self._conv_emotion_hold_until = now + 2.0
-                    self._set(conv_emotion)
+                            self._speak_glance_emotion = base_emotion
+                            self._speak_glance_until = now + random.uniform(2.2, 4.0)
+
+                    self._set(self._speak_glance_emotion)
                     self._voice_glance_until = 0.0
                     time.sleep(loop_delay)
                     continue

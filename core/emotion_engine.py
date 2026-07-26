@@ -111,6 +111,8 @@ class EmotionEngine:
             state = self.bb.read(
                 "manual_emotion",
                 "voice_session_active",
+                "user_speaking",
+                "conv_state",
                 "conv_emotion",
                 "prox_glance_active",
                 "prox_glance_emotion",

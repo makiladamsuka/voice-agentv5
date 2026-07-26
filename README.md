@@ -47,36 +47,42 @@ sudo npm install -g pnpm
 
 ---
 
-## 2. Hardware & Boot Configuration (`config.txt`)
+## 2. Hardware & Boot Configuration (`config.txt` & `cmdline.txt`)
 
-To ensure smooth 64-bit performance, hardware 3D WebGL rendering, GPU memory allocation, and correct 10.1" kiosk display resolution, edit `/boot/firmware/config.txt`:
+To ensure smooth 64-bit performance, hardware 3D WebGL rendering, GPU memory allocation, and correct 10.1" kiosk display resolution, set up `/boot/firmware/config.txt` and `/boot/firmware/cmdline.txt`.
 
-```bash
-sudo nano /boot/firmware/config.txt
-```
-
-### Key `/boot/firmware/config.txt` Settings:
+### Complete `/boot/firmware/config.txt` (Copy & Paste):
 ```ini
 # --- Hardware Interfaces ---
 dtparam=i2c_arm=on
 dtparam=spi=on
 dtparam=i2c_vc=on
 
-# --- GPU Memory & Full KMS WebGL Hardware Acceleration ---
+# Enables the second SPI bus (SPI1) for pins D21, D20, D19
+dtoverlay=spi1-3cs
+dtparam=audio=on
+
+# --- Hardware Detection ---
+camera_auto_detect=1
+auto_initramfs=1
+
+# --- Video Driver & Memory Settings ---
 gpu_mem=256
 dtoverlay=cma,cma-256
-dtoverlay=vc4-kms-v3d
 max_framebuffers=2
 
-# --- 64-bit & Performance Boost ---
+# Run in 64-bit mode
 arm_64bit=1
 disable_overscan=1
 arm_boost=1
 
-# --- 10.1 Inch Kiosk Display (1024x600 Custom Timings) ---
 [all]
+# ==============================================================================
+# DISPLAY PROFILE 1: 10.1 Inch Kiosk Display (1024x600 Custom Timings) [ACTIVE]
+# ==============================================================================
 display_auto_detect=0
 disable_fw_kms_setup=0
+dtoverlay=vc4-kms-v3d
 max_usb_current=1
 hdmi_force_hotplug=1
 config_hdmi_boost=7
@@ -85,12 +91,32 @@ hdmi_mode=87
 hdmi_drive=2
 display_rotate=0
 hdmi_timings=1024 1 50 18 50 600 1 15 3 15 0 0 0 60 0 40000000 3
+
+# ==============================================================================
+# DISPLAY PROFILE 2: Standard External Monitor / TV (Auto-Detect) [INACTIVE]
+# ==============================================================================
+#display_auto_detect=1
+#disable_fw_kms_setup=0
+#dtoverlay=vc4-kms-v3d
+#hdmi_force_hotplug=1
+#config_hdmi_boost=4
+
+# --- ACTIVE OVERCLOCK (2.1 GHz) ---
+over_voltage=6
+arm_freq=2100
+gpu_freq=750
+
 consoleblank=0
 ```
 
-> ⚠️ **Important**: Ensure `video=HDMI-A-1:...` is **removed** from `/boot/firmware/cmdline.txt` so it does not conflict with the 1024x600 display timings.
+### Complete `/boot/firmware/cmdline.txt` (Copy & Paste):
+```text
+console=serial0,115200 console=tty1 root=PARTUUID=e9d8c97a-02 rootfstype=ext4 fsck.repair=yes rootwait quiet splash plymouth.ignore-serial-consoles cfg80211.ieee80211_regdom=LK
+```
+
+> ⚠️ **Important**: Ensure `video=HDMI-A-1:...` is **NOT** present in `/boot/firmware/cmdline.txt` so it does not override or fight the 1024x600 display timings set in `config.txt`.
 > 
-> Reboot after making boot config changes:
+> Reboot after saving both files:
 > ```bash
 > sudo reboot
 > ```

@@ -1,195 +1,265 @@
-# Voice Agent V5
+# Voice Agent V5 — Raspberry Pi Kiosk Stack
 
-Raspberry Pi robot stack: face tracking, servos, TFT eyes, NLU WebSocket voice agent, and kiosk UI.
+An end-to-end autonomous Raspberry Pi 4 kiosk stack featuring **YuNet face tracking**, **servos & TFT eyes**, **browser VAD + local ChromaDB NLU voice pipeline**, **48kHz audio sync**, and a **Next.js interactive touchscreen kiosk UI**.
 
-## How to start the robot
+---
 
-Run these in **separate terminals** on the Pi. Order matters: backend first, then frontend, then kiosk browser.
+## 📋 Table of Contents
+1. [Fresh Raspberry Pi Setup (From Scratch)](#1-fresh-raspberry-pi-setup-from-scratch)
+2. [Hardware & Boot Configuration (`config.txt`)](#2-hardware--boot-configuration-configtxt)
+3. [Audio Optimization & USB Sound Card Setup](#3-audio-optimization--usb-sound-card-setup)
+4. [Environment & API Keys (`.env`)](#4-environment--api-keys-env)
+5. [Poster Management & NLU Intent Database](#5-poster-management--nlu-intent-database)
+6. [Frontend Build & Setup](#6-frontend-build--setup)
+7. [Starting the System](#7-starting-the-system)
+8. [Project Architecture & Ports](#8-project-architecture--ports)
+9. [Troubleshooting & Maintenance](#9-troubleshooting--maintenance)
 
-### One-time setup
+---
+
+## 1. Fresh Raspberry Pi Setup (From Scratch)
+
+If you are setting up a brand-new Raspberry Pi 4 (Raspberry Pi OS 64-bit Bookworm), run the following system package installation first:
+
+### Step 1: Install System Dependencies (Apt)
+```bash
+sudo apt update && sudo apt install -y \
+  git \
+  python3-pip \
+  python3-venv \
+  python3-picamera2 \
+  libportaudio2 \
+  alsa-utils \
+  pipewire \
+  pipewire-alsa \
+  ffmpeg \
+  i2c-tools \
+  unclutter \
+  mesa-utils
+```
+
+### Step 2: Install Node.js 20+ & pnpm
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+sudo npm install -g pnpm
+```
+
+---
+
+## 2. Hardware & Boot Configuration (`config.txt`)
+
+To ensure smooth 64-bit performance, hardware 3D WebGL rendering, GPU memory allocation, and correct 10.1" kiosk display resolution, edit `/boot/firmware/config.txt`:
 
 ```bash
+sudo nano /boot/firmware/config.txt
+```
+
+### Key `/boot/firmware/config.txt` Settings:
+```ini
+# --- Hardware Interfaces ---
+dtparam=i2c_arm=on
+dtparam=spi=on
+dtparam=i2c_vc=on
+
+# --- GPU Memory & Full KMS WebGL Hardware Acceleration ---
+gpu_mem=256
+dtoverlay=cma,cma-256
+dtoverlay=vc4-kms-v3d
+max_framebuffers=2
+
+# --- 64-bit & Performance Boost ---
+arm_64bit=1
+disable_overscan=1
+arm_boost=1
+
+# --- 10.1 Inch Kiosk Display (1024x600 Custom Timings) ---
+[all]
+display_auto_detect=0
+disable_fw_kms_setup=0
+max_usb_current=1
+hdmi_force_hotplug=1
+config_hdmi_boost=7
+hdmi_group=2
+hdmi_mode=87
+hdmi_drive=2
+display_rotate=0
+hdmi_timings=1024 1 50 18 50 600 1 15 3 15 0 0 0 60 0 40000000 3
+consoleblank=0
+```
+
+> ⚠️ **Important**: Ensure `video=HDMI-A-1:...` is **removed** from `/boot/firmware/cmdline.txt` so it does not conflict with the 1024x600 display timings.
+> 
+> Reboot after making boot config changes:
+> ```bash
+> sudo reboot
+> ```
+
+---
+
+## 3. Audio Optimization & USB Sound Card Setup
+
+To prevent Pi CPU micro-stutters during speech playback, the voice pipeline forces **uncompressed 48000Hz WAV audio** across PipeWire, Web Audio, and ALSA.
+
+### Configure ALSA Defaults for USB Sound Card:
+If using an external USB Audio Adapter (recommended to bypass CPU-bound PWM audio resampling):
+```bash
 cd voice-agentv5
+bash scripts/setup_alsa.sh
+```
+This automatically detects your USB Audio Adapter (e.g. `card 3`) and writes `~/.asoundrc` for zero-resampling 48kHz output.
+
+---
+
+## 4. Environment & API Keys (`.env`)
+
+Clone the repository and install Python dependencies:
+
+```bash
+git clone https://github.com/makiladamsuka/voice-agentv5.git
+cd voice-agentv5
+
+# Create venv with system site-packages (required for picamera2)
 python3 -m venv --system-site-packages venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Create a `.env` file for API keys (e.g. Deepgram TTS / Groq / OpenRouter):
+Create a `.env` file in the root project directory:
 
-```ini
-# .env
-DEEPGRAM_API_KEY=your-deepgram-key
-GROQ_API_KEY=your-groq-key
-OPENROUTER_API_KEY=your-openrouter-key
+```bash
+cp .env.example .env 2>/dev/null || touch .env
+nano .env
 ```
 
-**Audio:** The kiosk browser captures microphone speech via Browser VAD & Deepgram STT, communicating with the local NLU WebSocket server on port `8765`.
+### Required `.env` Keys:
+```ini
+DEEPGRAM_API_KEY=your_deepgram_api_key_here
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+GROQ_API_KEY=your_groq_api_key_here
+```
 
 ---
 
-### Terminal 1 — Backend (robot + NLU voice server + APIs on :8080)
+## 5. Poster Management & NLU Intent Database
+
+Because poster images, generated vector databases (`voice/event_db/`), and synthesized WAV audio caches (`assets/audio_cache/`) are runtime-generated and ignored by Git, you must compile the intent database when setting up a new Pi.
+
+### How to Add Event Posters:
+1. Place poster image files (`.jpg`, `.png`, `.webp`) in the corresponding asset directories:
+   - `assets/events/` (Campus events)
+   - `assets/competitions/` (Undergraduate hackathons/contests)
+   - `assets/posts/` (General announcements)
+2. *Or* upload them at runtime via the Admin Upload Portal in the kiosk UI at `http://localhost:3000/upload-portal`.
+
+### How to Build & Manage the Event Vector Database:
+Run the intent compiler script:
+```bash
+python voice/compiler/intent_compiler.py
+```
+
+### What `intent_compiler.py` Does:
+1. **AI Extraction**: Uses OpenRouter/Groq to parse title, date, time, location, and description from poster images into `voice/event_db/extracted_events.json`.
+2. **Utterance Generation**: Generates standard user questions for each event poster into `voice/event_db/compiled_intents.json`.
+3. **TTS Speech Synthesis**: Synthesizes 48kHz uncompressed `.wav` audio files into `assets/audio_cache/` so fallback and intent answers play instantly with zero live TTS latency.
+4. **ChromaDB Indexing**: Indexes all intents into the local ChromaDB vector database (`voice/event_db/`).
+
+---
+
+## 6. Frontend Build & Setup
+
+Install Node.js packages and build the production Next.js kiosk application:
 
 ```bash
-cd voice-agentv5
+cd frontend
+pnpm install
+pnpm build
+cd ..
+```
+
+---
+
+## 7. Starting the System
+
+### Option A: All-In-One Kiosk Stack (Recommended for Kiosks)
+Runs the Python backend, Next.js frontend, and fullscreen Chromium kiosk browser concurrently in isolated CPU cores:
+
+```bash
+./scripts/launch-kiosk-stack.sh
+```
+
+### Option B: Manual Multi-Terminal Startup
+
+#### Terminal 1 — Python Robot & NLU Server (:8080 & :8765):
+```bash
 source venv/bin/activate
 CONFIG_PATH=config.kiosk.yaml python start_robot.py
 ```
 
-| Command | Use when |
-|---------|----------|
-| `python start_robot.py start` | **Demo / kiosk** — LiveKit agent dispatch (`devmode` off) |
-| `python start_robot.py` | Default — same as `dev` |
-| `python start_robot.py dev` | Development — LiveKit dev worker |
-
-Wait until you see `Robot running. Press Ctrl+C to exit.` and the ESP32 connects (or dry-run warning if serial is unplugged).
-
-Optional debug dashboard (3D ToF map + MJPEG on :8082):
-
-```bash
-DEBUG_VIZ=1 CONFIG_PATH=config.kiosk.yaml python start_robot.py start
-```
-
-Measure backend CPU/RAM:
-
-```bash
-./scripts/measure_resources.sh 60 1 start_robot.py
-```
-
----
-
-### Terminal 2 — Frontend (Next.js kiosk UI on :3000)
-
-Requires **Node.js 20+** and `pnpm` (or npm).
-
-```bash
-cd /home/nema/Documents/voice-agentv5
-./scripts/run-frontend-prod.sh   # production — builds then starts (slow first time on Pi)
-```
-
-If the UI code did **not** change since the last build, skip the rebuild:
-
+#### Terminal 2 — Frontend Kiosk Web Server (:3000):
 ```bash
 cd frontend
 pnpm start
 ```
 
-For UI development with hot reload:
-
+#### Terminal 3 — Fullscreen Kiosk Browser:
 ```bash
-./scripts/run-frontend-dev.sh
-```
-
-Kiosk API routes (`/api/map`, `/api/upload-status`, etc.) proxy to Python on **:8080**. LiveKit tokens are minted in Next.js (`/api/connection-details`).
-
----
-
-### Terminal 3 — Fullscreen kiosk browser (optional)
-
-Opens Chromium at `http://127.0.0.1:3000` (the Next.js UI, **not** :8080).
-
-```bash
-cd /home/nema/Documents/voice-agentv5
 ./scripts/kiosk.sh
 ```
 
-After rebuilding the frontend:
+---
 
+## 8. Project Architecture & Ports
+
+| Port | Service | Description |
+|------|---------|-------------|
+| **3000** | Next.js Kiosk UI | Touchscreen user interface & Browser VAD mic capture |
+| **8765** | NLU WebSocket | Local ChromaDB intent matcher & voice state manager |
+| **8080** | Python MediaServer | Serves static assets, poster uploads, map graph APIs |
+| **8082** | Debug Dashboard | Optional 3D ToF map + MJPEG camera stream (`DEBUG_VIZ=1`) |
+
+### Directory Overview:
+```
+voice-agentv5/
+├── start_robot.py             # Main entry point (hardware, vision, voice, APIs)
+├── config.kiosk.yaml          # Optimized Pi 4 kiosk configuration
+├── requirements.txt           # Python package dependencies
+├── assets/
+│   ├── events/                # Event poster image files
+│   ├── competitions/          # Competition poster image files
+│   ├── posts/                 # Announcement poster image files
+│   └── audio_cache/           # Pre-synthesized 48kHz WAV audio files (Generated)
+├── voice/
+│   ├── nlu_server.py          # FastAPI/Starlette NLU WebSocket server
+│   ├── event_database.py      # ChromaDB event vector database manager
+│   ├── event_indexer.py       # AI Vision poster metadata extractor
+│   ├── compiler/
+│   │   └── intent_compiler.py # Builds compiled_intents.json & synthesizes audio
+│   └── event_db/              # Local ChromaDB index & JSON manifests (Generated)
+├── frontend/                  # Next.js kiosk touchscreen interface
+└── scripts/
+    ├── launch-kiosk-stack.sh  # Master launch script (Backend + Frontend + Browser)
+    ├── setup_alsa.sh          # USB audio card ALSA setup
+    ├── kiosk.sh               # Fullscreen Chromium launcher
+    └── refresh-kiosk.sh       # Reload kiosk window after code edits
+```
+
+---
+
+## 9. Troubleshooting & Maintenance
+
+### Reload Kiosk UI After Code Edits:
 ```bash
 ./scripts/refresh-kiosk.sh
 ```
 
-Kiosk does **not** start on boot by default — run `kiosk.sh` manually when needed.
-
----
-
-### Verify voice works
-
-1. Backend log should show `Voice agent enabled (LiveKit start)` when the mic is used.
-2. Tap the mic on the kiosk UI — backend should log `[VoiceService] Job received: room=...`.
-3. `AGENT_NAME` must be `campus-greeting-agent` in `frontend/.env.local` (seeded automatically from `LIVEKIT_AGENT_NAME` in `.env`).
-
----
-
-## Ports
-
-| Port | Service |
-|------|---------|
-| 3000 | Next.js kiosk UI |
-| 8080 | MediaServer (posters, maps, upload APIs) + voice blackboard hooks |
-| 8082 | Debug dashboard + MJPEG `/stream` (`DEBUG_VIZ=1` or `debug_viz.auto_start` in config) |
-| 8000 | Bye-wave hand stream (disabled in `config.kiosk.yaml`) |
-
-## Config profiles
-
-| File | Purpose |
-|------|---------|
-| `config.yaml` | Default / dev tuning |
-| `config.kiosk.yaml` | **Pi kiosk** — lower vision FPS/resolution, throttled loops, bye-wave off, debug viz off by default |
-
-**Full breakdown of what kiosk saves vs what still runs (ToF approach, wander, voice throttles):**  
-See **[docs/KIOSK-CPU-PROFILE.md](docs/KIOSK-CPU-PROFILE.md)**.
-
+### Re-index Posters Manually:
+If you add new posters and want to rebuild the vector database immediately:
 ```bash
-CONFIG_PATH=config.kiosk.yaml python start_robot.py start
-# or
-python start_robot.py --config config.kiosk.yaml start
-# all-in-one (backend + frontend + Chromium):
-./scripts/launch-kiosk-stack.sh
+python voice/compiler/intent_compiler.py
 ```
 
-## CPU notes
-
-- **Face-only tracking** — YuNet face detection only (no YOLO body detection).
-- Use **`config.kiosk.yaml`** when running frontend + Chromium on the same Pi — see [docs/KIOSK-CPU-PROFILE.md](docs/KIOSK-CPU-PROFILE.md).
-- Run **production** frontend (`run-frontend-prod.sh` or `pnpm start`) on the Pi, not dev mode, for demos.
-- `run-frontend-prod.sh` runs a full `next build` every time; use `cd frontend && pnpm start` when the UI has not changed.
-
-## Project layout
-
-```
-voice-agentv5/
-├── start_robot.py       # Main entry (hardware, vision, voice, APIs)
-├── config.yaml          # Default config
-├── config.kiosk.yaml    # Pi kiosk (lower CPU)
-├── core/                # Face tracking, servos, eyes, blackboard
-├── voice/               # LiveKit agent + MediaServer
-├── frontend/            # Next.js kiosk
-├── assets/              # Poster images (events, competitions, posts)
-├── data/                # Campus map graphs
-└── scripts/
-    ├── launch-kiosk-stack.sh  # Backend + frontend + Chromium (kiosk config)
-    ├── start-ui.sh            # Frontend + kiosk when backend already up
-    ├── run-frontend-dev.sh
-    ├── run-frontend-prod.sh
-    ├── kiosk.sh
-    ├── refresh-kiosk.sh
-    └── measure_resources.sh
-docs/
-└── KIOSK-CPU-PROFILE.md       # What kiosk config changes (ToF, wander, voice CPU)
-```
-
-## ESP32 firmware
-
-Wiring defaults:
-
-- ESP32 GPIO 21 -> PCA9685 SDA
-- ESP32 GPIO 22 -> PCA9685 SCL
-- PCA9685 address `0x40`
-- PCA9685 channel 4 -> pan servo
-- PCA9685 channel 5 -> tilt servo
-
+### Measure System Resources (CPU/RAM/Temp):
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32 firmware/head_servo
-arduino-cli upload -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32 firmware/head_servo
+./scripts/measure_resources.sh 60 1 start_robot.py
 ```
-
-Serial protocol: `H` -> `READY`, `P85.0 T105.0` -> set pan/tilt, `?` -> `POS P<pan> T<tilt>`
-
-## Legacy face-tracking head (standalone)
-
-```bash
-python face_tracking_head.py --port /dev/ttyUSB0
-```
-
-Legacy monolith MJPEG: `http://<pi-ip>:8081/stream` (modular stack uses **8082** when debug viz is enabled).

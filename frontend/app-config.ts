@@ -16,33 +16,26 @@ export interface AppConfig {
 
   // agent dispatch configuration
   agentName?: string;
-
-  // LiveKit Cloud Sandbox configuration
-  sandboxId?: string;
 }
 
 export const APP_CONFIG_DEFAULTS: AppConfig = {
-  companyName: "LiveKit",
-  pageTitle: "LiveKit Voice Agent",
-  pageDescription: "A voice agent built with LiveKit",
+  companyName: "NEma Kiosk",
+  pageTitle: "NEma Campus Kiosk",
+  pageDescription: "NEma Campus Kiosk & Local NLU Voice Assistant",
 
   supportsChatInput: true,
-  supportsVideoInput: true,
-  supportsScreenShare: true,
-  isPreConnectBufferEnabled: true,
+  supportsVideoInput: false,
+  supportsScreenShare: false,
+  isPreConnectBufferEnabled: false,
 
   logo: "/lk-logo.svg",
   accent: "#002cf2",
   logoDark: "/lk-logo-dark.svg",
   accentDark: "#1fd5f9",
-  startButtonText: "Start call",
+  startButtonText: "Start Interaction",
 
-  // agent dispatch configuration
   agentName:
     process.env.AGENT_NAME ??
     process.env.LIVEKIT_AGENT_NAME ??
     "campus-greeting-agent",
-
-  // LiveKit Cloud Sandbox configuration
-  sandboxId: undefined,
 };

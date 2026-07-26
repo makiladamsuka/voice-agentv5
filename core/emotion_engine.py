@@ -84,6 +84,8 @@ class EmotionEngine:
         self._voice_loop_hz = float(vp.get("emotion_loop_hz", 8.0))
         self._conv_emotion_last: str | None = None
         self._conv_emotion_hold_until = 0.0
+        self._voice_glance_until = 0.0
+        self._voice_glance_emotion = "idle"
 
     def _set(self, name: str, intensity_scale: float = 1.0) -> None:
         resolved = resolve_emotion_name(name)
@@ -143,13 +145,15 @@ class EmotionEngine:
             if voice_active:
                 if user_speaking:
                     self._set("engaged")
+                    self._voice_glance_until = 0.0
                     time.sleep(loop_delay)
                     continue
                 elif conv_state == "thinking":
                     self._set("thinking")
+                    self._voice_glance_until = 0.0
                     time.sleep(loop_delay)
                     continue
-                elif conv_emotion is not None:
+                elif conv_state == "speaking" and conv_emotion is not None:
                     if conv_emotion != self._conv_emotion_last:
                         if (
                             self._conv_emotion_last is not None
@@ -160,6 +164,17 @@ class EmotionEngine:
                             self._conv_emotion_last = conv_emotion
                             self._conv_emotion_hold_until = now + 2.0
                     self._set(conv_emotion)
+                    self._voice_glance_until = 0.0
+                    time.sleep(loop_delay)
+                    continue
+                else:
+                    # Mic active & waiting for next user question
+                    if now >= self._voice_glance_until:
+                        choices = ["looking_left_natural", "looking_right_natural", "idle", "idle"]
+                        self._voice_glance_emotion = random.choice(choices)
+                        duration = random.uniform(1.8, 3.8) if "looking" in self._voice_glance_emotion else random.uniform(2.5, 5.0)
+                        self._voice_glance_until = now + duration
+                    self._set(self._voice_glance_emotion)
                     time.sleep(loop_delay)
                     continue
             self._conv_emotion_last = None

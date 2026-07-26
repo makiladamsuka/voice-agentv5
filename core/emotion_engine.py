@@ -134,20 +134,32 @@ class EmotionEngine:
                 continue
 
             voice_active = state.get("voice_session_active", False)
+            user_speaking = state.get("user_speaking", False)
+            conv_state = state.get("conv_state")
             conv_emotion = state.get("conv_emotion")
-            if voice_active and conv_emotion is not None:
-                if conv_emotion != self._conv_emotion_last:
-                    if (
-                        self._conv_emotion_last is not None
-                        and now < self._conv_emotion_hold_until
-                    ):
-                        conv_emotion = self._conv_emotion_last
-                    else:
-                        self._conv_emotion_last = conv_emotion
-                        self._conv_emotion_hold_until = now + 2.0
-                self._set(conv_emotion)
-                time.sleep(loop_delay)
-                continue
+
+            if voice_active:
+                if user_speaking:
+                    self._set("engaged")
+                    time.sleep(loop_delay)
+                    continue
+                elif conv_state == "thinking":
+                    self._set("thinking")
+                    time.sleep(loop_delay)
+                    continue
+                elif conv_emotion is not None:
+                    if conv_emotion != self._conv_emotion_last:
+                        if (
+                            self._conv_emotion_last is not None
+                            and now < self._conv_emotion_hold_until
+                        ):
+                            conv_emotion = self._conv_emotion_last
+                        else:
+                            self._conv_emotion_last = conv_emotion
+                            self._conv_emotion_hold_until = now + 2.0
+                    self._set(conv_emotion)
+                    time.sleep(loop_delay)
+                    continue
             self._conv_emotion_last = None
 
             if state.get("prox_glance_active") and state.get("prox_glance_emotion"):

@@ -166,7 +166,7 @@ class Blackboard:
 
     # ── Voice / Conversation (written by VoiceService) ────────────────────────
     # Layer 2 priority: overrides surroundings emotion when voice session active.
-    voice_session_active: bool = False       # True when LiveKit room is connected
+    voice_session_active: bool = False       # True when LiveKit/NLU room is connected
     conv_state: str = "idle"                 # "idle"|"listening"|"speaking"|"thinking"|"nodding"|"waiting"|"remembering"
     conv_emotion: str = None                 # VADER-derived emotion (overrides surroundings when set)
     amplitude_fast: float = 0.0              # TTS RMS fast signal (syllable punches)

@@ -561,6 +561,9 @@ class OfflineVoiceRuntime:
                         print(f"  [Fallback] AI matched in '{fallback_domain}' domain despite missing trigger words!")
                         break
         
+        # Minimum thinking duration (400ms) so emotion engine renders thinking face
+        time.sleep(0.4)
+
         if intent:
             print(f"\n✅ Match Found! Action: {intent['action']}")
             reply_text = intent.get("response_text", "")
@@ -640,7 +643,7 @@ class OfflineVoiceRuntime:
             else:
                 print("🔊 [Audio Playback] I'm a campus guide! Try asking me about events or locations.")
             
-        self.bb.write(conv_state="listening", agent_speaking=False)
+        self.bb.write(conv_state="waiting", agent_speaking=False, user_speaking=False)
 
     def start_hardware_loop(self):
         """Zero-latency hardware microphone loop using SpeechRecognition VAD."""

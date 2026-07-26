@@ -684,7 +684,7 @@ class ServoLoop:
             "body_detected",
             "hand_detected", "hand_norm_x", "hand_norm_y",
             "skin_blob_detected", "skin_blob_norm_x", "skin_blob_norm_y",
-            "conv_state", "voice_session_active", "amplitude_fast",
+            "conv_state", "voice_session_active", "amplitude_fast", "emotion",
             "prox_glance_active", "prox_glance_phase", "prox_glance_since", "prox_glance_target_pan"
         )
         face_detected = state["face_detected"]
@@ -833,6 +833,7 @@ class ServoLoop:
         conv_state = state.get("conv_state", "idle")
         voice_active = state.get("voice_session_active", False)
         amp_fast = state.get("amplitude_fast", 0.0)
+        curr_emotion = state.get("emotion", "idle")
 
         overlay_tilt = 0.0
         if voice_active:
@@ -854,6 +855,9 @@ class ServoLoop:
                 # Think bob: slower, gentler
                 t = now * self._servo_cfg.get("conv_think_bob_hz", 2.2) * math.pi * 2
                 overlay_tilt = math.sin(t) * self._servo_cfg.get("conv_think_bob_deg", 3.0)
+            elif curr_emotion in ("sleepy", "bored"):
+                # Head droop when robot becomes sleepy after prolonged waiting
+                overlay_tilt = 5.0  # gentle downward tilt offset
 
         tilt_target = clamp(tilt_target + overlay_tilt, self.tilt_min, self.tilt_max)
 

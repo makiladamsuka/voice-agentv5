@@ -91,6 +91,9 @@ class EmotionEngine:
         self._vad_start_ts = 0.0
         self._listening_glance_until = 0.0
         self._listening_glance_emotion = "idle"
+        self._thinking_glance_until = 0.0
+        self._thinking_glance_emotion = "thinking"
+        self._waiting_start_ts = 0.0
 
     def _set(self, name: str, intensity_scale: float = 1.0) -> None:
         resolved = resolve_emotion_name(name)
@@ -144,66 +147,109 @@ class EmotionEngine:
 
             voice_active = state.get("voice_session_active", False)
             user_speaking = state.get("user_speaking", False)
-            conv_state = state.get("conv_state")
+            conv_state = state.get("conv_state", "idle")
             conv_emotion = state.get("conv_emotion")
 
             if voice_active:
+                # Priority 1: Server NLU Processing (Thinking)
+                if conv_state == "thinking":
+                    self._vad_start_ts = 0.0
+                    self._waiting_start_ts = 0.0
+                    if now >= self._thinking_glance_until:
+                        # Rich cognitive cycle: thinking -> concentrating -> remembering
+                        choices = ["thinking", "thinking", "concentrating", "remembering"]
+                        self._thinking_glance_emotion = random.choice(choices)
+                        self._thinking_glance_until = now + random.uniform(0.8, 1.8)
+                    self._set(self._thinking_glance_emotion)
+                    time.sleep(loop_delay)
+                    continue
+                else:
+                    self._thinking_glance_until = 0.0
+
+                # Priority 2: Robot Speaking (TTS Output)
+                if conv_state == "speaking":
+                    self._vad_start_ts = 0.0
+                    self._waiting_start_ts = 0.0
+                    base_emotion = conv_emotion or "engaged"
+                    if now >= self._speak_glance_until:
+                        # 30% chance to glance left/right while speaking
+                        if random.random() < 0.30:
+                            is_happy = base_emotion in ("happy", "cheerful", "excited", "warm", "proud", "amused")
+                            if is_happy:
+                                choices = ["looking_left_cheerful", "looking_right_cheerful", "looking_left_happy", "looking_right_happy"]
+                            else:
+                                choices = ["looking_left_natural", "looking_right_natural"]
+                            self._speak_glance_emotion = random.choice(choices)
+                            self._speak_glance_until = now + random.uniform(0.7, 1.3)
+                        else:
+                            self._speak_glance_emotion = base_emotion
+                            self._speak_glance_until = now + random.uniform(2.0, 3.8)
+
+                    self._set(self._speak_glance_emotion)
+                    time.sleep(loop_delay)
+                    continue
+
+                # Priority 3: User Speaking (VAD Active)
                 if user_speaking:
+                    self._waiting_start_ts = 0.0
                     if self._vad_start_ts == 0.0:
                         self._vad_start_ts = now
                     elapsed_vad = now - self._vad_start_ts
 
-                    # Step 1: Initial VAD reaction (0.0s to 0.7s) -> engaged
-                    if elapsed_vad <= 0.7:
+                    # Step 1: Immediate reaction (0.0s - 0.5s: attentive, 0.5s - 1.2s: engaged)
+                    if elapsed_vad <= 0.5:
+                        self._set("attentive")
+                    elif elapsed_vad <= 1.2:
                         self._set("engaged")
                     else:
-                        # Step 2: User is still speaking -> alternate idle & attentive
+                        # Step 2: Extended user speaking -> active listening cycle
                         if now >= self._listening_glance_until:
-                            choices = ["idle", "attentive", "idle"]
+                            choices = [
+                                "attentive", "engaged", "idle",
+                                "looking_left_natural", "looking_right_natural",
+                                "curious_intense"
+                            ]
                             self._listening_glance_emotion = random.choice(choices)
-                            self._listening_glance_until = now + random.uniform(1.4, 2.8)
+                            self._listening_glance_until = now + random.uniform(1.2, 2.5)
                         self._set(self._listening_glance_emotion)
 
-                    self._voice_glance_until = 0.0
                     time.sleep(loop_delay)
                     continue
 
-                # User stopped speaking -> reset VAD start timer
+                # Priority 4: Mic active & waiting for next user question (Idle/Waiting)
                 self._vad_start_ts = 0.0
+                if self._waiting_start_ts == 0.0:
+                    self._waiting_start_ts = now
 
-                if conv_state == "thinking":
-                    # Step 3: Thinking emotion while processing NLU/STT response
-                    self._set("thinking")
-                    self._voice_glance_until = 0.0
-                    time.sleep(loop_delay)
-                    continue
-                elif conv_state == "speaking":
-                    # Step 4: Robot speaking -> use VADER sentiment + talking micro-glances
-                    base_emotion = conv_emotion or "engaged"
-                    if now >= self._speak_glance_until:
-                        # 35% chance to do a brief talking glance left/right for ~1 sec during speech
-                        if random.random() < 0.35 and self._speak_glance_emotion == base_emotion:
-                            choices = ["looking_left_cheerful", "looking_right_cheerful"]
-                            self._speak_glance_emotion = random.choice(choices)
-                            self._speak_glance_until = now + random.uniform(0.8, 1.4)
-                        else:
-                            self._speak_glance_emotion = base_emotion
-                            self._speak_glance_until = now + random.uniform(2.2, 4.0)
-
-                    self._set(self._speak_glance_emotion)
-                    self._voice_glance_until = 0.0
-                    time.sleep(loop_delay)
-                    continue
-                else:
-                    # Step 5: Mic active & waiting for next user question
+                waiting_elapsed = now - self._waiting_start_ts
+                if waiting_elapsed >= 15.0:
+                    # Silence threshold reached -> robot looks sleepy/drowsy
                     if now >= self._voice_glance_until:
-                        choices = ["looking_left_natural", "looking_right_natural", "idle", "idle"]
+                        choices = ["sleepy", "sleepy", "bored"]
                         self._voice_glance_emotion = random.choice(choices)
-                        duration = random.uniform(1.8, 3.8) if "looking" in self._voice_glance_emotion else random.uniform(2.5, 5.0)
+                        self._voice_glance_until = now + random.uniform(3.0, 6.0)
+                else:
+                    if now >= self._voice_glance_until:
+                        # Natural glance distribution during active waiting
+                        choices = [
+                            "idle", "idle", "idle", "idle",
+                            "looking_left_natural", "looking_right_natural",
+                            "content", "bored"
+                        ]
+                        self._voice_glance_emotion = random.choice(choices)
+                        duration = random.uniform(1.8, 3.5) if "looking" in self._voice_glance_emotion else random.uniform(2.5, 5.0)
                         self._voice_glance_until = now + duration
-                    self._set(self._voice_glance_emotion)
-                    time.sleep(loop_delay)
-                    continue
+
+                self._set(self._voice_glance_emotion)
+                time.sleep(loop_delay)
+                continue
+
+            # Voice session inactive -> reset voice timers
+            self._vad_start_ts = 0.0
+            self._waiting_start_ts = 0.0
+            self._voice_glance_until = 0.0
+            self._speak_glance_until = 0.0
+            self._thinking_glance_until = 0.0
             self._conv_emotion_last = None
 
             if state.get("prox_glance_active") and state.get("prox_glance_emotion"):

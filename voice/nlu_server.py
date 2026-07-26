@@ -235,6 +235,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                     print(f"  [Context injected] Rewrote query to: '{user_text}'")
 
                 # Update blackboard — show "thinking" on robot face
+                think_start_ts = _time.monotonic()
                 if _bb is not None:
                     _bb.write(conv_state="thinking", user_speaking=False, conv_emotion=None)
                 await websocket.send_text(
@@ -311,6 +312,11 @@ async def _voice_ws_endpoint(websocket) -> None:
                     f"audio={result.get('audio_url')}"
                 )
 
+                # Ensure "thinking" state is visible on screen for at least 400ms before speaking
+                elapsed_think = _time.monotonic() - think_start_ts
+                if elapsed_think < 0.4:
+                    await asyncio.sleep(0.4 - elapsed_think)
+
                 write_conv_emotion(
                     _bb,
                     result.get("reply_text", ""),
@@ -366,9 +372,9 @@ async def _voice_ws_endpoint(websocket) -> None:
                 if sync is not None:
                     sync.end_playback()
                 if _bb is not None:
-                    _bb.write(conv_state="listening", agent_speaking=False)
+                    _bb.write(conv_state="waiting", agent_speaking=False, user_speaking=False)
                 await websocket.send_text(
-                    json.dumps({"type": "state", "conv_state": "listening"})
+                    json.dumps({"type": "state", "conv_state": "waiting"})
                 )
 
             elif msg_type == "user_speaking":

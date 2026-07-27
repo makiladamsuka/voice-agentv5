@@ -627,13 +627,20 @@ export function useNluVoice({
     recorderRef.current = recorder;
 
     recorder.ondataavailable = (event) => {
+      const isRobotBusy =
+        stateRef.current === "speaking" || stateRef.current === "thinking";
       if (
+        !isRobotBusy &&
         event.data.size > 0 &&
         dgWs.current?.readyState === WebSocket.OPEN &&
         isActiveRef.current
       ) {
         event.data.arrayBuffer().then((buf) => {
-          if (dgWs.current?.readyState === WebSocket.OPEN) {
+          if (
+            dgWs.current?.readyState === WebSocket.OPEN &&
+            stateRef.current !== "speaking" &&
+            stateRef.current !== "thinking"
+          ) {
             dgWs.current.send(buf);
           }
         });

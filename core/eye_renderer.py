@@ -31,6 +31,26 @@ FLOOR_Y = SCREEN_HEIGHT - 5
 EMOTION_CHANGE_COOLDOWN = 0.75
 
 
+def _smoothstep(u):
+    u = max(0.0, min(1.0, u))
+    return u * u * (3.0 - 2.0 * u)
+
+
+def think_gaze_hold(t, cycle_sec=11.0, hold_frac=0.45):
+    """Step-and-hold scanning gaze: 45% hold left, 5% sweep right, 45% hold right, 5% sweep left."""
+    phase = (t / cycle_sec) % 1.0
+    travel = (1.0 - 2.0 * hold_frac) * 0.5
+    if phase < hold_frac:
+        return -1.0
+    if phase < hold_frac + travel:
+        u = _smoothstep((phase - hold_frac) / travel)
+        return -1.0 + 2.0 * u
+    if phase < hold_frac + travel + hold_frac:
+        return 1.0
+    u = _smoothstep((phase - hold_frac - travel - hold_frac) / travel)
+    return 1.0 - 2.0 * u
+
+
 def _load_yaml(path):
     if yaml is None or not path.exists():
         return {}
@@ -79,6 +99,9 @@ class BlockyEye:
         self.pending_apply_time = 0.0
         self.happy_phase = random.uniform(0.0, math.pi * 2)
         self.happy_burst_until = 0.0
+        self.thinking_phase = random.uniform(0.0, 11.0)
+        self.thinking_gaze_norm = 0.0
+        self.engaged_startle_until = 0.0
         self.noise_t = random.uniform(0, 100)
         self.emotion_pos_bias_x = self.emotion_pos_bias_y = 0.0
 
@@ -99,6 +122,11 @@ class BlockyEye:
             return
         if resolved == "happy" and self.current_emotion != "happy":
             self.happy_burst_until = now + 0.35
+        if resolved == "engaged" and (self.current_emotion != "engaged" or force):
+            self.engaged_startle_until = now + 0.30
+            self.vel_y = -65.0
+        if resolved == "thinking":
+            self.thinking_phase = random.uniform(0.0, 11.0)
         if resolved != self.current_emotion:
             self.last_emotion_change_time = now
         self.pending_emotion = None; self.current_emotion = resolved
@@ -129,18 +157,45 @@ class BlockyEye:
             self.set_emotion(e, i, force=True)
 
         if self.blink_state == "IDLE":
+            now = time.time()
             tl = self.target_top_lid; bl = self.target_bottom_lid; la = self.target_lid_angle
-            tx = self.base_x
-            ty = self.base_y
+            tx = self.base_x + self.emotion_pos_bias_x
+            ty = self.base_y + self.emotion_pos_bias_y
+
+            is_engaged_startle = self.current_emotion == "engaged" and now < self.engaged_startle_until
+            if is_engaged_startle:
+                ty -= 6.0
+
+            if self.current_emotion == "thinking":
+                self.thinking_gaze_norm = think_gaze_hold(now + self.thinking_phase)
+                tx += self.thinking_gaze_norm * 8.0
+                ty += math.sin(now * 1.5 + self.thinking_phase) * 0.8
+                la += self.thinking_gaze_norm * 2.5
+
             dx = tx - self.current_pos[0]; dy = ty - self.current_pos[1]
-            self.current_pos[0] += dx * 0.20
-            self.current_pos[1] += dy * 0.22
+            speed_x = 0.20
+            speed_y = 0.22
+            if is_engaged_startle:
+                speed_x = 0.45
+                speed_y = 0.58
+            self.current_pos[0] += dx * speed_x
+            self.current_pos[1] += dy * speed_y
             self.current_rotation = 0.0
-            t2 = time.time()
+
+            t2 = now
             bw = math.sin(t2*1.5+self.base_x)*1.5 + math.sin(t2*0.5)*1.0
             bh = math.cos(t2*1.8+self.base_y)*1.5 + math.cos(t2*0.6)*1.0
-            k=0.12; d=0.7
-            if self.current_emotion=="surprised": k=0.30; d=0.52
+            if is_engaged_startle:
+                bw *= 0.10; bh *= 0.10
+            elif self.current_emotion == "thinking":
+                bw *= 0.50; bh *= 0.50
+
+            k = 0.12; d = 0.70
+            if is_engaged_startle:
+                k = 0.68; d = 0.48
+            elif self.current_emotion == "surprised":
+                k = 0.30; d = 0.52
+
             self.scale_w_vel=(self.scale_w_vel+(self.target_scale_w-self.scale_w)*k)*d; self.scale_w+=self.scale_w_vel
             self.scale_h_vel=(self.scale_h_vel+(self.target_scale_h-self.scale_h)*k)*d; self.scale_h+=self.scale_h_vel
             self.top_lid_vel=(self.top_lid_vel+(tl-self.top_lid)*k)*d; self.top_lid+=self.top_lid_vel

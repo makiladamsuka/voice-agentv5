@@ -182,7 +182,7 @@ export function useNluVoice({
   /** Timestamp when speaking ends — used to reject Deepgram echo transcripts */
   const speakingEndedAtRef = useRef<number>(0);
   /** How long (ms) to reject Deepgram results after TTS ends (echo cooldown) */
-  const ECHO_COOLDOWN_MS = 600;
+  const ECHO_COOLDOWN_MS = 1200;
 
   const apiKey =
     deepgramApiKey ?? process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY ?? "";
@@ -494,8 +494,8 @@ export function useNluVoice({
       smart_format: "true",
       interim_results: "true",
       vad_events: "true",
-      endpointing: "250", // Aggressive VAD endpointing for faster turnaround
-      utterance_end_ms: "1000",
+      endpointing: "200", // Aggressive VAD endpointing for faster turnaround
+      utterance_end_ms: "300", // 300ms silence threshold for snappy end-of-speech detection
     });
 
     const cleanKw = (text: string) => 

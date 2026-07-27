@@ -131,7 +131,21 @@ class IntentMatcher:
     def match_exact(self, text: str) -> dict | None:
         """Instant exact lookup for pre-defined queries (0.01ms cost) to bypass vector search."""
         norm_text = text.lower().strip(" \t\r\n.,?!;:")
-        return self.exact_match_map.get(norm_text)
+        if not norm_text:
+            return None
+        match = self.exact_match_map.get(norm_text)
+        if match:
+            return match
+
+        # Strip common conversational prefix greetings (e.g. "hi", "hey", "hello", "robot", "nema")
+        # Example: "Hi. Can you hear me?" -> "can you hear me" -> instant hash hit!
+        import re
+        stripped = re.sub(r"^(hi|hey|hello|okay|ok|robot|nema|please)[,.\s]+", "", norm_text).strip(" \t\r\n.,?!;:")
+        if stripped and stripped != norm_text:
+            match = self.exact_match_map.get(stripped)
+            if match:
+                return match
+        return None
 
     def _load_intent_lists(self, compiled_json_path: Path) -> list[tuple[str, dict]]:
         """Load all domain intent files. Returns a list of (domain, intent) pairs."""

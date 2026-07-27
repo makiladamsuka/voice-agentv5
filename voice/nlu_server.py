@@ -155,21 +155,14 @@ async def _voice_ws_endpoint(websocket) -> None:
                     if pending_ambiguity_category:
                         user_text = f"{pending_ambiguity_category} {user_text}"
                     norm_text = _normalize_text(user_text)
-                    # ── Throttle: skip if same text or too soon ───────────
-                    _snow = _time.monotonic()
-                    
-                    # ── Tier-1 Check First (0.01ms cost) ──
+
+                    # ── Tier-1 Check Only for Speculative Transcripts (0.01ms cost) ──
+                    # Skip expensive multi-domain ChromaDB vector searches on interim fragments.
                     runtime = _get_runtime()
-                    is_exact_match = runtime.matcher.match_exact(user_text) is not None
-                    
-                    if not is_exact_match:
-                        # Throttle non-exact speculative matching to once every 1.5s to prevent Pi CPU spikes
-                        if norm_text == _spec["last_norm"] or (_snow - _spec["last_ts"]) < 1.5:
-                            continue
-                    
-                    _spec["last_norm"] = norm_text
-                    _spec["last_ts"] = _snow
-                    # ─────────────────────────────────────────────────────
+                    exact_intent = runtime.matcher.match_exact(user_text)
+                    if not exact_intent:
+                        continue
+
                     loop = asyncio.get_running_loop()
                     result = await loop.run_in_executor(
                         None, _match_intent, runtime, user_text

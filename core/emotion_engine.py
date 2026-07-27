@@ -171,8 +171,13 @@ class EmotionEngine:
                     self._vad_start_ts = 0.0
                     self._waiting_start_ts = 0.0
                     base_emotion = conv_emotion or "engaged"
-                    if now >= self._speak_glance_until:
-                        # 30% chance to glance left/right while speaking
+
+                    if self._speak_glance_until == 0.0:
+                        # First frame of speech -> hold base sentiment emotion solidly for 2.2-3.5s
+                        self._speak_glance_emotion = base_emotion
+                        self._speak_glance_until = now + random.uniform(2.2, 3.5)
+                    elif now >= self._speak_glance_until:
+                        # 30% chance to do a brief micro-glance left/right after initial speech hold
                         if random.random() < 0.30:
                             is_happy = base_emotion in ("happy", "cheerful", "excited", "warm", "proud", "amused")
                             if is_happy:
@@ -188,6 +193,8 @@ class EmotionEngine:
                     self._set(self._speak_glance_emotion)
                     time.sleep(loop_delay)
                     continue
+                else:
+                    self._speak_glance_until = 0.0
 
                 # Priority 3: User Speaking (VAD Active)
                 if user_speaking:

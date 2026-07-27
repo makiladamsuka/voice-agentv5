@@ -202,19 +202,10 @@ async def _voice_ws_endpoint(websocket) -> None:
                 _norm_incoming = _normalize_text(original_text)
                 _now = _time.monotonic()
                 _dt = _now - _echo["ts"]
-                is_duplicate_prompt = (_norm_incoming == _echo["norm"])
-                is_reply_echo = (
-                    bool(_echo["reply_norm"])
-                    and len(_norm_incoming) >= 10
-                    and len(_norm_incoming) >= 0.7 * len(_echo["reply_norm"])
-                    and _norm_incoming in _echo["reply_norm"]
-                )
-
                 if _echo["speaking"] or (_dt < _echo["suppress_sec"]):
-                    if is_duplicate_prompt or is_reply_echo:
-                        print(f"[NLU] Echo suppressed (speaking={_echo['speaking']}, {_dt:.1f}s < {_echo['suppress_sec']:.1f}s): '{original_text}'")
-                        await websocket.send_text(json.dumps({"type": "state", "conv_state": "speaking" if _echo["speaking"] else "listening"}))
-                        continue
+                    print(f"[NLU] Echo suppressed (speaking={_echo['speaking']}, {_dt:.1f}s < {_echo['suppress_sec']:.1f}s): '{original_text}'")
+                    await websocket.send_text(json.dumps({"type": "state", "conv_state": "speaking" if _echo["speaking"] else "listening"}))
+                    continue
 
                 _echo["norm"] = _norm_incoming
                 _echo["ts"] = _now

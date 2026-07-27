@@ -20,12 +20,18 @@ MAX_WAIT=180
 export DISPLAY="${DISPLAY:-:0}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
-# Auto-select physical USB microphone for PipeWire / PulseAudio
+# Auto-select physical USB microphone and HDMI speakers for PipeWire / PulseAudio
 if command -v pactl >/dev/null 2>&1; then
   _MIC_SOURCE="$(pactl list sources short 2>/dev/null | grep -i "alsa_input" | head -n 1 | cut -f2 || true)"
   if [[ -n "$_MIC_SOURCE" ]]; then
     pactl set-default-source "$_MIC_SOURCE" 2>/dev/null || true
     echo "[kiosk.sh] PipeWire default microphone set to: ${_MIC_SOURCE}"
+  fi
+
+  _HDMI_SINK="$(pactl list sinks short 2>/dev/null | grep -i "hdmi" | head -n 1 | cut -f2 || true)"
+  if [[ -n "$_HDMI_SINK" ]]; then
+    pactl set-default-sink "$_HDMI_SINK" 2>/dev/null || true
+    echo "[kiosk.sh] PipeWire default HDMI speaker set to: ${_HDMI_SINK}"
   fi
 fi
 

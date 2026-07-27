@@ -33,6 +33,12 @@ if command -v pactl >/dev/null 2>&1; then
     pactl set-default-sink "$_HDMI_SINK" 2>/dev/null || true
     echo "[kiosk.sh] PipeWire default HDMI speaker set to: ${_HDMI_SINK}"
   fi
+
+  # Prevent audio jitter / buffer underruns by locking PipeWire buffer quantum to 1024 (~21ms)
+  if command -v pw-metadata >/dev/null 2>&1; then
+    pw-metadata -n settings 0 clock.force-quantum 1024 >/dev/null 2>&1 || true
+    echo "[kiosk.sh] PipeWire buffer quantum locked to 1024 samples (anti-jitter)"
+  fi
 fi
 
 _kiosk_running() {

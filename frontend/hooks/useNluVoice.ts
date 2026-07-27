@@ -182,7 +182,7 @@ export function useNluVoice({
   /** Timestamp when speaking ends — used to reject Deepgram echo transcripts */
   const speakingEndedAtRef = useRef<number>(0);
   /** How long (ms) to reject Deepgram results after TTS ends (echo cooldown) */
-  const ECHO_COOLDOWN_MS = 1200;
+  const ECHO_COOLDOWN_MS = 2500;
 
   const apiKey =
     deepgramApiKey ?? process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY ?? "";
@@ -195,8 +195,7 @@ export function useNluVoice({
       onStateChange?.(newState);
 
       // Mute the mic track at the OS/browser level when not listening
-      // so we send silent valid WebM to Deepgram (prevents container corruption 
-      // without triggering echo transcripts).
+      // so no physical audio reaches Deepgram during thinking/speaking.
       if (mediaStreamRef.current) {
         const shouldMute = (newState === "speaking" || newState === "thinking");
         mediaStreamRef.current.getAudioTracks().forEach(t => {
@@ -204,17 +203,31 @@ export function useNluVoice({
         });
       }
 
-      // Play synthesized audio chimes on state transitions (Alexa/Pepper pattern)
-      if (oldState !== newState) {
-        if (newState === "listening") {
+      if (playChimes) {
+        if (newState === "listening" && oldState !== "listening") {
           playStartChime();
         } else if (newState === "thinking" && oldState === "listening") {
           playStopChime();
         }
       }
     },
-    [onStateChange],
+    [onStateChange, playChimes],
   );
+
+  const sendTranscript = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    console.log(`[STT] → NLU: "${trimmed}"`);
+    setVoiceState("thinking");
+    if (nluWs.current?.readyState === WebSocket.OPEN) {
+      nluWs.current.send(
+        JSON.stringify({
+          type: "transcript",
+          text: trimmed,
+        }),
+      );
+    }
+  }, [setVoiceState]);
 
   const onVolumeChangeRef = useRef(onVolumeChange);
   onVolumeChangeRef.current = onVolumeChange;

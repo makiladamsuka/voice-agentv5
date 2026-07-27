@@ -325,6 +325,17 @@ export function useNluVoice({
         });
       };
 
+      const playWithHtmlAudio = async (url: string, uid?: string) => {
+        return new Promise<void>((resolve, reject) => {
+          const audio = new Audio(url);
+          audioRef.current = audio;
+          audio.onplay = () => sendPlaybackStart(uid ?? "");
+          audio.onended = () => resolve();
+          audio.onerror = (err) => reject(err);
+          audio.play().catch(reject);
+        });
+      };
+
       if (resolvedUrl) {
         try {
           await playWithWebAudio(resolvedUrl, utteranceId);
@@ -334,8 +345,17 @@ export function useNluVoice({
           resumeAfter();
           return;
         } catch (e) {
-          console.warn("[NluVoice] Cached audio play blocked/failed via Web Audio:", e);
-          // fall through to Deepgram TTS
+          console.warn("[NluVoice] Web Audio API failed/blocked, trying HTML5 Audio fallback:", e);
+          try {
+            await playWithHtmlAudio(resolvedUrl, utteranceId);
+            if (nluWs.current?.readyState === WebSocket.OPEN) {
+              nluWs.current.send(JSON.stringify({ type: "tts_done" }));
+            }
+            resumeAfter();
+            return;
+          } catch (e2) {
+            console.error("[NluVoice] HTML5 Audio fallback also failed:", e2);
+          }
         }
       }
 

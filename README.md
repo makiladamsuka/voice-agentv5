@@ -81,8 +81,8 @@ arm_boost=1
 # DISPLAY PROFILE 1: 10.1 Inch Kiosk Display (1024x600 Custom Timings) [ACTIVE]
 # ==============================================================================
 display_auto_detect=0
-disable_fw_kms_setup=0
-dtoverlay=vc4-kms-v3d
+disable_fw_kms_setup=1
+#dtoverlay=vc4-kms-v3d
 max_usb_current=1
 hdmi_force_hotplug=1
 config_hdmi_boost=7

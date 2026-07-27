@@ -89,6 +89,7 @@ config_hdmi_boost=7
 hdmi_group=2
 hdmi_mode=87
 hdmi_drive=2
+hdmi_force_edid_audio=1
 display_rotate=0
 hdmi_timings=1024 1 50 18 50 600 1 15 3 15 0 0 0 60 0 40000000 3
 

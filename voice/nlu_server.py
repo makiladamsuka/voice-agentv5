@@ -325,7 +325,9 @@ async def _voice_ws_endpoint(websocket) -> None:
                         reply_text=result.get("reply_text", ""),
                         audio_path=result.get("audio_path"),
                     )
-                elif _bb is not None:
+
+                # Immediately set Blackboard conv_state="speaking" so robot face switches to talking emotions
+                if _bb is not None:
                     _bb.write(conv_state="speaking", agent_speaking=True)
 
                 _dur_sec = (duration_ms / 1000.0) if duration_ms else 6.0
@@ -354,7 +356,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                 sync = get_speech_sync_service()
                 if sync is not None:
                     sync.begin_playback(utterance_id)
-                elif _bb is not None:
+                if _bb is not None:
                     _bb.write(conv_state="speaking", agent_speaking=True)
 
             elif msg_type == "tts_done":
@@ -372,6 +374,10 @@ async def _voice_ws_endpoint(websocket) -> None:
 
             elif msg_type == "user_speaking":
                 speculative_cache.clear()
+                # Ignore browser VAD user_speaking while agent is speaking or in echo suppression
+                if _echo.get("speaking") or (_bb and _bb.read("conv_state").get("conv_state") == "speaking"):
+                    print("[NLU] Ignoring user_speaking during agent speech (speaker echo suppression)")
+                    continue
                 # Browser VAD detected speech start — update robot face
                 if _bb is not None:
                     _bb.write(conv_state="listening", user_speaking=True)

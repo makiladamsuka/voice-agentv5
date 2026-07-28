@@ -16,12 +16,24 @@ export function PopButton({
   children,
   whileTap,
   transition,
+  style,
   ...props
 }: PopButtonProps) {
   return (
     <motion.button
       whileTap={whileTap ?? { scale: 0.92 }}
       transition={transition ?? M3_POP}
+      style={{
+        // Kill 300ms tap delay and grey highlight on touchscreen
+        touchAction: "manipulation",
+        WebkitTapHighlightColor: "transparent",
+        // Ensure minimum 48px touch target for ergonomic kiosk touch
+        minHeight: "var(--touch-target, 48px)",
+        minWidth: "var(--touch-target, 48px)",
+        // Hardware-accelerated transforms for instant touch feedback
+        willChange: "transform",
+        ...style,
+      }}
       {...props}
     >
       {children}

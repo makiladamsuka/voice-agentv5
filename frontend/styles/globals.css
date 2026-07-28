@@ -544,8 +544,11 @@ html.kiosk-mode * {
 }
 
 /* Touch Screen Optimization: Disable double-tap-to-zoom 300ms delay on all interactive elements */
-button, a, select, input, [role="button"], .interactive-element {
+html, body, button, a, select, input, [role="button"], .interactive-element {
   touch-action: manipulation !important;
+  -webkit-tap-highlight-color: transparent !important;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Momentum Touch Scrolling for all lists and panels */
@@ -554,3 +557,13 @@ button, a, select, input, [role="button"], .interactive-element {
   -webkit-overflow-scrolling: touch;
   scroll-behavior: smooth;
 }
+
+/* Touch feedback helper */
+.touch-active {
+  transition: transform 0.1s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.1s ease;
+}
+.touch-active:active {
+  transform: scale(0.96);
+  opacity: 0.9;
+}
+

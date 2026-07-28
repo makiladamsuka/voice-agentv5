@@ -13,6 +13,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+// Gate all verbose logs — set NEXT_PUBLIC_DEBUG=true in .env.local to re-enable
+const DEBUG = process.env.NEXT_PUBLIC_DEBUG === "true";
+const log = (...args: unknown[]) => { if (DEBUG) console.log(...args); };
+const warn = (...args: unknown[]) => { if (DEBUG) console.warn(...args); };
+// Always show critical connection errors regardless of debug flag
+const err = (...args: unknown[]) => { if (DEBUG) console.error(...args); };
+
 export type NluVoiceState =
   | "idle"
   | "listening"
@@ -270,7 +277,7 @@ export function useNluVoice({
       utteranceId?: string,
       durationMs?: number,
     ) => {
-      console.log("[NluVoice] Playing reply:", replyText?.slice(0, 80), audioUrl);
+      log("[NluVoice] Playing reply:", replyText?.slice(0, 80), audioUrl);
       setVoiceState("speaking");
       stopCurrentAudio();
 
@@ -314,7 +321,7 @@ export function useNluVoice({
         // Check if we have a speculatively pre-decoded buffer
         const preloadCache = (window as any)._preloadedAudio || {};
         if (preloadCache[url]) {
-          console.log("[NluVoice] Using pre-decoded speculative audio buffer for zero-latency playback!");
+          log("[NluVoice] Using pre-decoded speculative audio buffer for zero-latency playback!");
           audioBuffer = preloadCache[url];
           delete preloadCache[url]; // consume it
         } else {
@@ -358,7 +365,7 @@ export function useNluVoice({
           resumeAfter();
           return;
         } catch (e) {
-          console.warn("[NluVoice] Web Audio API failed/blocked, trying HTML5 Audio fallback:", e);
+          warn("[NluVoice] Web Audio API failed/blocked, trying HTML5 Audio fallback:", e);
           try {
             await playWithHtmlAudio(resolvedUrl, utteranceId);
             if (nluWs.current?.readyState === WebSocket.OPEN) {
@@ -367,7 +374,7 @@ export function useNluVoice({
             resumeAfter();
             return;
           } catch (e2) {
-            console.error("[NluVoice] HTML5 Audio fallback also failed:", e2);
+            err("[NluVoice] HTML5 Audio fallback also failed:", e2);
           }
         }
       }
@@ -390,7 +397,7 @@ export function useNluVoice({
         const url = `/api/tts?text=${encodeURIComponent(replyText)}`;
         await playWithWebAudio(url, utteranceId);
       } catch (e) {
-        console.error("[NluVoice] TTS playback failed:", e);
+        err("[NluVoice] TTS playback failed:", e);
       }
 
       if (nluWs.current?.readyState === WebSocket.OPEN) {
@@ -405,7 +412,7 @@ export function useNluVoice({
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || nluWs.current?.readyState !== WebSocket.OPEN) return;
-      console.log(`[NluVoice] → NLU: "${trimmed}"`);
+      log(`[NluVoice] → NLU: "${trimmed}"`);
       setLastTranscript(trimmed);
       setVoiceState("thinking");
       nluWs.current.send(JSON.stringify({ type: "transcript", text: trimmed }));
@@ -437,7 +444,7 @@ export function useNluVoice({
           // Ignore speaker echo while we play a reply / wait for NLU / cooldown
           return;
         }
-        console.log("[Deepgram VAD] SpeechStarted");
+        log("[Deepgram VAD] SpeechStarted");
         sentUtteranceRef.current = false;
         pendingTranscriptRef.current = "";
         if (nluWs.current?.readyState === WebSocket.OPEN) {
@@ -452,7 +459,7 @@ export function useNluVoice({
 
       // End-of-utterance (word-timing based). Flush pending if speech_final missed.
       if (data.type === "UtteranceEnd") {
-        console.log("[Deepgram VAD] UtteranceEnd");
+        log("[Deepgram VAD] UtteranceEnd");
         if (!sentUtteranceRef.current && pendingTranscriptRef.current.trim()) {
           sentUtteranceRef.current = true;
           sendTranscript(pendingTranscriptRef.current);
@@ -480,7 +487,7 @@ export function useNluVoice({
 
       // Endpointing: speech_final === end of spoken turn
       if (data.speech_final && !sentUtteranceRef.current) {
-        console.log(`[STT] speech_final: "${transcript}"`);
+        log(`[STT] speech_final: "${transcript}"`);
         sentUtteranceRef.current = true;
         pendingTranscriptRef.current = "";
         sendTranscript(transcript);
@@ -536,7 +543,7 @@ export function useNluVoice({
     uniqueKeywords.forEach((kw) => params.append("keyterm", kw));
 
     const url = `wss://api.deepgram.com/v1/listen?${params}`;
-    console.log("[NluVoice] Opening Deepgram stream (built-in VAD)…");
+    log("[NluVoice] Opening Deepgram stream (built-in VAD)…");
 
     const cleanKey = apiKey.trim();
 
@@ -556,7 +563,7 @@ export function useNluVoice({
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        console.log("[NluVoice] Deepgram connected.");
+        log("[NluVoice] Deepgram connected.");
 
         // Start KeepAlive heartbeat (every 4s) to prevent Deepgram from dropping idle connections
         if (dgKeepAliveIntervalRef.current) clearInterval(dgKeepAliveIntervalRef.current);
@@ -576,7 +583,7 @@ export function useNluVoice({
       };
 
       dg.onerror = (e) => {
-        console.error("[Deepgram STT] WebSocket error:", e);
+        err("[Deepgram STT] WebSocket error:", e);
         if (dgKeepAliveIntervalRef.current) {
           clearInterval(dgKeepAliveIntervalRef.current);
           dgKeepAliveIntervalRef.current = null;
@@ -589,20 +596,20 @@ export function useNluVoice({
       };
 
       dg.onclose = () => {
-        console.log("[NluVoice] Deepgram disconnected.");
+        log("[NluVoice] Deepgram disconnected.");
         if (dgKeepAliveIntervalRef.current) {
           clearInterval(dgKeepAliveIntervalRef.current);
           dgKeepAliveIntervalRef.current = null;
         }
         if (isActiveRef.current) {
-          console.log("[NluVoice] Reconnecting Deepgram stream...");
+          log("[NluVoice] Reconnecting Deepgram stream...");
           setTimeout(async () => {
             try {
               await openDeepgramStream();
               await startMicCaptureRef.current?.();
-              console.log("[NluVoice] Deepgram stream successfully reconnected.");
+              log("[NluVoice] Deepgram stream successfully reconnected.");
             } catch (e) {
-              console.error("[NluVoice] Deepgram reconnect failed:", e);
+              err("[NluVoice] Deepgram reconnect failed:", e);
             }
           }, 2000);
         }
@@ -661,12 +668,12 @@ export function useNluVoice({
     };
 
     recorder.onerror = (e) => {
-      console.error("[NluVoice] MediaRecorder error:", e);
+      err("[NluVoice] MediaRecorder error:", e);
     };
 
     // Small timeslice → low-latency chunks for Deepgram VAD
     recorder.start(250);
-    console.log("[NluVoice] Mic capture started", mime ?? "(default mime)");
+    log("[NluVoice] Mic capture started", mime ?? "(default mime)");
   }, []);
 
   startMicCaptureRef.current = startMicCapture;
@@ -686,7 +693,7 @@ export function useNluVoice({
 
     const backendHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
     const resolvedNluUrl = nluServerUrl.replace("localhost", backendHost).replace("127.0.0.1", backendHost);
-    console.log(`[NluVoice] Connecting to NLU server: ${resolvedNluUrl}`);
+    log(`[NluVoice] Connecting to NLU server: ${resolvedNluUrl}`);
 
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(resolvedNluUrl);
@@ -709,14 +716,14 @@ export function useNluVoice({
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        console.log("[NluVoice] NLU server connected.");
+        log("[NluVoice] NLU server connected.");
         resolve();
       };
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         if (msg.type === "response") {
-          console.log("[NluVoice] ← NLU response:", msg.reply_text);
+          log("[NluVoice] ← NLU response:", msg.reply_text);
           onResponse?.({
             reply_text: msg.reply_text,
             audio_url: msg.audio_url,
@@ -742,7 +749,7 @@ export function useNluVoice({
         } else if (msg.type === "speculative_preload" && msg.audio_url) {
           const backendHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
           const resolvedUrl = `http://${backendHost}:8080${msg.audio_url}`;
-          console.log("[NluVoice] Speculative preload:", resolvedUrl);
+          log("[NluVoice] Speculative preload:", resolvedUrl);
           const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
           if (AudioContextClass) {
             let ctx = (window as any)._globalAudioCtx;
@@ -759,15 +766,15 @@ export function useNluVoice({
               .then((decoded: AudioBuffer) => {
                 (window as any)._preloadedAudio = (window as any)._preloadedAudio || {};
                 (window as any)._preloadedAudio[resolvedUrl] = decoded;
-                console.log("[NluVoice] Speculative audio decoded & ready!");
+                log("[NluVoice] Speculative audio decoded & ready!");
               })
-              .catch((e: Error) => console.warn("[NluVoice] Preload failed:", e));
+              .catch((e: Error) => warn("[NluVoice] Preload failed:", e));
           }
         }
       };
 
       ws.onclose = () => {
-        console.log("[NluVoice] NLU server disconnected.");
+        log("[NluVoice] NLU server disconnected.");
         if (!settled) {
           settled = true;
           clearTimeout(timer);
@@ -775,14 +782,14 @@ export function useNluVoice({
         } else if (isActiveRef.current) {
           setTimeout(() => {
             connectNluServer().catch((e) =>
-              console.error("[NluVoice] reconnect failed:", e),
+              err("[NluVoice] reconnect failed:", e),
             );
           }, 2000);
         }
       };
 
       ws.onerror = (e) => {
-        console.error("[NluVoice] NLU WebSocket error:", e);
+        err("[NluVoice] NLU WebSocket error:", e);
         if (!settled) {
           settled = true;
           clearTimeout(timer);
@@ -798,13 +805,14 @@ export function useNluVoice({
 
   const start = useCallback(async () => {
     if (isActiveRef.current) {
-      console.warn("[NluVoice] start() ignored — already active");
+      warn("[NluVoice] start() ignored — already active");
       return;
     }
     if (!apiKey) {
       const err = new Error(
         "Missing NEXT_PUBLIC_DEEPGRAM_API_KEY — cannot start NLU voice.",
       );
+      // Always show critical startup errors (missing API key)
       console.error("[NluVoice]", err.message);
       setVoiceState("error");
       throw err;
@@ -821,9 +829,9 @@ export function useNluVoice({
       await openDeepgramStream();
       await startMicCapture();
       setVoiceState("listening");
-      console.log("[NluVoice] Listening (Deepgram VAD) — speak now");
+      log("[NluVoice] Listening (Deepgram VAD) — speak now");
     } catch (e) {
-      console.error("[NluVoice] Failed to start:", e);
+      err("[NluVoice] Failed to start:", e);
       isActiveRef.current = false;
       setIsActive(false);
       setVoiceState("error");
@@ -937,7 +945,7 @@ export function useNluVoice({
           eventKeywordsRef.current = kws.slice(0, 80);
         }
       } catch (e) {
-        console.warn("Failed to fetch dynamic event keywords on mount", e);
+        warn("Failed to fetch dynamic event keywords on mount", e);
       }
     };
     if (apiKey) {

@@ -221,20 +221,6 @@ export function useNluVoice({
     [onStateChange, playChimes],
   );
 
-  const sendTranscript = useCallback((text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    console.log(`[STT] → NLU: "${trimmed}"`);
-    setVoiceState("thinking");
-    if (nluWs.current?.readyState === WebSocket.OPEN) {
-      nluWs.current.send(
-        JSON.stringify({
-          type: "transcript",
-          text: trimmed,
-        }),
-      );
-    }
-  }, [setVoiceState]);
 
   const onVolumeChangeRef = useRef(onVolumeChange);
   onVolumeChangeRef.current = onVolumeChange;

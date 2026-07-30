@@ -135,7 +135,7 @@ class SpeechSyncService:
         elapsed_ms = int((time.time() - start_ts) * 1000)
         fast, slow = envelope.sample_at_ms(elapsed_ms)
 
-        if elapsed_ms > envelope.duration_ms + 150:
+        if elapsed_ms > envelope.duration_ms + 500:
             self.end_playback()
             return
 

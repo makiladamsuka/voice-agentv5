@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
+import numpy as np
 import chromadb
 from chromadb.utils import embedding_functions
 import speech_recognition as sr
@@ -118,15 +119,41 @@ DOMAIN_SOURCES = {
 }
 
 
+# ── Number word → digit map used by hashmap expander ─────────────────────────
+_NUM_WORDS = {
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+}
+
+# Prefixes to strip when generating hashmap variants
+_STRIP_PREFIXES = re.compile(
+    r"^(can you |could you |please |i want to |i'd like to |i need to "
+    r"|i am looking for |i'm looking for |take me to |bring me to "
+    r"|guide me to |show me the way to |navigate me to "
+    r"|find the |find me |show me )",
+    re.IGNORECASE,
+)
+
+
 class IntentMatcher:
+    """Intent matcher with two-tier lookup: O(1) hashmap → O(N·D) numpy L2."""
+
     def __init__(self, db_path: Path):
         self.client = chromadb.PersistentClient(path=str(db_path))
+        self._ef = embedding_functions.DefaultEmbeddingFunction()
         self.collection = self.client.get_or_create_collection(
             name="compiled_intents",
-            embedding_function=embedding_functions.DefaultEmbeddingFunction(),
+            embedding_function=self._ef,
         )
-        self.intents_map = {}
-        self.exact_match_map = {}
+        self.intents_map: dict = {}
+        self.exact_match_map: dict = {}
+
+        # numpy fast-path (Option 1)
+        self._np_embeddings: np.ndarray | None = None   # shape (N, D)
+        self._np_meta: list[dict] = []                  # [{intent_id, domain}, ...]
+        self._embed_model = None                        # lazy SentenceTransformer
+
+    # ── Tier-0: exact hashmap lookup ─────────────────────────────────────────
 
     def match_exact(self, text: str) -> dict | None:
         """Instant exact lookup for pre-defined queries (0.01ms cost) to bypass vector search."""
@@ -138,14 +165,57 @@ class IntentMatcher:
             return match
 
         # Strip common conversational prefix greetings (e.g. "hi", "hey", "hello", "robot", "nema")
-        # Example: "Hi. Can you hear me?" -> "can you hear me" -> instant hash hit!
-        import re
         stripped = re.sub(r"^(hi|hey|hello|okay|ok|robot|nema|please)[,.\s]+", "", norm_text).strip(" \t\r\n.,?!;:")
         if stripped and stripped != norm_text:
             match = self.exact_match_map.get(stripped)
             if match:
                 return match
         return None
+
+    # ── Option 3: auto-expand hashmap with surface-form variants ─────────────
+
+    def _expand_exact_map(self) -> None:
+        """Generate extra hashmap entries for number words, stripped prefixes, etc.
+        
+        Runs once at load time — no runtime cost.
+        """
+        new_entries: dict = {}
+
+        for utt, intent in list(self.exact_match_map.items()):
+            # 1. Replace written-out numbers with digits: "lab six" → "lab 6"
+            num_variant = utt
+            for word, digit in _NUM_WORDS.items():
+                num_variant = re.sub(rf"\b{word}\b", digit, num_variant)
+            if num_variant != utt:
+                new_entries[num_variant] = intent
+
+            # 2. Strip common request prefixes: "take me to lab 6" → "lab 6"
+            stripped = _STRIP_PREFIXES.sub("", utt).strip(" \t\r\n.,?!;:")
+            if stripped and stripped != utt:
+                new_entries[stripped] = intent
+                # Also combine: strip prefix AND convert number words
+                num_stripped = stripped
+                for word, digit in _NUM_WORDS.items():
+                    num_stripped = re.sub(rf"\b{word}\b", digit, num_stripped)
+                if num_stripped != stripped:
+                    new_entries[num_stripped] = intent
+
+            # 3. Common abbreviations for navigate intents
+            abbrev = utt
+            abbrev = re.sub(r"\blaborator(?:y|ies)\b", "lab", abbrev)
+            abbrev = re.sub(r"\blecture hall\b", "lh", abbrev)
+            abbrev = re.sub(r"\bauditorium\b", "audi", abbrev)
+            if abbrev != utt:
+                new_entries[abbrev] = intent
+                # Also strip prefix from abbreviation
+                abbrev_stripped = _STRIP_PREFIXES.sub("", abbrev).strip(" \t\r\n.,?!;:")
+                if abbrev_stripped and abbrev_stripped != abbrev:
+                    new_entries[abbrev_stripped] = intent
+
+        before = len(self.exact_match_map)
+        self.exact_match_map.update(new_entries)
+        added = len(self.exact_match_map) - before
+        print(f"  [Matcher] Hashmap expanded: {before} → {len(self.exact_match_map)} entries (+{added} variants)")
 
     def _load_intent_lists(self, compiled_json_path: Path) -> list[tuple[str, dict]]:
         """Load all domain intent files. Returns a list of (domain, intent) pairs."""
@@ -167,6 +237,53 @@ class IntentMatcher:
         metadatas = sample.get("metadatas") or []
         return bool(metadatas) and "domain" in metadatas[0]
 
+    # ── Option 1: numpy embedding cache helpers ───────────────────────────────
+
+    def _npy_cache_paths(self, db_dir: Path) -> tuple[Path, Path]:
+        return db_dir / "embeddings_cache.npy", db_dir / "embeddings_meta.json"
+
+    def _npy_cache_is_current(self, db_dir: Path, expected_docs: int) -> bool:
+        npy, meta = self._npy_cache_paths(db_dir)
+        if not npy.exists() or not meta.exists():
+            return False
+        try:
+            stored = json.loads(meta.read_text())
+            return len(stored) == expected_docs
+        except Exception:
+            return False
+
+    def _build_npy_cache(self, db_dir: Path) -> None:
+        """Extract embeddings from ChromaDB and save as fast numpy arrays."""
+        print("  [Matcher] Building numpy embedding cache from ChromaDB...")
+        all_items = self.collection.get(include=["embeddings", "metadatas"])  # type: ignore
+        raw_embs = all_items.get("embeddings") or []
+        raw_meta = all_items.get("metadatas") or []
+        if not raw_embs:
+            print("  [Matcher] No embeddings found in ChromaDB to cache.")
+            return
+        arr = np.array(raw_embs, dtype=np.float32)
+        npy, meta_path = self._npy_cache_paths(db_dir)
+        np.save(str(npy), arr)
+        meta_path.write_text(json.dumps(raw_meta), encoding="utf-8")
+        self._np_embeddings = arr
+        self._np_meta = raw_meta
+        print(f"  [Matcher] Numpy cache saved: {arr.shape[0]} embeddings × {arr.shape[1]}d")
+
+    def _load_npy_cache(self, db_dir: Path) -> None:
+        """Load pre-built numpy embedding cache from disk."""
+        npy, meta_path = self._npy_cache_paths(db_dir)
+        self._np_embeddings = np.load(str(npy)).astype(np.float32)
+        self._np_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        print(f"  [Matcher] Numpy cache loaded: {self._np_embeddings.shape[0]} embeddings")
+
+    def _get_embed_model(self):
+        """Lazy-load the SentenceTransformer embedding model (same as DefaultEmbeddingFunction)."""
+        if self._embed_model is None:
+            from sentence_transformers import SentenceTransformer
+            self._embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+            print("  [Matcher] SentenceTransformer model loaded (all-MiniLM-L6-v2)")
+        return self._embed_model
+
     def load_cache(self, compiled_json_path: Path):
         pairs = self._load_intent_lists(compiled_json_path)
         if not pairs:
@@ -182,49 +299,101 @@ class IntentMatcher:
                     self.exact_match_map[norm_utt] = intent
 
         expected_docs = sum(len(i.get("utterances") or []) for _, i in pairs)
+        db_dir = compiled_json_path.parent
 
-        # Rebuild Chroma when empty, when utterance count drifted, or when the
-        # index predates domain metadata.
-        if self._cache_is_current(expected_docs):
+        # ── Option 3: expand hashmap with auto-generated variants ──
+        self._expand_exact_map()
+
+        # ── Option 1: build/load numpy embedding cache ─────────────
+        if self._npy_cache_is_current(db_dir, expected_docs):
+            # Fast path: numpy cache already up to date
+            self._load_npy_cache(db_dir)
+            print(
+                f"Loaded {len(self.intents_map)} intents "
+                f"({expected_docs} utterances) — numpy fast-path active."
+            )
+            return
+
+        # Rebuild ChromaDB if needed, then extract embeddings to numpy
+        if not self._cache_is_current(expected_docs):
+            print(
+                f"Indexing {len(pairs)} intents into ChromaDB "
+                f"({expected_docs} utterances)..."
+            )
+            try:
+                self.client.delete_collection("compiled_intents")
+            except Exception:
+                pass
+            self.collection = self.client.get_or_create_collection(
+                name="compiled_intents",
+                embedding_function=embedding_functions.DefaultEmbeddingFunction(),
+            )
+
+            ids, documents, metadatas = [], [], []
+            for domain, intent in pairs:
+                for i, utt in enumerate(intent.get("utterances") or []):
+                    ids.append(f"{intent['id']}_{i}")
+                    documents.append(utt)
+                    metadatas.append({"intent_id": intent["id"], "domain": domain})
+
+            if ids:
+                batch = 200
+                for start in range(0, len(ids), batch):
+                    end = start + batch
+                    self.collection.add(
+                        ids=ids[start:end],
+                        documents=documents[start:end],
+                        metadatas=metadatas[start:end],
+                    )
+            print(f"Successfully indexed {len(ids)} utterances.")
+        else:
             print(
                 f"Loaded {len(self.intents_map)} intents "
                 f"({expected_docs} utterances) from ChromaDB cache."
             )
-            return
 
-        print(
-            f"Indexing {len(pairs)} intents into ChromaDB "
-            f"({expected_docs} utterances)..."
+        # Extract embeddings from ChromaDB into numpy for fast future queries
+        self._build_npy_cache(db_dir)
+
+    # ── Option 1: numpy fast matching path ───────────────────────────────────
+
+    def _match_numpy(self, text: str, domain: str) -> tuple[float, float, str, str] | None:
+        """Embed query, compute L2 against domain rows, return (d1, d2, top_id, second_id).
+        
+        Returns None if fewer than 1 candidate found in domain.
+        """
+        assert self._np_embeddings is not None
+
+        # Filter rows belonging to this domain
+        domain_indices = [i for i, m in enumerate(self._np_meta) if m["domain"] == domain]
+        if not domain_indices:
+            return None
+
+        domain_embs = self._np_embeddings[domain_indices]  # (K, D)
+
+        # Embed query with the same model as indexing (all-MiniLM-L6-v2)
+        model = self._get_embed_model()
+        q = model.encode(text, normalize_embeddings=False, show_progress_bar=False)
+        q = np.array(q, dtype=np.float32)
+
+        # L2 squared distances (consistent with ChromaDB default metric)
+        diff = domain_embs - q          # (K, D)
+        dists = np.einsum("ij,ij->i", diff, diff)  # (K,) — faster than np.sum
+
+        if len(dists) == 1:
+            idx0 = domain_indices[0]
+            return float(dists[0]), float(dists[0]) + 1.0, self._np_meta[idx0]["intent_id"], ""
+
+        top2_local = np.argpartition(dists, 2)[:2]
+        top2_local = top2_local[np.argsort(dists[top2_local])]
+        idx0 = domain_indices[int(top2_local[0])]
+        idx1 = domain_indices[int(top2_local[1])]
+        return (
+            float(dists[top2_local[0]]),
+            float(dists[top2_local[1]]),
+            self._np_meta[idx0]["intent_id"],
+            self._np_meta[idx1]["intent_id"],
         )
-        try:
-            self.client.delete_collection("compiled_intents")
-        except Exception:
-            pass
-        self.collection = self.client.get_or_create_collection(
-            name="compiled_intents",
-            embedding_function=embedding_functions.DefaultEmbeddingFunction(),
-        )
-
-        ids = []
-        documents = []
-        metadatas = []
-        for domain, intent in pairs:
-            for i, utt in enumerate(intent.get("utterances") or []):
-                ids.append(f"{intent['id']}_{i}")
-                documents.append(utt)
-                metadatas.append({"intent_id": intent["id"], "domain": domain})
-
-        if ids:
-            # Chroma has a batch size limit; chunk if needed
-            batch = 200
-            for start in range(0, len(ids), batch):
-                end = start + batch
-                self.collection.add(
-                    ids=ids[start:end],
-                    documents=documents[start:end],
-                    metadatas=metadatas[start:end],
-                )
-        print(f"Successfully indexed {len(ids)} utterances.")
 
     def match(self, text: str, domain: str | None = None) -> dict | None:
         """Match a transcript against ONE domain's intents with a confidence gate.
@@ -242,24 +411,40 @@ class IntentMatcher:
             # Tools are handled by the caller, not by retrieval.
             return None
 
-        results = self.collection.query(
-            query_texts=[text],
-            n_results=2,
-            where={"domain": domain},
-        )
-        metadatas = results.get("metadatas") or [[]]
-        distances = results.get("distances") or [[]]
-        if not metadatas[0]:
-            print(f"  [Matcher] domain={domain}: no candidates.")
-            return None
+        # ── Fast numpy path (Option 1) ─────────────────────────────────────────
+        if self._np_embeddings is not None:
+            np_result = self._match_numpy(text, domain)
+            if np_result is None:
+                print(f"  [Matcher] domain={domain}: no candidates.")
+                return None
+            d1, d2, top_intent, second_intent = np_result
+            metadatas_0 = [
+                {"intent_id": top_intent},
+                {"intent_id": second_intent},
+            ]
+            distances_0 = [d1, d2]
+        else:
+            # ── ChromaDB fallback path ─────────────────────────────────────────
+            results = self.collection.query(
+                query_texts=[text],
+                n_results=2,
+                where={"domain": domain},
+            )
+            metadatas_0 = (results.get("metadatas") or [[]])[0]
+            distances_0 = (results.get("distances") or [[]])[0]
+            if not metadatas_0:
+                print(f"  [Matcher] domain={domain}: no candidates.")
+                return None
+            d1 = distances_0[0]
+            top_intent = metadatas_0[0]["intent_id"]
 
-        d1 = distances[0][0]
-        top_intent = metadatas[0][0]["intent_id"]
         threshold = DOMAIN_THRESHOLDS.get(domain, 1.2)
+        d1 = distances_0[0]
+        top_intent = metadatas_0[0]["intent_id"]
 
-        if len(metadatas[0]) > 1:
-            d2 = distances[0][1]
-            second_intent = metadatas[0][1]["intent_id"]
+        if len(metadatas_0) > 1:
+            d2 = distances_0[1]
+            second_intent = metadatas_0[1]["intent_id"]
             margin = d2 - d1
             print(
                 f"  [Matcher] domain={domain} d1={d1:.2f} d2={d2:.2f} "

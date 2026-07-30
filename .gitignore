@@ -14,3 +14,21 @@ frontend/.next/
 frontend/.env.local
 frontend/.facebook-cache.json
 frontend/tsconfig.tsbuildinfo
+
+# Flutter frontend — generated/build artifacts
+frontend_flutter/.dart_tool/
+frontend_flutter/.idea/
+frontend_flutter/build/
+frontend_flutter/**/*.iml
+frontend_flutter/android/local.properties
+frontend_flutter/android/gradle/wrapper/gradle-wrapper.jar
+frontend_flutter/android/gradlew
+frontend_flutter/android/gradlew.bat
+frontend_flutter/android/app/src/main/java/io/flutter/plugins/
+frontend_flutter/ios/Flutter/Generated.xcconfig
+frontend_flutter/ios/Flutter/ephemeral/
+frontend_flutter/ios/Flutter/flutter_export_environment.sh
+frontend_flutter/ios/Runner/GeneratedPluginRegistrant.*
+frontend_flutter/macos/Flutter/ephemeral/
+frontend_flutter/windows/flutter/ephemeral/
+frontend_flutter/.flutter-plugins-dependencies

@@ -256,17 +256,18 @@ class IntentMatcher:
         """Extract embeddings from ChromaDB and save as fast numpy arrays."""
         print("  [Matcher] Building numpy embedding cache from ChromaDB...")
         all_items = self.collection.get(include=["embeddings", "metadatas"])  # type: ignore
-        raw_embs = all_items.get("embeddings") or []
-        raw_meta = all_items.get("metadatas") or []
-        if not raw_embs:
+        raw_embs = all_items.get("embeddings")
+        raw_meta = all_items.get("metadatas")
+        if raw_embs is None or len(raw_embs) == 0:
             print("  [Matcher] No embeddings found in ChromaDB to cache.")
             return
         arr = np.array(raw_embs, dtype=np.float32)
+        meta_list = list(raw_meta) if raw_meta is not None else []
         npy, meta_path = self._npy_cache_paths(db_dir)
         np.save(str(npy), arr)
-        meta_path.write_text(json.dumps(raw_meta), encoding="utf-8")
+        meta_path.write_text(json.dumps(meta_list), encoding="utf-8")
         self._np_embeddings = arr
-        self._np_meta = raw_meta
+        self._np_meta = meta_list
         print(f"  [Matcher] Numpy cache saved: {arr.shape[0]} embeddings × {arr.shape[1]}d")
 
     def _load_npy_cache(self, db_dir: Path) -> None:

@@ -5,8 +5,9 @@
  *   1. Mic → MediaRecorder (webm/opus) streamed to Deepgram.
  *   2. Deepgram VAD + endpointing detects speech start/end.
  *   3. Final utterance transcript → local NLU WebSocket.
- *   4. NLU replies with text + cached MP3 (or Deepgram TTS fallback).
- *   5. Barge-in: Deepgram SpeechStarted stops robot audio.
+ *   4. NLU replies with text + cached audio (or Deepgram TTS fallback).
+ *   5. Mic is hard-muted during thinking/speaking/waiting (no barge-in).
+ *      SpeechStarted only applies while actively listening.
  */
 
 "use client";
@@ -18,6 +19,7 @@ export type NluVoiceState =
   | "listening"
   | "thinking"
   | "speaking"
+  | "waiting"
   | "connecting"
   | "error";
 
@@ -60,6 +62,8 @@ interface UseNluVoiceOptions {
   onResponse?: (response: NluResponse) => void;
   onStateChange?: (state: NluVoiceState) => void;
   onVolumeChange?: (volume: number) => void;
+  /** Play listen/think chimes (default off). */
+  playChimes?: boolean;
 }
 
 /** Prefer a MediaRecorder mime type the browser actually supports. */
@@ -158,6 +162,7 @@ export function useNluVoice({
   onResponse,
   onStateChange,
   onVolumeChange,
+  playChimes = false,
 }: UseNluVoiceOptions = {}) {
   const [state, setState] = useState<NluVoiceState>("idle");
   const [isActive, setIsActive] = useState(false);
@@ -171,6 +176,10 @@ export function useNluVoice({
   
   const stateRef = useRef<NluVoiceState>("idle");
   const isActiveRef = useRef(false);
+  /** True only while an utterance is actually playing (not merely state=speaking). */
+  const isPlayingRef = useRef(false);
+  /** Bumps on each playAudio call so superseded awaits don't send tts_done. */
+  const playGenerationRef = useRef(0);
   /** Last non-empty transcript for UtteranceEnd fallback. */
   const pendingTranscriptRef = useRef("");
   /** Avoid double-sending the same utterance. */
@@ -195,9 +204,12 @@ export function useNluVoice({
       onStateChange?.(newState);
 
       // Mute the mic track at the OS/browser level when not listening
-      // so no physical audio reaches Deepgram during thinking/speaking.
+      // so no physical audio reaches Deepgram during thinking/speaking/waiting.
       if (mediaStreamRef.current) {
-        const shouldMute = (newState === "speaking" || newState === "thinking");
+        const shouldMute =
+          newState === "speaking" ||
+          newState === "thinking" ||
+          newState === "waiting";
         mediaStreamRef.current.getAudioTracks().forEach(t => {
           t.enabled = !shouldMute;
         });
@@ -214,25 +226,17 @@ export function useNluVoice({
     [onStateChange, playChimes],
   );
 
-  const sendTranscript = useCallback((text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    console.log(`[STT] → NLU: "${trimmed}"`);
-    setVoiceState("thinking");
-    if (nluWs.current?.readyState === WebSocket.OPEN) {
-      nluWs.current.send(
-        JSON.stringify({
-          type: "transcript",
-          text: trimmed,
-        }),
-      );
-    }
-  }, [setVoiceState]);
-
   const onVolumeChangeRef = useRef(onVolumeChange);
   onVolumeChangeRef.current = onVolumeChange;
 
   const stopCurrentAudio = useCallback(() => {
+    const wasPlaying = isPlayingRef.current;
+    isPlayingRef.current = false;
+    // Invalidate in-flight playAudio awaits so they don't send a second tts_done.
+    if (wasPlaying) {
+      playGenerationRef.current += 1;
+    }
+
     if (audioRef.current) {
       if (typeof audioRef.current.pause === "function") {
         audioRef.current.pause();
@@ -243,15 +247,14 @@ export function useNluVoice({
           audioRef.current.stop();
         } catch (e) {}
       }
+      audioRef.current = null;
     }
     if (resumeTimeoutRef.current) {
       clearTimeout(resumeTimeoutRef.current);
       resumeTimeoutRef.current = null;
     }
-    if (
-      nluWs.current?.readyState === WebSocket.OPEN &&
-      stateRef.current === "speaking"
-    ) {
+    // Only notify server when interrupting real playback — never on pre-start cleanup.
+    if (wasPlaying && nluWs.current?.readyState === WebSocket.OPEN) {
       nluWs.current.send(JSON.stringify({ type: "tts_done" }));
     }
   }, []);
@@ -271,25 +274,32 @@ export function useNluVoice({
       durationMs?: number,
     ) => {
       console.log("[NluVoice] Playing reply:", replyText?.slice(0, 80), audioUrl);
-      setVoiceState("speaking");
+      // Stop any prior clip first (may send tts_done if it was actually playing).
       stopCurrentAudio();
+      const playGen = ++playGenerationRef.current;
+      setVoiceState("speaking");
 
       const backendHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
       const resolvedUrl = audioUrl
         ? `http://${backendHost}:8080${audioUrl}`
         : null;
 
-      // While the robot talks, stop feeding the mic to Deepgram — otherwise
-      // speaker echo triggers SpeechStarted and immediately kills playback.
-      const resumeAfter = () => {
+      const finishPlayback = () => {
+        if (playGen !== playGenerationRef.current) return;
+        isPlayingRef.current = false;
+        // Always close the server speaking window for this utterance (even if audio failed).
+        if (nluWs.current?.readyState === WebSocket.OPEN) {
+          nluWs.current.send(JSON.stringify({ type: "tts_done" }));
+        }
         sentUtteranceRef.current = false;
         pendingTranscriptRef.current = "";
-        // Mark when speaking ended so we can reject echo transcripts
         speakingEndedAtRef.current = Date.now();
+        setVoiceState("waiting");
         if (resumeTimeoutRef.current) {
           clearTimeout(resumeTimeoutRef.current);
         }
         resumeTimeoutRef.current = setTimeout(() => {
+          if (playGen !== playGenerationRef.current) return;
           setVoiceState("listening");
           resumeTimeoutRef.current = null;
         }, ECHO_COOLDOWN_MS);
@@ -331,6 +341,7 @@ export function useNluVoice({
         audioRef.current = source;
 
         sendPlaybackStart(uid ?? "");
+        isPlayingRef.current = true;
         source.start(0);
 
         return new Promise<void>((resolve) => {
@@ -342,7 +353,10 @@ export function useNluVoice({
         return new Promise<void>((resolve, reject) => {
           const audio = new Audio(url);
           audioRef.current = audio;
-          audio.onplay = () => sendPlaybackStart(uid ?? "");
+          audio.onplay = () => {
+            isPlayingRef.current = true;
+            sendPlaybackStart(uid ?? "");
+          };
           audio.onended = () => resolve();
           audio.onerror = (err) => reject(err);
           audio.play().catch(reject);
@@ -352,19 +366,13 @@ export function useNluVoice({
       if (resolvedUrl) {
         try {
           await playWithWebAudio(resolvedUrl, utteranceId);
-          if (nluWs.current?.readyState === WebSocket.OPEN) {
-            nluWs.current.send(JSON.stringify({ type: "tts_done" }));
-          }
-          resumeAfter();
+          finishPlayback();
           return;
         } catch (e) {
           console.warn("[NluVoice] Web Audio API failed/blocked, trying HTML5 Audio fallback:", e);
           try {
             await playWithHtmlAudio(resolvedUrl, utteranceId);
-            if (nluWs.current?.readyState === WebSocket.OPEN) {
-              nluWs.current.send(JSON.stringify({ type: "tts_done" }));
-            }
-            resumeAfter();
+            finishPlayback();
             return;
           } catch (e2) {
             console.error("[NluVoice] HTML5 Audio fallback also failed:", e2);
@@ -375,14 +383,12 @@ export function useNluVoice({
       if (!apiKey || !replyText) {
         if (utteranceId) {
           sendPlaybackStart(utteranceId);
+          isPlayingRef.current = true;
           await new Promise((r) =>
             setTimeout(r, Math.max(800, durationMs ?? 2000)),
           );
         }
-        if (nluWs.current?.readyState === WebSocket.OPEN) {
-          nluWs.current.send(JSON.stringify({ type: "tts_done" }));
-        }
-        resumeAfter();
+        finishPlayback();
         return;
       }
 
@@ -393,10 +399,7 @@ export function useNluVoice({
         console.error("[NluVoice] TTS playback failed:", e);
       }
 
-      if (nluWs.current?.readyState === WebSocket.OPEN) {
-        nluWs.current.send(JSON.stringify({ type: "tts_done" }));
-      }
-      resumeAfter();
+      finishPlayback();
     },
     [apiKey, setVoiceState, stopCurrentAudio, sendPlaybackStart],
   );
@@ -423,7 +426,9 @@ export function useNluVoice({
       }
 
       const busy =
-        stateRef.current === "speaking" || stateRef.current === "thinking";
+        stateRef.current === "speaking" ||
+        stateRef.current === "thinking" ||
+        stateRef.current === "waiting";
 
       // Reject anything from Deepgram during the echo cooldown window.
       // After TTS ends, the mic may still pick up speaker tail-echo
@@ -431,7 +436,7 @@ export function useNluVoice({
       const msSinceSpeaking = Date.now() - speakingEndedAtRef.current;
       const inEchoCooldown = msSinceSpeaking < ECHO_COOLDOWN_MS;
 
-      // Deepgram VAD: user started talking → barge-in (only while listening)
+      // Deepgram VAD: user started talking (only while listening — mic is hard-muted otherwise)
       if (data.type === "SpeechStarted") {
         if (busy || inEchoCooldown) {
           // Ignore speaker echo while we play a reply / wait for NLU / cooldown
@@ -447,7 +452,7 @@ export function useNluVoice({
         return;
       }
 
-      // Ignore STT while robot is thinking/speaking or during echo cooldown
+      // Ignore STT while robot is thinking/speaking/waiting or during echo cooldown
       if (busy || inEchoCooldown) return;
 
       // End-of-utterance (word-timing based). Flush pending if speech_final missed.
@@ -731,10 +736,18 @@ export function useNluVoice({
             msg.duration_ms,
           );
         } else if (msg.type === "state") {
-          // Don't let server "listening" clobber local speaking/thinking mid-turn
+          // Don't let server listening/waiting clobber local playback or mid-turn states
+          if (
+            (msg.conv_state === "listening" || msg.conv_state === "waiting") &&
+            isPlayingRef.current
+          ) {
+            return;
+          }
           if (
             msg.conv_state === "listening" &&
-            (stateRef.current === "speaking" || stateRef.current === "thinking")
+            (stateRef.current === "speaking" ||
+              stateRef.current === "thinking" ||
+              stateRef.current === "waiting")
           ) {
             return;
           }

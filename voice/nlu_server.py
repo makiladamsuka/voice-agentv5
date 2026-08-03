@@ -209,6 +209,9 @@ async def _voice_ws_endpoint(websocket) -> None:
 
                 _echo["norm"] = _norm_incoming
                 _echo["ts"] = _now
+                # Short dedupe only until the reply sets the real playback suppress window.
+                # Avoid attaching a stale long suppress_sec to this new accept timestamp.
+                _echo["suppress_sec"] = 0.8
 
                 log.info(f"[NLU] Transcript: '{original_text}'")
                 print(f"[NLU] Transcript: '{original_text}'")

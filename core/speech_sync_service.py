@@ -114,6 +114,7 @@ class SpeechSyncService:
         self.bb.write(
             speech_sync_active=False,
             agent_speaking=False,
+            conv_state="waiting",
             utterance_elapsed_ms=0,
             utterance_start_ts=0.0,
             utterance_id="",

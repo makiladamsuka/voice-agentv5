@@ -767,9 +767,11 @@ class ServoLoop:
                 self.pan_error_full_scale,
                 self.pan_track_min_gain,
             )
-            # Absolute pan aim: center + correction * range * track sign.
+            # Incremental visual servo from CURRENT pan — never re-aim from
+            # pan_center. Absolute aim yanked the head toward center whenever
+            # wander left the neck aside and a face appeared in that direction.
             pan_target = clamp(
-                self.pan_center
+                self._pan
                 + pan_corr * self.pan_track_range * self.pan_track_sign * pan_gain,
                 self.pan_min,
                 self.pan_max,
@@ -805,11 +807,11 @@ class ServoLoop:
                         prox_glance_emotion="",
                     )
 
-        # Tilt: face-relative on mechanical center (no IMU horizon during track).
-        tilt_base = self.tilt_center
+        # Tilt: face-relative from current pose (same incremental visual-servo
+        # rule as pan — absolute tilt_center aim snapped when neck was already offset).
         if abs(self._tilt_track_norm) <= self.tilt_center_norm_y:
             self._tilt_pid.reset()
-            tilt_target = tilt_base
+            tilt_target = self._tilt
         else:
             err_y = _apply_deadzone(self._tilt_track_norm, self.deadzone_y)
             tilt_corr = clamp(self._tilt_pid.tick(err_y, dt), -1.0, 1.0)
@@ -823,7 +825,7 @@ class ServoLoop:
                 self._tilt_track_travel(self._tilt_track_norm),
             )
             tilt_target = clamp(
-                tilt_base
+                self._tilt
                 + self.tilt_track_sign * tilt_corr * tilt_range * tilt_gain,
                 self.tilt_min,
                 self.tilt_max,

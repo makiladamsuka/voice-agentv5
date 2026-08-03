@@ -30,7 +30,7 @@ def test_wander_does_not_immediately_drop_back_when_face_appears():
     loop._last_face_ts = 0.0
     loop._last_body_ts = 0.0
 
-    next_mode = loop._tick_wander(now=100.0, dt=0.01, effective_tilt_center=loop.tilt_center)
+    next_mode = loop._tick_wander(now=100.0, dt=0.01, effective_tilt_center=loop.tilt_center, camera_world_yaw_deg=0.0)
     assert next_mode == "track"
     assert loop._last_face_ts == 100.0
 
@@ -261,7 +261,7 @@ def test_wander_to_track_moves_pan_when_face_off_center():
     loop._pan = loop.pan_center
     mech_before = _mech(loop._pan, loop)
 
-    next_mode = loop._tick_wander(now=100.0, dt=0.05, effective_tilt_center=loop.tilt_center)
+    next_mode = loop._tick_wander(now=100.0, dt=0.05, effective_tilt_center=loop.tilt_center, camera_world_yaw_deg=0.0)
     assert next_mode == "track"
     loop._on_mode_change("wander", "track")
     loop._mode = "track"
@@ -296,6 +296,70 @@ def test_pan_turns_right_when_face_moves_right_in_frame():
     assert loop._pan < loop.pan_center
 
 
+def test_track_from_wander_offset_follows_face_not_center():
+    """Wander left + face still left-of-frame must NOT yank pan toward pan_center.
+
+    Old absolute aim (pan_center + corr) reversed direction whenever the neck was
+    already aside and the person appeared in that same direction.
+    """
+    bb = Blackboard()
+    bb.write(
+        running=True,
+        face_detected=True,
+        body_detected=False,
+        face_norm_x=-0.30,
+        face_norm_y=0.0,
+        face_count=1,
+        track_kind="face",
+        face_candidates=[],
+    )
+    loop = ServoLoop(bb)
+    loop._mode = "track"
+    # Head already glanced left (command > center with pan_sign=-1).
+    offset_pan = loop.pan_center + 22.0
+    loop._pan = offset_pan
+    loop._pan_in_center_band = False
+    loop._pan_track_norm = -0.30
+    loop._filtered_norm_x = -0.30
+    mech_before = _mech(loop._pan, loop)
+
+    loop._tick_track(now=100.0, dt=0.05, effective_tilt_center=loop.tilt_center)
+
+    # Face left → head should turn further left (mech decreases, pan command increases).
+    assert _mech(loop._pan, loop) < mech_before
+    assert loop._pan > offset_pan
+    # Must not move toward center (that was the visible left/right jerk).
+    assert abs(loop._pan - loop.pan_center) >= abs(offset_pan - loop.pan_center)
+
+
+def test_track_from_wander_right_follows_face_not_center():
+    """Wander right + face still right-of-frame must continue right, not snap inward."""
+    bb = Blackboard()
+    bb.write(
+        running=True,
+        face_detected=True,
+        body_detected=False,
+        face_norm_x=0.30,
+        face_norm_y=0.0,
+        face_count=1,
+        track_kind="face",
+        face_candidates=[],
+    )
+    loop = ServoLoop(bb)
+    loop._mode = "track"
+    offset_pan = loop.pan_center - 22.0
+    loop._pan = offset_pan
+    loop._pan_in_center_band = False
+    loop._pan_track_norm = 0.30
+    loop._filtered_norm_x = 0.30
+    mech_before = _mech(loop._pan, loop)
+
+    loop._tick_track(now=100.0, dt=0.05, effective_tilt_center=loop.tilt_center)
+
+    assert _mech(loop._pan, loop) > mech_before
+    assert loop._pan < offset_pan
+    assert abs(loop._pan - loop.pan_center) >= abs(offset_pan - loop.pan_center)
+
 def test_pan_turns_left_when_face_moves_left_in_frame():
     bb = Blackboard()
     bb.write(
@@ -329,7 +393,7 @@ def test_forward_return_skipped_when_sustained_follow_enabled():
     loop.forward_return_timeout_sec = 5.0
     loop.sustained_head_follow_enabled = True
 
-    loop._maybe_start_forward_return(106.0, tracking_face=False)
+    loop._maybe_start_forward_return(106.0, 0.0, tracking_face=False)
     assert loop._forward_return_active is False
 
 
@@ -343,7 +407,7 @@ def test_forward_return_starts_after_off_forward_timeout():
     loop.forward_return_timeout_sec = 5.0
     loop.sustained_head_follow_enabled = False
 
-    loop._maybe_start_forward_return(106.0, tracking_face=False)
+    loop._maybe_start_forward_return(106.0, 0.0, tracking_face=False)
     assert loop._forward_return_active is True
 
     loop._tick_forward_return(106.0, 0.05, loop.tilt_center)
@@ -354,7 +418,7 @@ def test_forward_return_timer_resets_while_tracking_face():
     bb = Blackboard()
     loop = ServoLoop(bb)
     loop._off_forward_since = 100.0
-    loop._update_off_forward_timer(105.0, tracking_face=True)
+    loop._update_off_forward_timer(105.0, 0.0, tracking_face=True)
     assert loop._off_forward_since is None
 
 
@@ -403,6 +467,6 @@ def test_wander_holds_track_pose_after_loss():
     loop._pan = track_pan
     loop._tilt = loop.tilt_center + 4.0
     loop._enter_wander_from_current_pose(100.0)
-    loop._tick_wander(now=100.05, dt=0.05, effective_tilt_center=loop.tilt_center - 8.0)
+    loop._tick_wander(now=100.05, dt=0.05, effective_tilt_center=loop.tilt_center - 8.0, camera_world_yaw_deg=0.0)
     assert abs(loop._pan - track_pan) < 2.0
     assert abs(loop._tilt - (loop.tilt_center + 4.0)) < 2.0

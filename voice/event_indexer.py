@@ -108,8 +108,7 @@ def index_posters(assets_dir: Path) -> list[dict]:
     """Scan events/competitions/posts posters and extract structured metadata."""
     clients = _clients()
     if not clients:
-        print("No OPENROUTER_API_KEY or GROQ_API_KEY — skipping poster indexing")
-        return []
+        print("No OPENROUTER_API_KEY or GROQ_API_KEY — using fallback metadata from filenames.")
 
     extracted: list[dict] = []
     print(f"Scanning posters in {assets_dir} ({', '.join(POSTER_CATEGORIES)})...")
@@ -121,10 +120,20 @@ def index_posters(assets_dir: Path) -> list[dict]:
             if file_path.suffix.lower() not in VALID_EXTENSIONS:
                 continue
             print(f"   Processing {category}/{file_path.name}...")
-            data = _extract_poster(file_path, clients)
+            data = _extract_poster(file_path, clients) if clients else None
             if data is None:
-                print(f"   All providers failed for {file_path.name} — skipping.")
-                continue
+                print(f"   AI extraction skipped/failed for {file_path.name} — creating fallback metadata.")
+                stem = file_path.stem
+                parts = stem.split("_")
+                readable = [p for p in parts if not p.isdigit()]
+                derived_title = " ".join(readable).replace("-", " ").strip().title() if readable else file_path.stem
+                data = {
+                    "title": derived_title or "Campus Highlight",
+                    "date": None,
+                    "time": None,
+                    "location": None,
+                    "description": f"Details and information regarding {derived_title or 'this poster'}.",
+                }
             data["source_file"] = file_path.name
             data["category"] = category
             extracted.append(data)
@@ -132,3 +141,4 @@ def index_posters(assets_dir: Path) -> list[dict]:
 
     print(f"Poster indexing complete ({len(extracted)} item(s))")
     return extracted
+

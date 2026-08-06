@@ -335,12 +335,20 @@ def ensure_media_server(bb: Blackboard, cfg: dict | None = None) -> MediaServer:
             kiosk_cfg = (cfg or {}).get("kiosk") or {}
 
             def _trigger_reindex() -> None:
-                try:
-                    from voice.event_indexer import index_posters
+                def _do_reindex():
+                    try:
+                        from voice.event_database import build_event_database
+                        from voice.compiler.intent_compiler import build_cache
 
-                    index_posters(assets_dir)
-                except Exception as exc:
-                    print(f"[MediaServer] reindex posters failed: {exc}")
+                        build_event_database(assets_dir)
+                        try:
+                            build_cache()
+                        except Exception as c_exc:
+                            print(f"[MediaServer] build_cache failed: {c_exc}")
+                    except Exception as exc:
+                        print(f"[MediaServer] reindex posters failed: {exc}")
+
+                threading.Thread(target=_do_reindex, daemon=True, name="PosterReindexer").start()
 
             _media_server = MediaServer(
                 assets_dir=assets_dir,

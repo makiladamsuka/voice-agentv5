@@ -53,6 +53,50 @@ def generate_tts_audio(text: str, output_path: Path):
     with urllib.request.urlopen(req, timeout=30.0) as response:
         output_path.write_bytes(response.read())
 
+def _generate_fallback_intent(event: dict, index: int) -> dict:
+    title = event.get("title") or "Campus Highlight"
+    category = event.get("category") or "events"
+    desc = event.get("description") or ""
+    date = event.get("date") or ""
+    loc = event.get("location") or ""
+
+    utterances = [
+        f"tell me about {title}",
+        f"what is {title}",
+        f"is there {title}",
+        f"details on {title}",
+        title.lower(),
+    ]
+    if category:
+        utterances.append(f"{category} {title}".lower())
+
+    resp_parts = [f"Here are the details for {title}."]
+    if date:
+        resp_parts.append(f"It takes place on {date}.")
+    if loc:
+        resp_parts.append(f"Location is {loc}.")
+    if desc:
+        resp_parts.append(desc)
+    response_text = " ".join(resp_parts)
+
+    action_type = "show_event_poster"
+    if category == "competitions":
+        action_type = "show_competition_poster"
+    elif category == "posts":
+        action_type = "show_campus_post"
+
+    return {
+        "id": f"event_{index}",
+        "utterances": list(set(u.strip().lower() for u in utterances if u.strip())),
+        "response_text": response_text,
+        "audio_file": None,
+        "action": {
+            "action": action_type,
+            "target": event.get("source_file")
+        }
+    }
+
+
 def build_cache():
     db_path = APP_DIR / "voice" / "event_db"
     events_file = db_path / "extracted_events.json"
@@ -67,55 +111,62 @@ def build_cache():
     audio_dir = APP_DIR / "assets" / "audio_cache"
     audio_dir.mkdir(parents=True, exist_ok=True)
     
-    if not GROQ_API_KEY:
-        print("Missing GROQ_API_KEY. Cannot compile intents.")
-        return
-        
-    client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY)
-    
+    client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+    if not client:
+        print("No GROQ_API_KEY — using template-based intent generation for events.")
+
     compiled_data = []
     
     print(f"Starting compilation for {len(events)} events...")
     
     for i, event in enumerate(events):
         print(f"\n[{i+1}/{len(events)}] Compiling event: {event.get('title', 'Unknown')}...")
-        try:
-            intent_data = generate_intents_for_event(event, client)
+        intent_data = None
+        if client:
+            try:
+                intent_data = generate_intents_for_event(event, client)
+            except Exception as e:
+                print(f"  [WARN] LLM intent generation failed for {event.get('title')}: {e}")
+
+        action_type = "show_event_poster"
+        if event.get("category") == "competitions":
+            action_type = "show_competition_poster"
+        elif event.get("category") == "posts":
+            action_type = "show_campus_post"
             
-            # Build the frontend action payload
-            action_type = "show_event_poster"
-            if event.get("category") == "competitions":
-                action_type = "show_competition_poster"
-            elif event.get("category") == "posts":
-                action_type = "show_campus_post"
-                
-            action = {
-                "action": action_type,
-                "target": event.get("source_file")
-            }
-                
-            # Create a safe filename for the audio
-            safe_name = event.get('source_file', f'item_{i}').replace('.', '_')
-            audio_filename = f"event_{i}_{safe_name}.wav"
-            audio_path = audio_dir / audio_filename
-            
-            print(f"  Generated {len(intent_data['utterances'])} keyword intents.")
-            print(f"  Response: \"{intent_data['response']}\"")
-            print(f"  Generating TTS audio -> {audio_filename}")
-            
-            generate_tts_audio(intent_data["response"], audio_path)
-            
-            compiled_data.append({
-                "id": f"event_{i}",
-                "utterances": intent_data["utterances"],
-                "response_text": intent_data["response"],
-                "audio_file": audio_filename,
-                "action": action
-            })
-            print("  Success.")
-            
-        except Exception as e:
-            print(f"  [ERROR] Failed compiling {event.get('title')}: {e}")
+        action = {
+            "action": action_type,
+            "target": event.get("source_file")
+        }
+
+        if intent_data and intent_data.get("utterances") and intent_data.get("response"):
+            resp_text = intent_data["response"]
+            utterances = intent_data["utterances"]
+        else:
+            fallback = _generate_fallback_intent(event, i)
+            resp_text = fallback["response_text"]
+            utterances = fallback["utterances"]
+
+        safe_name = str(event.get('source_file', f'item_{i}')).replace('.', '_')
+        audio_filename = f"event_{i}_{safe_name}.wav"
+        audio_path = audio_dir / audio_filename
+
+        audio_file_saved = None
+        if DEEPGRAM_API_KEY:
+            try:
+                generate_tts_audio(resp_text, audio_path)
+                audio_file_saved = audio_filename
+            except Exception as e:
+                print(f"  [WARN] TTS generation failed: {e}")
+
+        compiled_data.append({
+            "id": f"event_{i}",
+            "utterances": utterances,
+            "response_text": resp_text,
+            "audio_file": audio_file_saved,
+            "action": action
+        })
+        print(f"  Compiled successfully ({len(utterances)} utterances).")
             
     # Save the compiled intents database
     compiled_db_path = db_path / "compiled_intents.json"

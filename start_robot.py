@@ -840,17 +840,15 @@ def main():
         if unindexed:
             print(f"[Bootstrap] {len(unindexed)} poster(s) not yet indexed — running NLU indexer...")
             try:
-                from voice.event_indexer import index_posters
-                events = index_posters(assets_dir)
-                if events:
-                    extracted_path.parent.mkdir(parents=True, exist_ok=True)
-                    extracted_path.write_text(
-                        _json.dumps(events, indent=2, ensure_ascii=False),
-                        encoding="utf-8",
-                    )
-                    print(f"[Bootstrap] NLU index: {len(events)} event(s) written.")
-                else:
-                    print("[Bootstrap] NLU indexer returned no events (check API keys).")
+                from voice.event_database import build_event_database
+                from voice.compiler.intent_compiler import build_cache
+
+                db = build_event_database(assets_dir)
+                try:
+                    build_cache()
+                except Exception as c_exc:
+                    print(f"[Bootstrap] build_cache failed: {c_exc}")
+                print("[Bootstrap] NLU index & intent compilation complete.")
             except Exception as exc:
                 print(f"[Bootstrap] NLU indexer failed: {exc}")
 

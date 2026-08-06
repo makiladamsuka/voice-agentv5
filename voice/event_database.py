@@ -83,7 +83,7 @@ def build_event_database(assets_dir: Path) -> EventDatabase:
         except Exception:
             saved_manifest = {}
 
-    if current_manifest == saved_manifest and db.has_data():
+    if current_manifest == saved_manifest and db.has_data() and extracted_path.exists():
         print(
             f"Event DB up-to-date ({len(current_manifest)} poster(s), skipping re-index)"
         )

@@ -317,6 +317,11 @@ async def _voice_ws_endpoint(websocket) -> None:
                                 },
                             }
 
+                if not result:
+                    log.warning("[NLU] _match_intent returned None — skipping response.")
+                    await websocket.send_text(json.dumps({"type": "state", "conv_state": "listening"}))
+                    continue
+
                 print(
                     f"[NLU] Reply: '{result.get('reply_text', '')[:80]}' "
                     f"audio={result.get('audio_url')}"
@@ -359,7 +364,9 @@ async def _voice_ws_endpoint(websocket) -> None:
                 _dur_sec = (duration_ms / 1000.0) if duration_ms else 6.0
                 _echo["reply_norm"] = _normalize_text(result.get("reply_text", ""))
                 _echo["ts"] = _time.monotonic()
-                _echo["suppress_sec"] = max(15.0, _dur_sec + 6.0)
+                # Suppress window = audio duration + 2s tail, minimum 4s.
+                # (was max(15.0,...) which silently ate all follow-up queries)
+                _echo["suppress_sec"] = max(4.0, _dur_sec + 2.0)
                 _echo["speaking"] = True
 
                 await websocket.send_text(json.dumps({
@@ -884,6 +891,16 @@ def run_nlu_server(
         print("[NluServer] ERROR: uvicorn not installed. Run: pip install uvicorn[standard]")
         return
 
+    # ── Pre-warm NLU + SentenceTransformer BEFORE opening the port ──────────────
+    # This ensures weights are fully in RAM before the frontend can connect
+    # and the user clicks the mic button (eliminates first-query latency spike).
+    print("[NluServer] Pre-loading NLU runtime before port open...")
+    try:
+        _get_runtime()
+        print("[NluServer] NLU runtime ready (SentenceTransformer loaded).")
+    except Exception as exc:
+        log.warning(f"[NluServer] NLU pre-warm failed, will retry on first request: {exc}")
+
     app = _build_app()
     log.info(f"[NluServer] Starting on ws://{host}:{port}/ws/voice")
     print(f"[NluServer] WebSocket server starting on port {port}...")
@@ -901,22 +918,10 @@ def run_nlu_server(
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    def _prewarm_all():
-        """Pre-warm NLU runtime + sidecars in a background thread.
-
-        Runs AFTER the server port is open so the frontend can connect
-        immediately.  The first actual voice query will block briefly
-        if this hasn't finished yet (via _get_runtime()'s lazy guard).
+    def _prewarm_sidecars():
+        """Pre-build amplitude sidecars for all cached MP3s so ffmpeg is never
+        called during a live voice turn (eliminates CPU spikes on Pi).
         """
-        try:
-            print("[NluServer] Pre-loading NLU runtime (embeddings)...")
-            _get_runtime()
-            print("[NluServer] NLU runtime pre-loaded successfully.")
-        except Exception as exc:
-            log.warning(f"[NluServer] Pre-loading NLU runtime deferred to first request: {exc}")
-
-        # Pre-build amplitude sidecars for all cached MP3s so ffmpeg is never
-        # called during a live voice turn (eliminates CPU spikes on Pi).
         try:
             from voice.audio_envelope import build_all_sidecars
             audio_cache = APP_DIR / "assets" / "audio_cache"
@@ -929,10 +934,10 @@ def run_nlu_server(
 
     async def _run():
         serve_task = asyncio.create_task(server.serve())
-        # Give the server a moment to bind, then pre-warm in a background thread
+        # Give the server a moment to bind, then pre-warm sidecars in background
         await asyncio.sleep(0.3)
-        print(f"[NluServer] Port {port} open — pre-warming models in background...")
-        asyncio.get_running_loop().run_in_executor(None, _prewarm_all)
+        print(f"[NluServer] Port {port} open — building audio sidecars in background...")
+        asyncio.get_running_loop().run_in_executor(None, _prewarm_sidecars)
         # Poll the Blackboard running flag so we shut down cleanly on Ctrl+C
         while bb.read("running")["running"] and not serve_task.done():
             await asyncio.sleep(0.5)

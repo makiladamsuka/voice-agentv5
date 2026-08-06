@@ -637,9 +637,11 @@ export function useNluVoice({
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
+          // Enable browser AEC so the robot's speaker output is NOT fed back
+          // into Deepgram as a user transcript (hardware echo loop prevention).
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
         },
       });
       mediaStreamRef.current = stream;

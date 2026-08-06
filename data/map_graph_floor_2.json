@@ -3,7 +3,7 @@
     {
       "id": "1781148136543",
       "x": -2.5,
-      "z": 6,
+      "z": 5,
       "building": "building_2",
       "label": "Department of Computational Mathematics",
       "type": "room",
@@ -22,20 +22,20 @@
       "type": "room",
       "size": [
         7,
-        2,
+        1,
         6
       ]
     },
     {
       "id": "1781197519029",
-      "x": -2,
+      "x": -1,
       "z": -6,
       "building": "building_1",
       "label": "Evaluator",
       "type": "room",
       "size": [
         1.5,
-        1.5,
+        1,
         1.5
       ]
     },
@@ -48,7 +48,7 @@
       "type": "room",
       "size": [
         1.5,
-        3.5,
+        1,
         1.5
       ],
       "color": "#949090"
@@ -62,7 +62,7 @@
       "type": "room",
       "size": [
         5,
-        3,
+        1,
         2
       ]
     },
@@ -81,20 +81,20 @@
     },
     {
       "id": "1781198205764",
-      "x": -5.5,
+      "x": -5,
       "z": -6,
       "building": "building_2",
       "label": "Instructor Room",
       "type": "room",
       "size": [
         2,
-        2,
+        1,
         2
       ]
     },
     {
       "id": "1781198355817",
-      "x": -1.5,
+      "x": -2,
       "z": -6,
       "building": "building_2",
       "label": "Male Washroom",
@@ -108,14 +108,14 @@
     },
     {
       "id": "1781198364437",
-      "x": 1.5,
+      "x": 2,
       "z": -6,
       "building": "building_2",
       "label": "feMale Washroom",
       "type": "room",
       "size": [
         1.5,
-        1.5,
+        1,
         1.5
       ],
       "color": "#949090"
@@ -129,7 +129,7 @@
       "type": "room",
       "size": [
         2.5,
-        1.5,
+        1,
         2.5
       ]
     },
@@ -142,7 +142,7 @@
       "type": "room",
       "size": [
         2.5,
-        1.5,
+        1,
         2.5
       ]
     },
@@ -181,13 +181,13 @@
       "type": "room",
       "size": [
         7,
-        2,
+        1,
         3
       ]
     },
     {
       "id": "1781449419707",
-      "x": -3.5,
+      "x": -3,
       "z": -6,
       "building": "building_1",
       "label": "Staircase 1",
@@ -213,7 +213,7 @@
     },
     {
       "id": "1782225326548",
-      "x": -3.5,
+      "x": -3,
       "z": -4.5,
       "building": "building_1",
       "label": "Waypoint",
@@ -253,7 +253,7 @@
     },
     {
       "id": "1782225339438",
-      "x": -5.5,
+      "x": -5,
       "z": -4.5,
       "building": "building_2",
       "label": "Waypoint",
@@ -358,7 +358,7 @@
     {
       "id": "1782231033808",
       "x": 2.5,
-      "z": 6,
+      "z": 5,
       "building": "building_2",
       "label": "Waypoint",
       "type": "waypoint"
@@ -605,7 +605,7 @@
         12,
         14
       ],
-      "color": "#ffffff",
+      "color": "#FFFFFF",
       "name": "Building 1",
       "removed_cells": [
         "0_3",
@@ -653,7 +653,7 @@
         18,
         14
       ],
-      "color": "#ffffff",
+      "color": "#FFFFFF",
       "name": "Building 2",
       "removed_cells": [
         "1_3",

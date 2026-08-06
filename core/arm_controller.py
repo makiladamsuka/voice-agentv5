@@ -239,8 +239,8 @@ class ArmController:
 
         print(
             f"[ArmController] Cumulative lean + greeting gestures "
-            f"(+{self.step_delta_deg:.1f}°/spin, mid A0≤{self._raise_mid[0]:.0f} "
-            f"A1≥{self._raise_mid[1]:.0f}, home={self._home}, "
+            f"(+{self.step_delta_deg:.1f}deg/spin, mid A0<={self._raise_mid[0]:.0f} "
+            f"A1>={self._raise_mid[1]:.0f}, home={self._home}, "
             f"loop={self.loop_hz:.0f}Hz voice={self.voice_loop_hz:.0f}Hz)"
         )
 

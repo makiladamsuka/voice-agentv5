@@ -2,7 +2,7 @@
 
 import React, { useRef, useMemo, useState, useEffect, useCallback } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, Line, Box, Grid, Text } from "@react-three/drei";
+import { OrbitControls, Line, Box, Grid, Text, Html } from "@react-three/drei";
 import * as THREE from "three";
 
 // Animated glowing path that flows toward the destination
@@ -143,14 +143,63 @@ interface NavigationMapProps {
 const getRoomTheme = (label: string) => {
   if (!label) return { color: "#334155", icon: "📍" };
   const lower = label.toLowerCase();
-  if (lower.includes("lecture hall")) return { color: "#1e3a8a", icon: "🎓" };
-  if (lower.includes("laboratory") || lower.includes("lab"))
-    return { color: "#4c1d95", icon: "🔬" };
-  if (lower.includes("office")) return { color: "#089d91ff", icon: "🏢" };
-  if (lower.includes("washroom")) return { color: "#949090", icon: "🚻" };
-  if (lower.includes("desk") || lower.includes("evaluator"))
-    return { color: "#3730a3", icon: "💁" };
-  return { color: "#334155", icon: "📍" }; // default sleek slate
+  if (lower.includes("director") || lower.includes("undergraduate")) return { color: "#6A329F", icon: "🏢" };
+  if (lower.includes("department")) return { color: "#3F51B5", icon: "🏢" };
+  if (lower.includes("lecture")) return { color: "#FFB74D", icon: "🎓" };
+  if (lower.includes("auditorium")) return { color: "#BE81CC", icon: "🏛️" };
+  if (lower.includes("laboratory") || lower.includes("lab")) return { color: "#A9DCAE", icon: "🔬" };
+  if (lower.includes("female washroom")) return { color: "#6BCFE3", icon: "🚺" };
+  if (lower.includes("male washroom")) return { color: "#6BCFE3", icon: "🚹" };
+  if (lower.includes("washroom")) return { color: "#6BCFE3", icon: "🚻" };
+  if (lower.includes("evaluator")) return { color: "#9DA8B3", icon: "💁" };
+  if (lower.includes("desk")) return { color: "#9CA7B1", icon: "💁" };
+  if (lower.includes("exit")) return { color: "#E53935", icon: "🚪" };
+  if (lower.includes("stair")) return { color: "#6E6E6E", icon: "🪜" };
+  if (lower.includes("unit") || lower.includes("room") || lower.includes("division") || lower.includes("devision") || lower.includes("board") || lower.includes("office") || lower.includes("microcontroller")) return { color: "#A3E0D8", icon: "🏢" };
+  return { color: "#334155", icon: "📍" };
+};
+
+// Realistic Foundation Staircase Component
+const RealisticStaircase = ({ size, isDestination, boxColor }: { size: [number, number, number], isDestination: boolean, boxColor: string }) => {
+  const steps = 3;
+  // Match the exact grid cell size for a perfect cutout, with a slight overlap (1.02x) to ensure it seals the hole and fits perfectly into the building foundation without seams.
+  const width = Math.max(1, size[0]) * 1.5;
+  const totalDepth = Math.max(1, size[2]) * 1.02;
+
+  // Foundation is 1.0 unit deep (from y=0 down to y=-1)
+  const foundationDepth = 1.0;
+  const stepHeight = foundationDepth / steps;
+  const stepDepth = totalDepth / steps;
+
+  return (
+    // The parent group is positioned at y = size[1]/2. 
+    // Shift down by -size[1]/2 so local y=0 is world y=0 (top of the floor).
+    <group position={[0, -size[1] / 2, 0]}>
+      {Array.from({ length: steps }).map((_, i) => {
+        // Render blocks ascending from the bottom of the foundation (y=-1)
+        const currentHeight = stepHeight * (i + 1);
+        return (
+          <mesh
+            key={i}
+            position={[
+              0,
+              -foundationDepth + currentHeight / 2, // Base is at y=-1
+              totalDepth / 2 - stepDepth / 2 - i * stepDepth // i=0 is front, i=steps-1 is back
+            ]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={[width, currentHeight, stepDepth]} />
+            <meshStandardMaterial
+              color="#3d3d3dff"
+              emissive={isDestination ? "#2563EB" : "#000000"}
+              emissiveIntensity={isDestination ? 0.4 : 0}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
 };
 
 // Animated group container that makes the floor map drop from above or rise from below on change
@@ -459,8 +508,8 @@ export default function NavigationMap({
                   setCurrentFloor(f as string);
                 }}
                 className={`w-full min-h-[52px] px-3 py-2.5 rounded-3xl font-bold flex flex-col items-center justify-center border transition-all duration-300 shadow-lg backdrop-blur-md overflow-hidden ${isButtonActive
-                    ? "bg-blue-500/80 text-white border-blue-400/30"
-                    : "bg-black/60 text-white border-white/10"
+                  ? "bg-blue-500/80 text-white border-blue-400/30"
+                  : "bg-black/60 text-white border-white/10"
                   }`}
               >
                 <span className="text-[14px] leading-tight">
@@ -484,31 +533,6 @@ export default function NavigationMap({
       <div
         className="w-full h-full"
         onClick={(e) => e.stopPropagation()}
-        onWheel={(e) => {
-          e.stopPropagation();
-          const now = Date.now();
-          if (now - lastScrollRef.current < 400) return; // 400ms cooldown
-
-          if (!availableFloors.length) return;
-          const currentIndex = availableFloors.indexOf(currentFloor);
-          if (currentIndex === -1) return;
-
-          if (e.deltaY < 0) {
-            // Scroll up -> Go to higher floor (lower index since it's sorted descending)
-            if (currentIndex > 0) {
-              cancelAnim();
-              setCurrentFloor(availableFloors[currentIndex - 1] as string);
-              lastScrollRef.current = now;
-            }
-          } else if (e.deltaY > 0) {
-            // Scroll down -> Go to lower floor (higher index)
-            if (currentIndex < availableFloors.length - 1) {
-              cancelAnim();
-              setCurrentFloor(availableFloors[currentIndex + 1] as string);
-              lastScrollRef.current = now;
-            }
-          }
-        }}
       >
         {!webglSupported ? (
           <div className="flex h-full w-full flex-col items-center justify-center text-center p-6 bg-neutral-900/95 text-white/80 rounded-3xl border border-white/10">
@@ -539,112 +563,157 @@ export default function NavigationMap({
 
               <AnimatedFloorGroup currentFloor={currentFloor} destFloor={destFloorKey}>
                 {/* Building Grids */}
-                {buildingEntries.map(([bId, b]) => (
-                  <group key={bId} position={b.position}>
-                    {/* Floor Cells (skipping removed cells) */}
-                    {Array.from({ length: Math.round(b.size[0] || 1) }).map(
-                      (_, c) =>
-                        Array.from({ length: Math.round(b.size[1] || 1) }).map(
-                          (_, r) => {
-                            const cellId = `${c}_${r}`;
-                            if (b.removed_cells?.includes(cellId)) return null;
-                            const cx = c - b.size[0] / 2 + 0.5;
-                            const cz = r - b.size[1] / 2 + 0.5;
-                            return (
-                              <mesh
-                                key={cellId}
-                                position={[cx, -0.5, cz]}
-                                receiveShadow
-                              >
-                                <boxGeometry args={[1, 1, 1]} />
-                                <meshStandardMaterial color={b.color} />
-                              </mesh>
-                            );
-                          },
-                        ),
-                    )}
+                {buildingEntries.map(([bId, b]) => {
+                  // Find all stair nodes on this floor to cut holes in the foundation
+                  const stairNodes = floorNodes.filter((n) => n.label?.toLowerCase().includes("stair"));
+
+                  return (
+                    <group key={bId} position={b.position}>
+                      {/* Floor Cells (skipping removed cells and stair cutouts) */}
+                      {Array.from({ length: Math.round(b.size[0] || 1) }).map(
+                        (_, c) =>
+                          Array.from({ length: Math.round(b.size[1] || 1) }).map(
+                            (_, r) => {
+                              const cellId = `${c}_${r}`;
+                              if (b.removed_cells?.includes(cellId)) return null;
+                              const cx = c - b.size[0] / 2 + 0.5;
+                              const cz = r - b.size[1] / 2 + 0.5;
+
+                              // Calculate world coordinates for the cell
+                              const cellWorldX = (b.position?.[0] || 0) + cx;
+                              const cellWorldZ = (b.position?.[2] || 0) + cz;
+
+                              // Skip rendering this cell if a stair node sits on it
+                              const isUnderStair = stairNodes.some((n) => {
+                                const sx = n.world[0];
+                                const sz = n.world[2];
+                                const w = n.size?.[0] || 1;
+                                const d = n.size?.[2] || 1;
+                                return Math.abs(cellWorldX - sx) < w / 2 && Math.abs(cellWorldZ - sz) < d / 2;
+                              });
+                              if (isUnderStair) return null;
+
+                              return (
+                                <mesh
+                                  key={cellId}
+                                  position={[cx, -0.5, cz]}
+                                  receiveShadow
+                                >
+                                  <boxGeometry args={[1, 1, 1]} />
+                                  <meshStandardMaterial color={b.color} />
+                                </mesh>
+                              );
+                            },
+                          ),
+                      )}
+                      {/* Building names hidden by user request */}
+                      {/*
                     <Text
-                      position={[0, 0.02, b.size[1] / 2 + 0.5]}
+                      position={[0, 1, b.size[1] / 2 + 0.5]}
                       rotation={[-Math.PI / 2, 0, 0]}
-                      fontSize={0.7}
-                      color={b.color}
+                      fontSize={0.6}
+                      color="#000000"
                       fontWeight="bold"
                       textAlign="center"
                     >
                       {b.name.replace(" ", "\n")}
                     </Text>
-                  </group>
-                ))}
-
-                {/* Room Blocks */}
-                {floorNodes.map((node: any, index: number) => {
-                  const size = node.size || [1, 1, 1];
-                  const isDestination =
-                    node.label?.toLowerCase() === destination.toLowerCase();
-                  const theme = getRoomTheme(node.label);
-                  // Use a vibrant indigo for the destination instead of green
-                  const boxColor = isDestination ? "#2563EB" : (node.color || theme.color);
-
-                  // Elevate ALL labels and alternate heights to prevent crossing
-                  const staggerHeight = 1.0 + (index % 2) * 0.8;
-                  const textY = size[1] / 2 + staggerHeight;
-
-                  return (
-                    <group
-                      key={node.id}
-                      position={[node.world[0], size[1] / 2, node.world[2]]}
-                      onClick={(e) => {
-                        if (onNodeClick) {
-                          e.stopPropagation();
-                          onNodeClick(node.label);
-                        }
-                      }}
-                      onPointerOver={(e) => {
-                        if (onNodeClick) {
-                          e.stopPropagation();
-                          document.body.style.cursor = "pointer";
-                        }
-                      }}
-                      onPointerOut={(e) => {
-                        if (onNodeClick) {
-                          e.stopPropagation();
-                          document.body.style.cursor = "auto";
-                        }
-                      }}
-                    >
-                      <Box args={size} castShadow>
-                        <meshStandardMaterial
-                          color={boxColor}
-                          emissive={isDestination ? "#2563EB" : "#000000"}
-                          emissiveIntensity={isDestination ? 0.4 : 0}
-                        />
-                      </Box>
-
-                      {/* Text label painted directly on the top of the item */}
-                      <Text
-                        position={[0, size[1] / 2 + 0.05, 0]}
-                        rotation={[-Math.PI / 2, 0, 0]}
-                        fontSize={0.35}
-                        color="#ffffff"
-                        anchorX="center"
-                        anchorY="middle"
-                        fontWeight="bold"
-                        textAlign="center"
-                        lineHeight={1.1}
-                      >
-                        {`${theme.icon}\n${node.label.replace(" ", "\n")}`}
-                      </Text>
+                    */}
                     </group>
                   );
                 })}
 
+                {/* Room Blocks */}
+                {
+                  floorNodes.map((node: any, index: number) => {
+                    const size = node.size || [1, 1, 1];
+                    const isDestination =
+                      node.label?.toLowerCase() === destination.toLowerCase();
+                    const theme = getRoomTheme(node.label);
+                    // Use a vibrant indigo for the destination instead of green
+                    // If it's a staircase, always force the theme color to ignore server overrides
+                    const isStair = node.label?.toLowerCase().includes("stair");
+                    const boxColor = isDestination ? "#2563EB" : theme.color;
+
+                    // Elevate ALL labels and alternate heights to prevent crossing
+                    const staggerHeight = 1.0 + (index % 2) * 0.8;
+                    const textY = size[1] / 2 + staggerHeight;
+
+                    const isStaircase = node.label?.toLowerCase().includes("stair");
+                    const isWashroom = node.label?.toLowerCase().includes("washroom");
+                    const isYouAreHere = node.label?.toLowerCase() === "you are here";
+
+                    return (
+                      <group
+                        key={node.id}
+                        position={[node.world[0], size[1] / 2, node.world[2]]}
+                        onClick={(e) => {
+                          if (onNodeClick) {
+                            e.stopPropagation();
+                            onNodeClick(node.label);
+                          }
+                        }}
+                        onPointerOver={(e) => {
+                          if (onNodeClick) {
+                            e.stopPropagation();
+                            document.body.style.cursor = "pointer";
+                          }
+                        }}
+                        onPointerOut={(e) => {
+                          if (onNodeClick) {
+                            e.stopPropagation();
+                            document.body.style.cursor = "auto";
+                          }
+                        }}
+                      >
+                        {isYouAreHere ? (
+                          <Html center position={[0, size[1] / 2 - 0.5, 0]}>
+                            <svg viewBox="0 0 24 24" width="60" height="60" style={{ filter: "drop-shadow(0px 10px 5px rgba(0,0,0,0.5))", transform: "translateY(-50%)" }}>
+                              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#ff0000" />
+                              <circle cx="12" cy="9" r="3.5" fill="#000000" />
+                            </svg>
+                          </Html>
+                        ) : isStaircase ? (
+                          <RealisticStaircase size={size} isDestination={isDestination} boxColor={boxColor} />
+                        ) : (
+                          <Box args={size} castShadow>
+                            <meshStandardMaterial
+                              color={boxColor}
+                              emissive={isDestination ? "#2563EB" : "#000000"}
+                              emissiveIntensity={isDestination ? 0.4 : 0}
+                            />
+                          </Box>
+                        )}
+
+                        {/* Text label painted directly on the top of the item */}
+                        {!isStaircase && !isYouAreHere && (
+                          <Text
+                            position={[0, size[1] / 2 + 0.05, 0]}
+                            rotation={[-Math.PI / 2, 0, 0]}
+                            fontSize={isWashroom ? 0.5 : 0.35}
+                            color="#ffffff"
+                            anchorX="center"
+                            anchorY="middle"
+                            fontWeight="bold"
+                            textAlign="center"
+                            lineHeight={1.1}
+                          >
+                            {isWashroom ? theme.icon : `${theme.icon}\n${node.label.replace(" ", "\n")}`}
+                          </Text>
+                        )}
+                      </group>
+                    );
+                  })}
                 {/* Glowing route — navigation only, never in explore mode */}
-                {!isStandalone && pathPoints.length >= 2 && (
-                  <GlowingPath points={pathPoints} />
-                )}
+                {
+                  !isStandalone && pathPoints.length >= 2 && (
+                    <GlowingPath points={pathPoints} />
+                  )
+                }
 
                 {/* Destination marker — navigation only */}
-                {!isStandalone &&
+                {
+                  !isStandalone &&
                   destNode &&
                   destNode.floor === currentFloor && (
                     <DestinationMarker
@@ -655,15 +724,19 @@ export default function NavigationMap({
                       ]}
                       label={destination}
                     />
-                  )}
+                  )
+                }
               </AnimatedFloorGroup>
 
               <OrbitControls
                 enableZoom={false}
-                enablePan={isStandalone}
-                enableRotate={isStandalone}
-                maxPolarAngle={Math.PI / 2 - 0.1}
-                target={[0, 0, 0]}
+                enablePan={false}
+                enableRotate={false}
+                minPolarAngle={40 * (Math.PI / 180)}
+                maxPolarAngle={40 * (Math.PI / 180)}
+                minAzimuthAngle={-8 * (Math.PI / 180)}
+                maxAzimuthAngle={-8 * (Math.PI / 180)}
+                target={[-4.5, 0, -1]}
               />
             </React.Suspense>
           </Canvas>
@@ -671,13 +744,15 @@ export default function NavigationMap({
       </div>
 
       {/* Bottom hint */}
-      {!isStandalone && !isManualExpanded && (
-        <div className="absolute bottom-6 left-0 right-0 flex justify-center z-10">
-          <p className="text-gray-400 text-sm">
-            Tap anywhere to close • Auto-closes in 20 seconds
-          </p>
-        </div>
-      )}
+      {
+        !isStandalone && !isManualExpanded && (
+          <div className="absolute bottom-6 left-0 right-0 flex justify-center z-10">
+            <p className="text-gray-400 text-sm">
+              Tap anywhere to close • Auto-closes in 20 seconds
+            </p>
+          </div>
+        )
+      }
     </div>
   );
 }

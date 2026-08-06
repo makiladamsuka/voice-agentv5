@@ -203,16 +203,30 @@ export function useNluVoice({
       setState(newState);
       onStateChange?.(newState);
 
-      // Mute the mic track at the OS/browser level when not listening
-      // so no physical audio reaches Deepgram during thinking/speaking/waiting.
+      // Mute mic track & pause recorder when robot is busy (thinking/speaking/waiting)
+      const shouldMute =
+        newState === "speaking" ||
+        newState === "thinking" ||
+        newState === "waiting";
+
       if (mediaStreamRef.current) {
-        const shouldMute =
-          newState === "speaking" ||
-          newState === "thinking" ||
-          newState === "waiting";
         mediaStreamRef.current.getAudioTracks().forEach(t => {
           t.enabled = !shouldMute;
         });
+      }
+
+      if (recorderRef.current) {
+        try {
+          if (shouldMute && recorderRef.current.state === "recording") {
+            recorderRef.current.pause();
+            console.log("[NluVoice] Mic recorder PAUSED (robot busy)");
+          } else if (!shouldMute && recorderRef.current.state === "paused") {
+            recorderRef.current.resume();
+            console.log("[NluVoice] Mic recorder RESUMED (listening)");
+          }
+        } catch (e) {
+          console.warn("[NluVoice] Mic pause/resume error:", e);
+        }
       }
 
       // Play synthesized audio chimes on state transitions (Alexa/Pepper pattern)
@@ -661,10 +675,10 @@ export function useNluVoice({
     recorderRef.current = recorder;
 
     recorder.ondataavailable = (event) => {
-      const isRobotBusy =
-        stateRef.current === "speaking" || stateRef.current === "thinking";
+      // STRICT HARD LOCK: Only stream mic bytes to Deepgram while actively listening
+      const isListening = stateRef.current === "listening";
       if (
-        !isRobotBusy &&
+        isListening &&
         event.data.size > 0 &&
         dgWs.current?.readyState === WebSocket.OPEN &&
         isActiveRef.current
@@ -672,8 +686,7 @@ export function useNluVoice({
         event.data.arrayBuffer().then((buf) => {
           if (
             dgWs.current?.readyState === WebSocket.OPEN &&
-            stateRef.current !== "speaking" &&
-            stateRef.current !== "thinking"
+            stateRef.current === "listening"
           ) {
             dgWs.current.send(buf);
           }

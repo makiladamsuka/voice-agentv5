@@ -216,8 +216,12 @@ export function useNluVoice({
       }
 
       // Play synthesized audio chimes on state transitions (Alexa/Pepper pattern)
-      if (oldState !== newState) {
-        if (newState === "listening") {
+      // Guard: NEVER play chimes while robot is speaking/thinking/waiting — only on clean listening transitions.
+      if (oldState !== newState && playChimes) {
+        const robotBusy = newState === "speaking" || newState === "thinking" || newState === "waiting";
+        const comingFromSpeaking = oldState === "speaking" || oldState === "waiting";
+        if (newState === "listening" && !comingFromSpeaking) {
+          // Only chime when transitioning TO listening from idle/connecting (not from speaking)
           playStartChime();
         } else if (newState === "thinking" && oldState === "listening") {
           playStopChime();
@@ -522,7 +526,7 @@ export function useNluVoice({
       smart_format: "true",
       interim_results: "true",
       vad_events: "true",
-      endpointing: "200", // Fast endpoint detection for low latency
+      endpointing: "1000", // 1000ms silence → Deepgram won't cut off mid-sentence
       utterance_end_ms: "1000", // 1 second silence threshold (Deepgram API requires >= 1000)
     });
 

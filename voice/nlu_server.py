@@ -128,7 +128,7 @@ async def _voice_ws_endpoint(websocket) -> None:
     
     speculative_cache = {}
     pending_ambiguity_category = None
-    last_discussed_category = None
+    last_discussed_topic = None
     # ── Echo / duplicate suppression ──────────────────────────────────────
     # Use a mutable dict so reassignment works correctly in all scopes.
     import time as _time
@@ -245,6 +245,12 @@ async def _voice_ws_endpoint(websocket) -> None:
                 if pending_ambiguity_category:
                     user_text = f"{pending_ambiguity_category} {original_text}"
                     print(f"  [Context injected] Rewrote query to: '{user_text}'")
+                elif last_discussed_topic:
+                    import re
+                    replaced = re.sub(r'\b(it|there|that)\b', last_discussed_topic, original_text, flags=re.IGNORECASE)
+                    if replaced.lower() != original_text.lower():
+                        user_text = replaced
+                        print(f"  [Context injected] Rewrote pronoun query to: '{user_text}'")
 
                 # Update blackboard — show "thinking" on robot face
                 think_start_ts = _time.monotonic()
@@ -275,8 +281,8 @@ async def _voice_ws_endpoint(websocket) -> None:
                 if result:
                     is_fallback = result.get("is_fallback")
                     
-                    if is_fallback and not pending_ambiguity_category and last_discussed_category:
-                        retry_text = f"{last_discussed_category} {original_text}"
+                    if is_fallback and not pending_ambiguity_category and last_discussed_topic:
+                        retry_text = f"{last_discussed_topic} {original_text}"
                         print(f"  [Context retry] Retrying fallback query as: '{retry_text}'")
                         runtime = _get_runtime()
                         loop = asyncio.get_running_loop()
@@ -291,10 +297,10 @@ async def _voice_ws_endpoint(websocket) -> None:
                     
                     action = result.get("action", {})
                     if action.get("action") == "navigate" and action.get("destination"):
-                        last_discussed_category = get_dest_category(action.get("destination"))
+                        last_discussed_topic = action.get("destination")
                     elif not is_fallback:
                         # Clear context if user successfully changed topics
-                        last_discussed_category = None
+                        last_discussed_topic = None
 
                     # ── Events fallback: inject poster buttons even when NLU
                     # has no compiled event intents yet (empty compiled_intents.json).
@@ -625,11 +631,22 @@ def _match_intent_internal(runtime, user_text: str) -> dict:
                     },
                 }, audio_file)
 
+        response_text = intent.get("response_text", "")
         audio_file = intent.get("audio_file")
         
+        if isinstance(response_text, list) and len(response_text) > 0:
+            import random
+            idx = random.randint(0, len(response_text) - 1)
+            response_text = response_text[idx]
+            
+            if isinstance(audio_file, list) and len(audio_file) > idx:
+                audio_file = audio_file[idx]
+            else:
+                audio_file = None
+                
         # Generate dynamic TTS for intents lacking precompiled audio (e.g., ambiguity prompts)
-        if not audio_file and intent.get("response_text"):
-            audio_file = _generate_dynamic_tts(intent["response_text"])
+        if not audio_file and response_text:
+            audio_file = _generate_dynamic_tts(response_text)
             
         audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
 
@@ -649,7 +666,7 @@ def _match_intent_internal(runtime, user_text: str) -> dict:
                 action["suggested_buttons"] = _get_event_buttons()
 
         return _with_audio_path({
-            "reply_text": intent.get("response_text", ""),
+            "reply_text": response_text,
             "audio_url": audio_url,
             "action": action,
             "ambiguity_category": intent.get("ambiguity_category"),
@@ -780,12 +797,14 @@ def _navigate_response(destination: str) -> dict:
         # Verify it's a genuine confident match (label contains the query or vice-versa)
         dest_lc = destination.lower().strip()
         label_lc = exact_match["label"].lower()
-        # Only treat as unambiguous if the destination exactly contains a number
-        # (e.g. "Auditorium 1") — means user already picked a specific one
+        # If the label exactly matches the destination, it is unambiguous.
+        # Otherwise, if it's a substring match, only trust it if the destination has a number.
         import re as _re
         dest_has_number = bool(_re.search(r'\d', dest_lc))
-        label_matches_exactly = (dest_lc in label_lc or label_lc in dest_lc)
-        if dest_has_number and label_matches_exactly:
+        
+        if dest_lc == label_lc:
+            candidates = [exact_match]
+        elif dest_has_number and (dest_lc in label_lc or label_lc in dest_lc):
             # Route directly to navigation — no disambiguation needed
             candidates = [exact_match]
         else:

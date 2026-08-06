@@ -1,5 +1,6 @@
 """Ultra-fast local voice runtime for zero-latency interactions."""
 
+import time
 import json
 import os
 import re

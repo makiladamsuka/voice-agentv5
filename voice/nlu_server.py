@@ -49,15 +49,17 @@ log = logging.getLogger("NluServer")
 _bb: "Blackboard | None" = None
 _runtime = None  # OfflineVoiceRuntime, lazy-loaded on first connection
 _wayfinder = None  # Wayfinder, injected from start_robot.py (or lazy-loaded)
+_nlu_ready: bool = False
 
 
 def _get_runtime():
     """Load or return the NLU runtime (SentenceTransformer weights pre-warmed)."""
-    global _runtime
+    global _runtime, _nlu_ready
     if _runtime is None:
         from voice.offline_voice.runtime import OfflineVoiceRuntime
         log.info("Loading NLU runtime (NumPy fast-path matcher + SentenceTransformer weights)...")
         _runtime = OfflineVoiceRuntime(_bb)
+        _nlu_ready = True
         log.info("NLU runtime ready.")
     return _runtime
 
@@ -438,7 +440,7 @@ async def _voice_ws_endpoint(websocket) -> None:
 async def _health_endpoint(request) -> None:
     """Simple JSON health check for use by the smoke test and monitoring."""
     from starlette.responses import JSONResponse
-    return JSONResponse({"status": "ok", "mode": "nlu"})
+    return JSONResponse({"status": "ok", "mode": "nlu", "ready": _nlu_ready})
 
 
 def _build_app():
@@ -546,6 +548,19 @@ def _match_intent(runtime, user_text: str) -> dict:
     Synchronous NLU matching (runs in a thread via run_in_executor).
     Returns a dict with reply_text, audio_url, and action.
     """
+    try:
+        return _match_intent_internal(runtime, user_text)
+    except Exception as exc:
+        log.error(f"[NLU] Exception during _match_intent: {exc}", exc_info=True)
+        fallback_text = "I'm sorry, I encountered an internal issue. How else can I help?"
+        return {
+            "reply_text": fallback_text,
+            "audio_url": None,
+            "action": {},
+            "is_fallback": True,
+        }
+
+def _match_intent_internal(runtime, user_text: str) -> dict:
     from voice.offline_voice.runtime import route_domain, get_time_reply
 
     audio_base = APP_DIR / "assets" / "audio_cache"

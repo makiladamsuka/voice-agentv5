@@ -191,7 +191,7 @@ export function useNluVoice({
   /** Timestamp when speaking ends — used to reject Deepgram echo transcripts */
   const speakingEndedAtRef = useRef<number>(0);
   /** How long (ms) to reject Deepgram results after TTS ends (echo cooldown) */
-  const ECHO_COOLDOWN_MS = 2500;
+  const ECHO_COOLDOWN_MS = 500;
 
   const apiKey =
     deepgramApiKey ?? process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY ?? "";

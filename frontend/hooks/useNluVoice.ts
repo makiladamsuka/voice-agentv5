@@ -192,6 +192,8 @@ export function useNluVoice({
   const speakingEndedAtRef = useRef<number>(0);
   /** How long (ms) to reject Deepgram results after TTS ends (echo cooldown) */
   const ECHO_COOLDOWN_MS = 500;
+  /** Stores recent robot replies to filter out self-echo transcripts */
+  const recentRobotRepliesRef = useRef<string[]>([]);
 
   const apiKey =
     deepgramApiKey ?? process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY ?? "";
@@ -293,6 +295,12 @@ export function useNluVoice({
       durationMs?: number,
     ) => {
       console.log("[NluVoice] Playing reply:", replyText?.slice(0, 80), audioUrl);
+      if (replyText) {
+        const normReply = replyText.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+        if (normReply) {
+          recentRobotRepliesRef.current = [normReply, ...recentRobotRepliesRef.current.slice(0, 4)];
+        }
+      }
       // Stop any prior clip first (may send tts_done if it was actually playing).
       stopCurrentAudio();
       const playGen = ++playGenerationRef.current;
@@ -436,6 +444,10 @@ export function useNluVoice({
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || nluWs.current?.readyState !== WebSocket.OPEN) return;
+      if (stateRef.current !== "listening" && stateRef.current !== "idle") {
+        console.log(`[NluVoice] Rejecting sendTranscript("${trimmed}") — state is "${stateRef.current}"`);
+        return;
+      }
       console.log(`[NluVoice] → NLU: "${trimmed}"`);
       setLastTranscript(trimmed);
       setVoiceState("thinking");
@@ -497,6 +509,31 @@ export function useNluVoice({
       const alt = data?.channel?.alternatives?.[0];
       const transcript: string = alt?.transcript ?? "";
       if (!transcript.trim()) return;
+
+      // ── Self-Echo Filter: Check if transcript matches recent robot replies ─────
+      const normInc = transcript.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+      if (normInc) {
+        for (const reply of recentRobotRepliesRef.current) {
+          if (!reply) continue;
+          if (reply.includes(normInc) || normInc.includes(reply)) {
+            console.log(`[NluVoice] Blocked self-echo (substring of reply): "${transcript}"`);
+            pendingTranscriptRef.current = "";
+            return;
+          }
+          const incWords = normInc.split(/\s+/).filter((w) => w.length > 2);
+          const repWords = new Set(reply.split(/\s+/).filter((w) => w.length > 2));
+          if (incWords.length > 0) {
+            const matchCount = incWords.filter((w) => repWords.has(w)).length;
+            if (matchCount / incWords.length >= 0.4) {
+              console.log(
+                `[NluVoice] Blocked self-echo (${matchCount}/${incWords.length} words overlap): "${transcript}"`
+              );
+              pendingTranscriptRef.current = "";
+              return;
+            }
+          }
+        }
+      }
 
       // Keep latest interim for UtteranceEnd fallback; show live text via pending
       pendingTranscriptRef.current = transcript;

@@ -666,10 +666,10 @@ def _match_intent_internal(runtime, user_text: str) -> dict:
     }, None)
 
 def _generate_dynamic_fallback(transcript: str) -> str:
-    """Use an LLM to generate a conversational fallback response."""
+    """Use an LLM to generate a short conversational fallback response."""
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        return "I didn't quite catch that. I can help you with campus events or directions!"
+        return "I'm not sure about that. Try asking about events or directions!"
         
     try:
         client = OpenAI(
@@ -682,21 +682,20 @@ def _generate_dynamic_fallback(transcript: str) -> str:
                 {
                     "role": "system",
                     "content": (
-                        "You are NEma, a friendly campus guide robot. "
-                        "The user said something you didn't understand or don't know about. "
-                        "Reply in 1 short sentence apologizing and saying you don't know about that, "
-                        "but you can help with campus events or directions."
+                        "You are NEma, a campus guide robot. "
+                        "The user asked something out of domain. "
+                        "Reply in max 10 words apologizing briefly and offering help with campus events or directions."
                     )
                 },
                 {"role": "user", "content": transcript}
             ],
-            max_tokens=60,
-            temperature=0.7
+            max_tokens=25,
+            temperature=0.5
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
         log.error(f"Dynamic fallback LLM failed: {e}")
-        return "I didn't quite catch that. I can help you with campus events or directions!"
+        return "I'm not sure about that. Try asking about events or directions!"
 
 
 _tts_lock = threading.Lock()

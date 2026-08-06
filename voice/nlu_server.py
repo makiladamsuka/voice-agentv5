@@ -253,6 +253,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                 )
 
                 norm_text = _normalize_text(user_text)
+                loop = asyncio.get_running_loop()
                 
                 # Only use exact matches for speculative cache to avoid substring bugs
                 # (e.g., 'laboratory 1' in 'laboratory 10')
@@ -265,7 +266,6 @@ async def _voice_ws_endpoint(websocket) -> None:
                 else:
                     # Run NLU in a thread so we don't block the asyncio event loop
                     runtime = _get_runtime()
-                    loop = asyncio.get_running_loop()
                     result = await loop.run_in_executor(
                         None, _match_intent, runtime, user_text
                     )
@@ -434,12 +434,6 @@ async def _health_endpoint(request) -> None:
     return JSONResponse({"status": "ok", "mode": "nlu"})
 
 
-async def _on_startup() -> None:
-    """Pre-warm AI model weights non-blockingly after the server binds to port 8765."""
-    log.info("NLU WebSocket server running on port 8765.")
-    asyncio.create_task(asyncio.to_thread(_get_runtime))
-
-
 def _build_app():
     """Build and return the Starlette ASGI app."""
     try:
@@ -456,7 +450,6 @@ def _build_app():
             Route("/health", _health_endpoint, methods=["GET"]),
             WebSocketRoute("/ws/voice", _voice_ws_endpoint),
         ],
-        on_startup=[_on_startup],
     )
 
 
@@ -895,25 +888,6 @@ def run_nlu_server(
     log.info(f"[NluServer] Starting on ws://{host}:{port}/ws/voice")
     print(f"[NluServer] WebSocket server starting on port {port}...")
 
-    # Pre-load NLU runtime at startup so the first speech is instant
-    try:
-        print("[NluServer] Pre-loading NLU runtime (ChromaDB + embeddings)...")
-        _get_runtime()
-    except Exception as exc:
-        log.warning(f"[NluServer] Pre-loading NLU runtime failed: {exc}")
-
-    # Pre-build amplitude sidecars for all cached MP3s so ffmpeg is never
-    # called during a live voice turn (eliminates CPU spikes on Pi).
-    try:
-        from voice.audio_envelope import build_all_sidecars
-        audio_cache = APP_DIR / "assets" / "audio_cache"
-        if audio_cache.is_dir():
-            n = build_all_sidecars(audio_cache)
-            if n:
-                print(f"[NluServer] Pre-built {n} amplitude sidecar(s).")
-    except Exception as exc:
-        log.warning(f"Sidecar pre-build failed: {exc}")
-
     config = uvicorn.Config(
         app,
         host=host,
@@ -927,8 +901,38 @@ def run_nlu_server(
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
+    def _prewarm_all():
+        """Pre-warm NLU runtime + sidecars in a background thread.
+
+        Runs AFTER the server port is open so the frontend can connect
+        immediately.  The first actual voice query will block briefly
+        if this hasn't finished yet (via _get_runtime()'s lazy guard).
+        """
+        try:
+            print("[NluServer] Pre-loading NLU runtime (embeddings)...")
+            _get_runtime()
+            print("[NluServer] NLU runtime pre-loaded successfully.")
+        except Exception as exc:
+            log.warning(f"[NluServer] Pre-loading NLU runtime deferred to first request: {exc}")
+
+        # Pre-build amplitude sidecars for all cached MP3s so ffmpeg is never
+        # called during a live voice turn (eliminates CPU spikes on Pi).
+        try:
+            from voice.audio_envelope import build_all_sidecars
+            audio_cache = APP_DIR / "assets" / "audio_cache"
+            if audio_cache.is_dir():
+                n = build_all_sidecars(audio_cache)
+                if n:
+                    print(f"[NluServer] Pre-built {n} amplitude sidecar(s).")
+        except Exception as exc:
+            log.warning(f"Sidecar pre-build failed: {exc}")
+
     async def _run():
         serve_task = asyncio.create_task(server.serve())
+        # Give the server a moment to bind, then pre-warm in a background thread
+        await asyncio.sleep(0.3)
+        print(f"[NluServer] Port {port} open — pre-warming models in background...")
+        asyncio.get_running_loop().run_in_executor(None, _prewarm_all)
         # Poll the Blackboard running flag so we shut down cleanly on Ctrl+C
         while bb.read("running")["running"] and not serve_task.done():
             await asyncio.sleep(0.5)

@@ -139,12 +139,19 @@ class IntentMatcher:
     """Intent matcher with two-tier lookup: O(1) hashmap → O(N·D) numpy L2."""
 
     def __init__(self, db_path: Path):
-        self.client = chromadb.PersistentClient(path=str(db_path))
-        self._ef = embedding_functions.DefaultEmbeddingFunction()
-        self.collection = self.client.get_or_create_collection(
-            name="compiled_intents",
-            embedding_function=self._ef,
-        )
+        try:
+            self.client = chromadb.PersistentClient(path=str(db_path))
+            self._ef = embedding_functions.DefaultEmbeddingFunction()
+            self.collection = self.client.get_or_create_collection(
+                name="compiled_intents",
+                embedding_function=self._ef,
+            )
+        except Exception as e:
+            print(f"  [Matcher] ChromaDB client init deferred/bypassed: {e}")
+            self.client = None
+            self.collection = None
+            self._ef = None
+
         self.intents_map: dict = {}
         self.exact_match_map: dict = {}
 
@@ -452,7 +459,8 @@ class IntentMatcher:
                 f"margin={margin:.2f} ({top_intent} vs {second_intent})"
             )
             # Two different intents too close together → ambiguous, abstain or clarify.
-            if second_intent != top_intent and margin < AMBIGUITY_MARGIN:
+            # Only trigger clarification if top match is NOT already a strong/explicit hit (d1 > 0.30).
+            if second_intent != top_intent and margin < AMBIGUITY_MARGIN and d1 > 0.30:
                 if d1 < threshold:
                     intent1 = self.intents_map.get(top_intent)
                     intent2 = self.intents_map.get(second_intent)
@@ -666,6 +674,8 @@ class OfflineVoiceRuntime:
         self.db_path = APP_DIR / "voice" / "event_db"
         self.matcher = IntentMatcher(self.db_path)
         self.matcher.load_cache(self.db_path / "compiled_intents.json")
+        # Warm up embedding model in background so first query has zero latency
+        self.matcher._get_embed_model()
             
     def process_text_input(self, text: str):
         """Processes a transcript, matches intent, updates Blackboard, and plays audio."""

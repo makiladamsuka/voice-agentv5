@@ -134,6 +134,13 @@ def draw_skeleton(frame: cv2.Mat, detection: HandDetection, is_active: bool = Fa
         cv2.circle(frame, pt, 4, joint_col, -1, cv2.LINE_AA)
         cv2.circle(frame, pt, 5, (255, 255, 255), 1, cv2.LINE_AA)
 
+    # Highlight Palm Middle (palm_center)
+    if detection.palm_center:
+        px, py = detection.palm_center
+        cv2.circle(frame, (px, py), 7, (0, 255, 255), -1, cv2.LINE_AA)
+        cv2.circle(frame, (px, py), 10, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(frame, "PALM CENTER", (px + 12, py + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1, cv2.LINE_AA)
+
 def draw_motion_trail(frame: cv2.Mat, x_history: list[int], y_history: list[int], is_active: bool = False) -> None:
     """
     Draw a glowing, fading trail representing the palm center's motion history.

@@ -52,14 +52,21 @@ _wayfinder = None  # Wayfinder, injected from start_robot.py (or lazy-loaded)
 
 
 def _get_runtime():
-    """Lazy-load the NLU runtime on first WebSocket connection."""
+    """Load or return the NLU runtime (SentenceTransformer weights pre-warmed)."""
     global _runtime
     if _runtime is None:
         from voice.offline_voice.runtime import OfflineVoiceRuntime
-        log.info("Loading NLU runtime (ChromaDB intent matcher)...")
+        log.info("Loading NLU runtime (NumPy fast-path matcher + SentenceTransformer weights)...")
         _runtime = OfflineVoiceRuntime(_bb)
         log.info("NLU runtime ready.")
     return _runtime
+
+def prewarm_nlu_runtime():
+    """Warm up the NLU runtime safely at server startup."""
+    try:
+        _get_runtime()
+    except Exception as e:
+        log.warning(f"NLU runtime pre-warming deferred to first request: {e}")
 
 
 def _get_wayfinder():
@@ -133,8 +140,10 @@ async def _voice_ws_endpoint(websocket) -> None:
     # ── Speculative throttle ──────────────────────────────────────────────
     _spec = {"last_norm": "", "last_ts": 0.0, "min_interval": 1.0}
 
+    import re
     def _normalize_text(t: str) -> str:
-        return t.lower().strip(" \t\r\n.,?!;:")
+        cleaned = re.sub(r'[^a-z0-9 ]+', '', (t or "").lower())
+        return ' '.join(cleaned.split())
 
     if _bb is not None:
         _bb.write(voice_session_active=True, conv_state="listening")
@@ -202,10 +211,24 @@ async def _voice_ws_endpoint(websocket) -> None:
                 _norm_incoming = _normalize_text(original_text)
                 _now = _time.monotonic()
                 _dt = _now - _echo["ts"]
+                is_duplicate_prompt = (_norm_incoming == _echo.get("norm", ""))
+                
+                reply_norm = _echo.get("reply_norm", "")
+                is_reply_echo = False
+                if reply_norm and len(_norm_incoming) >= 3:
+                    if _norm_incoming in reply_norm or reply_norm in _norm_incoming:
+                        is_reply_echo = True
+                    else:
+                        inc_words = set(_norm_incoming.split())
+                        rep_words = set(reply_norm.split())
+                        if len(inc_words) >= 2 and (len(inc_words & rep_words) / len(inc_words)) >= 0.6:
+                            is_reply_echo = True
+
                 if _echo["speaking"] or (_dt < _echo["suppress_sec"]):
-                    print(f"[NLU] Echo suppressed (speaking={_echo['speaking']}, {_dt:.1f}s < {_echo['suppress_sec']:.1f}s): '{original_text}'")
-                    await websocket.send_text(json.dumps({"type": "state", "conv_state": "speaking" if _echo["speaking"] else "listening"}))
-                    continue
+                    if is_duplicate_prompt or is_reply_echo:
+                        print(f"[NLU] Echo suppressed (speaking={_echo['speaking']}, {_dt:.1f}s < {_echo['suppress_sec']:.1f}s): '{original_text}'")
+                        await websocket.send_text(json.dumps({"type": "state", "conv_state": "speaking" if _echo["speaking"] else "listening"}))
+                        continue
 
                 _echo["norm"] = _norm_incoming
                 _echo["ts"] = _now
@@ -298,6 +321,15 @@ async def _voice_ws_endpoint(websocket) -> None:
                     f"[NLU] Reply: '{result.get('reply_text', '')[:80]}' "
                     f"audio={result.get('audio_url')}"
                 )
+
+                # Ensure dynamic TTS audio is generated if missing
+                if not result.get("audio_url") and result.get("reply_text"):
+                    audio_file = await loop.run_in_executor(
+                        None, _generate_dynamic_tts, result["reply_text"]
+                    )
+                    if audio_file:
+                        result["audio_url"] = f"/assets/audio_cache/{audio_file}"
+                        result["audio_path"] = str(APP_DIR / "assets" / "audio_cache" / audio_file)
 
                 # Ensure "thinking" state is visible on screen for at least 400ms before speaking
                 elapsed_think = _time.monotonic() - think_start_ts
@@ -402,6 +434,12 @@ async def _health_endpoint(request) -> None:
     return JSONResponse({"status": "ok", "mode": "nlu"})
 
 
+async def _on_startup() -> None:
+    """Pre-warm AI model weights non-blockingly after the server binds to port 8765."""
+    log.info("NLU WebSocket server running on port 8765.")
+    asyncio.create_task(asyncio.to_thread(_get_runtime))
+
+
 def _build_app():
     """Build and return the Starlette ASGI app."""
     try:
@@ -418,6 +456,7 @@ def _build_app():
             Route("/health", _health_endpoint, methods=["GET"]),
             WebSocketRoute("/ws/voice", _voice_ws_endpoint),
         ],
+        on_startup=[_on_startup],
     )
 
 

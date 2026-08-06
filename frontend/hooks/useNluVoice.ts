@@ -215,15 +215,16 @@ export function useNluVoice({
         });
       }
 
-      if (playChimes) {
-        if (newState === "listening" && oldState !== "listening") {
+      // Play synthesized audio chimes on state transitions (Alexa/Pepper pattern)
+      if (oldState !== newState) {
+        if (newState === "listening") {
           playStartChime();
         } else if (newState === "thinking" && oldState === "listening") {
           playStopChime();
         }
       }
     },
-    [onStateChange, playChimes],
+    [onStateChange],
   );
 
   const onVolumeChangeRef = useRef(onVolumeChange);
@@ -380,14 +381,23 @@ export function useNluVoice({
         }
       }
 
-      if (!apiKey || !replyText) {
-        if (utteranceId) {
-          sendPlaybackStart(utteranceId);
-          isPlayingRef.current = true;
-          await new Promise((r) =>
-            setTimeout(r, Math.max(800, durationMs ?? 2000)),
-          );
+      if (!resolvedUrl) {
+        try {
+          if (typeof window !== "undefined" && "speechSynthesis" in window && replyText) {
+            console.log("[NluVoice] Speaking using Web Speech API fallback:", replyText);
+            const utterance = new SpeechSynthesisUtterance(replyText);
+            utterance.rate = 1.0;
+            sendPlaybackStart(utteranceId ?? "");
+            await new Promise<void>((resolve) => {
+              utterance.onend = () => resolve();
+              utterance.onerror = () => resolve();
+              window.speechSynthesis.speak(utterance);
+            });
+          }
+        } catch (e) {
+          console.warn("[NluVoice] SpeechSynthesis fallback failed:", e);
         }
+
         finishPlayback();
         return;
       }
@@ -512,8 +522,8 @@ export function useNluVoice({
       smart_format: "true",
       interim_results: "true",
       vad_events: "true",
-      endpointing: "200", // Aggressive VAD endpointing for faster turnaround
-      utterance_end_ms: "300", // 300ms silence threshold for snappy end-of-speech detection
+      endpointing: "200", // Fast endpoint detection for low latency
+      utterance_end_ms: "1000", // 1 second silence threshold (Deepgram API requires >= 1000)
     });
 
     const cleanKw = (text: string) => 

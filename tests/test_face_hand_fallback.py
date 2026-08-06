@@ -376,35 +376,8 @@ def main():
             target = None
             target_type = "NONE"
 
-            # ── Skin Blob Lock (prevent false faces during close-up) ────────
-            blob_active_this_frame = False
-            if skin_blob_lock:
-                try:
-                    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                    mask1 = cv2.inRange(hsv, np.array([0, 20, 40], dtype=np.uint8), np.array([25, 255, 255], dtype=np.uint8))
-                    mask2 = cv2.inRange(hsv, np.array([155, 20, 40], dtype=np.uint8), np.array([180, 255, 255], dtype=np.uint8))
-                    mask = cv2.bitwise_or(mask1, mask2)
-                    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
-                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    
-                    if contours:
-                        largest_blob = max(contours, key=cv2.contourArea)
-                        area = cv2.contourArea(largest_blob)
-                        if area > (w * h * 0.15):
-                            M = cv2.moments(largest_blob)
-                            if M["m00"] > 0:
-                                cx = int(M["m10"] / M["m00"])
-                                cy = int(M["m01"] / M["m00"])
-                                target = (cx, cy)
-                                target_type = "CLOSE_UP"
-                                blob_active_this_frame = True
-                except Exception:
-                    pass
-                
-                if not blob_active_this_frame:
-                    skin_blob_lock = False
-
-            if not skin_blob_lock and faces is not None and len(faces) > 0:
+            # 1. Face Detection
+            if faces is not None and len(faces) > 0:
                 valid_faces = [f for f in faces if float(f[2]) > 4 and float(f[3]) > 4]
                 if valid_faces:
                     # Pick largest face
@@ -424,36 +397,19 @@ def main():
             if target is None and len(hands) > 0:
                 # Pick most confident hand
                 best_hand = max(hands, key=lambda h: h.confidence)
-                target = best_hand.palm_center
+                palm_px, palm_py = best_hand.palm_center
+                if best_hand.pixel_landmarks:
+                    xs = [lm[0] for lm in best_hand.pixel_landmarks]
+                    ys = [lm[1] for lm in best_hand.pixel_landmarks]
+                    hand_w = max(xs) - min(xs)
+                    hand_h = max(ys) - min(ys)
+                    hand_box_offset_x = 0.10 * (hand_w * 0.5)
+                    hand_box_offset_y = 0.10 * (hand_h * 0.5)
+                    target = (int(palm_px + hand_box_offset_x), int(palm_py + hand_box_offset_y))
+                else:
+                    target = (int(palm_px), int(palm_py))   
                 target_type = "HAND"
-                
-            # 3. Fallback to Skin Blob if Hand not detected (hand too close/large)
-            if target is None:
-                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                # Broadened human skin color range in HSV (handling red wrap-around)
-                # Lower red/orange hues
-                mask1 = cv2.inRange(hsv, np.array([0, 20, 40], dtype=np.uint8), np.array([25, 255, 255], dtype=np.uint8))
-                # Upper red hues
-                mask2 = cv2.inRange(hsv, np.array([155, 20, 40], dtype=np.uint8), np.array([180, 255, 255], dtype=np.uint8))
-                mask = cv2.bitwise_or(mask1, mask2)
-                
-                # Apply morphological opening to clean up isolated noise
-                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
-                
-                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                if contours:
-                    largest_blob = max(contours, key=cv2.contourArea)
-                    area = cv2.contourArea(largest_blob)
-                    # If blob covers at least 15% of the frame, it's likely a close-up block
-                    if area > (w * h * 0.15):
-                        M = cv2.moments(largest_blob)
-                        if M["m00"] > 0:
-                            cx = int(M["m10"] / M["m00"])
-                            cy = int(M["m01"] / M["m00"])
-                            target = (cx, cy)
-                            target_type = "CLOSE_UP"
-                            skin_blob_lock = True
-
+            
             # 3. Servo Tracking Update — multi-layer smoothing pipeline
             #    (EMA filter → deadzone → velocity-adaptive alpha → smooth + step clamp)
             if target is not None:

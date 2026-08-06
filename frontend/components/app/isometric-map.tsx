@@ -40,7 +40,7 @@ const GlowingPath = ({ points }: { points: [number, number, number][] }) => {
       {/* Base track: continuous solid line (progress bar base) */}
       <Line
         points={points}
-        color="#1D4ED8" // brand blue base
+        color="#E53935" // dark red base
         lineWidth={18}
         transparent
         opacity={0.8}
@@ -49,7 +49,7 @@ const GlowingPath = ({ points }: { points: [number, number, number][] }) => {
       <Line
         ref={lineRef}
         points={points}
-        color="#60A5FA" // light brand pulse
+        color="#E53935" // light red pulse
         lineWidth={18}
         transparent
         opacity={0.9}

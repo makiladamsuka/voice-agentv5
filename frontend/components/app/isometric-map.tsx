@@ -202,7 +202,7 @@ const RealisticStaircase = ({ size, isDestination, boxColor }: { size: [number, 
   );
 };
 
-// Animated group container that makes the floor map drop from above or rise from below on change
+// Static group container (animations removed per requirement)
 const AnimatedFloorGroup = ({
   currentFloor,
   destFloor,
@@ -212,54 +212,7 @@ const AnimatedFloorGroup = ({
   destFloor: string;
   children: React.ReactNode;
 }) => {
-  const groupRef = useRef<THREE.Group>(null);
-  const lastFloorRef = useRef<string>(currentFloor);
-
-  // Spring state refs
-  const velocityRef = useRef<number>(0);
-  const positionYRef = useRef<number>(0);
-
-  useFrame((_, delta) => {
-    if (groupRef.current) {
-      if (lastFloorRef.current && lastFloorRef.current !== currentFloor) {
-        const lastNum = parseInt(lastFloorRef.current.replace(/\D/g, "")) || 1;
-        const currentNum = parseInt(currentFloor.replace(/\D/g, "")) || 1;
-
-        // Reset spring position and velocity on floor change so they always animate in
-        const startY = currentNum > lastNum ? 10 : -10;
-        groupRef.current.position.y = startY;
-        positionYRef.current = startY;
-        velocityRef.current = 0;
-      }
-      lastFloorRef.current = currentFloor;
-
-      // Only run physics equations if there is an active offset to animate
-      if (groupRef.current.position.y !== 0) {
-        const targetY = 0;
-        const tension = 180; // pulling force
-        const damping = 12; // Expressive overshoot bounce
-        const dt = Math.min(delta, 0.03); // cap delta time to avoid instability on frame drops
-
-        const displacement = positionYRef.current - targetY;
-        const springForce = -tension * displacement;
-        const dampingForce = -damping * velocityRef.current;
-        const acceleration = springForce + dampingForce;
-
-        velocityRef.current += acceleration * dt;
-        positionYRef.current += velocityRef.current * dt;
-
-        // Snap to zero if settled
-        if (Math.abs(positionYRef.current) < 0.001 && Math.abs(velocityRef.current) < 0.001) {
-          positionYRef.current = 0;
-          velocityRef.current = 0;
-        }
-
-        groupRef.current.position.y = positionYRef.current;
-      }
-    }
-  });
-
-  return <group ref={groupRef}>{children}</group>;
+  return <group>{children}</group>;
 };
 
 export default function NavigationMap({
@@ -281,6 +234,16 @@ export default function NavigationMap({
   const [highlightedFloor, setHighlightedFloor] = useState<string | null>(null);
   const animTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [webglSupported, setWebglSupported] = useState<boolean>(true);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [indicatorFloor, setIndicatorFloor] = useState<string | null>(null);
+  const isTransitioningRef = useRef(false);
+  const indicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (indicatorTimerRef.current) clearTimeout(indicatorTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -473,11 +436,11 @@ export default function NavigationMap({
         </div>
       )}
 
+
       {/* Floor Switcher — even pills matching kiosk chrome */}
       {!hideFloorSwitcher && (
         <div
-          className="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-20 w-[108px] max-h-[70vh] overflow-y-auto pointer-events-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-          onClick={(e) => e.stopPropagation()}
+          className="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-20 w-[108px] max-h-[70vh] overflow-y-auto pointer-events-none [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         >
           <div className="text-[11px] font-bold text-center uppercase tracking-wider text-white/70 py-1">
             Floors
@@ -499,14 +462,8 @@ export default function NavigationMap({
             const isButtonActive = highlightedFloor ? highlightedFloor === f : active;
 
             return (
-              <button
+              <div
                 key={`${f}-${idx}`}
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  cancelAnim();
-                  setCurrentFloor(f as string);
-                }}
                 className={`w-full min-h-[52px] px-3 py-2.5 rounded-3xl font-bold flex flex-col items-center justify-center border transition-all duration-300 shadow-lg backdrop-blur-md overflow-hidden ${isButtonActive
                   ? "bg-blue-500/80 text-white border-blue-400/30"
                   : "bg-black/60 text-white border-white/10"
@@ -523,16 +480,67 @@ export default function NavigationMap({
                     {badge}
                   </span>
                 ) : null}
-              </button>
+              </div>
             );
           })}
         </div>
       )}
 
+      {/* Floor Indicator Micro-interaction */}
+      <div
+        className={`absolute top-24 left-1/2 -translate-x-1/2 px-8 py-3 rounded-full bg-black/40 backdrop-blur-xl border border-white/20 shadow-2xl transition-all duration-300 pointer-events-none z-50 flex items-center gap-3 ${indicatorFloor ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-4 scale-95'
+          }`}
+      >
+        <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+        <span className="text-white font-bold tracking-widest uppercase text-[15px] drop-shadow-lg">
+          {indicatorFloor ? indicatorFloor.replace("floor_", "Floor ") : ""}
+        </span>
+      </div>
+
       {/* 3D Canvas */}
       <div
-        className="w-full h-full"
+        className={`w-full h-full transition-all duration-150 ease-in-out motion-reduce:transition-opacity motion-reduce:transform-none ${isTransitioning ? 'opacity-0 translate-y-[10px] blur-[2px]' : 'opacity-100 translate-y-0 blur-0'
+          }`}
         onClick={(e) => e.stopPropagation()}
+        onWheel={(e) => {
+          e.stopPropagation();
+          if (isTransitioningRef.current) return;
+
+          if (!availableFloors.length) return;
+          const currentIndex = availableFloors.indexOf(currentFloor);
+          if (currentIndex === -1) return;
+
+          let nextIndex = -1;
+          if (e.deltaY < 0 && currentIndex > 0) {
+            nextIndex = currentIndex - 1;
+          } else if (e.deltaY > 0 && currentIndex < availableFloors.length - 1) {
+            nextIndex = currentIndex + 1;
+          }
+
+          if (nextIndex !== -1) {
+            const nextFloor = availableFloors[nextIndex] as string;
+
+            // Start transition
+            isTransitioningRef.current = true;
+            setIsTransitioning(true);
+            setIndicatorFloor(nextFloor);
+            cancelAnim();
+
+            if (indicatorTimerRef.current) clearTimeout(indicatorTimerRef.current);
+            indicatorTimerRef.current = setTimeout(() => setIndicatorFloor(null), 1000);
+
+            // Wait for fade out (150ms), swap floor, fade back in
+            setTimeout(() => {
+              setCurrentFloor(nextFloor);
+              setIsTransitioning(false);
+
+              // Unlock scroll after full 300ms transition completes
+              setTimeout(() => {
+                isTransitioningRef.current = false;
+              }, 150);
+            }, 150);
+          }
+        }}
       >
         {!webglSupported ? (
           <div className="flex h-full w-full flex-col items-center justify-center text-center p-6 bg-neutral-900/95 text-white/80 rounded-3xl border border-white/10">
@@ -669,7 +677,7 @@ export default function NavigationMap({
                         {isYouAreHere ? (
                           <Html center position={[0, size[1] / 2 - 0.5, 0]}>
                             <svg viewBox="0 0 24 24" width="60" height="60" style={{ filter: "drop-shadow(0px 10px 5px rgba(0,0,0,0.5))", transform: "translateY(-50%)" }}>
-                              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#ff0000" />
+                              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#E53935" />
                               <circle cx="12" cy="9" r="3.5" fill="#000000" />
                             </svg>
                           </Html>
@@ -736,7 +744,7 @@ export default function NavigationMap({
                 maxPolarAngle={40 * (Math.PI / 180)}
                 minAzimuthAngle={-8 * (Math.PI / 180)}
                 maxAzimuthAngle={-8 * (Math.PI / 180)}
-                target={[-4.5, 0, -1]}
+                target={[2, 1, -1]}
               />
             </React.Suspense>
           </Canvas>

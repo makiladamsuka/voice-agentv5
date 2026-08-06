@@ -491,7 +491,7 @@ def _get_event_buttons(max_buttons: int = 4) -> list:
     Falls back to plain strings when no posters exist yet.
     """
     assets_dir = APP_DIR / "assets"
-    extracted_path = APP_DIR / "event_db" / "extracted_events.json"
+    extracted_path = APP_DIR / "voice" / "event_db" / "extracted_events.json"
 
     extracted: dict[str, dict] = {}
     try:
@@ -520,14 +520,16 @@ def _get_event_buttons(max_buttons: int = 4) -> list:
                 continue
             meta = extracted.get(f.name, {})
             title = (meta.get("title") or "").strip()
-            if not title:
+            if not title or not any(c.isalpha() for c in title):
                 stem = f.stem
                 parts = stem.split("_")
                 readable_parts = [p for p in parts if not p.isdigit()]
                 if readable_parts:
                     title = " ".join(readable_parts).replace("-", " ").strip().title()
-                if not title or not any(c.isalpha() for c in title):
-                    title = category_map.get(category, "Campus Event")
+                else:
+                    base_cat = category_map.get(category, "Campus Event")
+                    suffix = parts[-1] if parts else stem
+                    title = f"{base_cat} ({suffix[-5:]})"
             entries.append((f.stat().st_mtime, {
                 "label": title,
                 "filename": f.name,

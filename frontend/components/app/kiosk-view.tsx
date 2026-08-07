@@ -985,62 +985,71 @@ function KioskViewUI({
             /* Maps hub — category buttons only (no WebGL until route/explore) */
             <div className={`flex-1 min-h-0 ${PANEL} p-6 flex flex-col`}>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-[28px] font-bold text-[var(--kiosk-text)]">
+                <h2 className="text-[40px] font-bold text-[var(--kiosk-text)]">
                   Where to?
                 </h2>
-                <PopButton
-                  onClick={goIdle}
-                  aria-label="Close"
-                  className={ICON_BTN}
-                >
-                  <span className="material-symbols-outlined text-[22px]">
-                    close
-                  </span>
-                </PopButton>
+                <div className="flex items-center gap-3">
+                  {/* Compact Explore Map Action Button */}
+                  <PopButton
+                    onClick={() => {
+                      setNavData(null);
+                      void ensureMapsData().then(() => setShowExploreMap(true));
+                    }}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-[20px] font-bold transition-colors shadow-md border border-transparent"
+                  >
+                    <span className="material-symbols-outlined text-[28px]">
+                      map
+                    </span>
+                    Explore Map
+                  </PopButton>
+
+                  <PopButton
+                    onClick={goIdle}
+                    aria-label="Close"
+                    className={ICON_BTN}
+                  >
+                    <span className="material-symbols-outlined text-[22px]">
+                      close
+                    </span>
+                  </PopButton>
+                </div>
               </div>
               <p className="text-[16px] text-[var(--kiosk-muted)] mb-6">
                 Pick a category, then choose a room.
               </p>
-              <div className="flex flex-col gap-3 mt-auto pb-24">
-                <PopButton
-                  className={CAT_BTN}
-                  onClick={() => handleCategoryClick("Lecture Halls", "lecture")}
-                >
-                  <span className="material-symbols-outlined text-[28px]">
-                    school
-                  </span>
-                  Lecture Halls
-                </PopButton>
-                <PopButton
-                  className={CAT_BTN}
-                  onClick={() => handleCategoryClick("Laboratory", "lab")}
-                >
-                  <span className="material-symbols-outlined text-[28px]">
-                    science
-                  </span>
-                  Laboratory
-                </PopButton>
-                <PopButton
-                  className={CAT_BTN}
-                  onClick={() => handleCategoryClick("Offices & More", "office")}
-                >
-                  <span className="material-symbols-outlined text-[28px]">
-                    apartment
-                  </span>
-                  Offices &amp; More
-                </PopButton>
-                <PopButton
-                  className={`${CAT_BTN} opacity-80`}
-                  onClick={() => {
-                    setNavData(null);
-                    void ensureMapsData().then(() => setShowExploreMap(true));
-                  }}
-                >
-                  <span className="material-symbols-outlined text-[28px]">
-                    map
-                  </span>
-                  Explore map
-                </PopButton>
+              <div className="flex flex-col gap-6 mt-auto pb-12 w-full">
+                {/* Horizontal Category Carousel */}
+                <div className="flex justify-center gap-4 overflow-x-auto snap-x snap-mandatory pb-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden w-full">
+                  <PopButton
+                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
+                    onClick={() => handleCategoryClick("Lecture Halls", "lecture")}
+                  >
+                    <span className="material-symbols-outlined text-[44px] text-[#EA580C]">
+                      school
+                    </span>
+                    <span className="text-center leading-tight">Lecture Halls</span>
+                  </PopButton>
+
+                  <PopButton
+                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
+                    onClick={() => handleCategoryClick("Laboratory", "lab")}
+                  >
+                    <span className="material-symbols-outlined text-[44px] text-[#8B5CF6]">
+                      science
+                    </span>
+                    <span className="text-center leading-tight">Laboratory</span>
+                  </PopButton>
+
+                  <PopButton
+                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
+                    onClick={() => handleCategoryClick("Offices & More", "office")}
+                  >
+                    <span className="material-symbols-outlined text-[44px] text-[#14B8A6]">
+                      apartment
+                    </span>
+                    <span className="text-center leading-tight">Offices &amp; More</span>
+                  </PopButton>
+                </div>
               </div>
             </div>
           ) : mode === "talk" ? (
@@ -1369,8 +1378,8 @@ function KioskViewUI({
                         key={post.id}
                         type="button"
                         className={`absolute inset-0 w-full h-full transition-opacity duration-700 ${index === currentSlide
-                            ? "opacity-100 pointer-events-auto"
-                            : "opacity-0 pointer-events-none"
+                          ? "opacity-100 pointer-events-auto"
+                          : "opacity-0 pointer-events-none"
                           }`}
                         onClick={() => handlePosterTap(post)}
                       >
@@ -1426,8 +1435,8 @@ function KioskViewUI({
                           <div
                             key={idx}
                             className={`rounded-full transition-all ${idx === currentSlide
-                                ? "w-2 h-6 bg-white"
-                                : "w-2 h-2 bg-white/45"
+                              ? "w-2 h-6 bg-white"
+                              : "w-2 h-2 bg-white/45"
                               }`}
                           />
                         ))}
@@ -1686,8 +1695,8 @@ function KioskViewUI({
                         void applyEyeColor(c.eye, c.ui);
                       }}
                       className={`w-10 h-10 rounded-full shrink-0 shadow-sm ${c.swatch} ${c.name === "White"
-                          ? "border-2 border-[var(--kiosk-border)] ring-1 ring-[var(--kiosk-muted)]"
-                          : "border border-[var(--kiosk-border)]"
+                        ? "border-2 border-[var(--kiosk-border)] ring-1 ring-[var(--kiosk-muted)]"
+                        : "border border-[var(--kiosk-border)]"
                         }`}
                       aria-label={`Change eye color to ${c.name}`}
                     />

@@ -5,7 +5,7 @@
 # OpenCV YuNet faces (YOLO body detection removed for Pi CPU savings)
 opencv-python==4.12.0.88
 Pillow
-chromadb
+sentence-transformers
 
 # Raspberry Pi Camera (install via: sudo apt install python3-picamera2)
 # picamera2 is system-specific and typically installed via apt on Raspberry Pi OS

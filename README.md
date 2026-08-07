@@ -27,7 +27,6 @@ Nema is an end-to-end autonomous campus kiosk robot featuring real-time computer
 
 - **🚀 [Quick Start & Setup Guide](docs/QUICK_START.md)** — Complete step-by-step instructions for fresh Raspberry Pi setup, config settings, and starting the kiosk stack.
 - **🧠 [System Architecture & Specifications](docs/SYSTEM_ARCHITECTURE.md)** — Exhaustive technical details covering CPU core affinity, custom PCBs, Blackboard state bus, and NLU vector matching.
-- **🎙️ [5-Minute Presentation Script](docs/INTRODUCTORY_SPEECH_5MIN.md)** — Presentation speech template in simple English, perfect for academic defense or demonstrations.
 - **📦 [3D Printable STL Parts](hardware/3d_models/)** — 3D model files (.stl) for Nema's custom robot body and mounts.
 
 ---

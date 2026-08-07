@@ -1,827 +1,20 @@
 [
   {
-    "id": "nav_department_of_information_technology",
+    "id": "navigate_ai_research_laboratory",
     "utterances": [
-      "show me department of information technology",
-      "directions for department of information technology",
-      "how to get to department of information technology",
-      "where is department of information technology",
-      "take me to department of information technology",
-      "navigate to department of information technology",
-      "department of information technology"
+      "Where is AI research laboratory?",
+      "Where is the AI research laboratory?",
+      "Take me to AI research laboratory",
+      "Take me to the AI research laboratory",
+      "Directions to AI research laboratory",
+      "How do I get to AI research laboratory?",
+      "How do I get to the AI research laboratory?",
+      "Show me the way to AI research laboratory",
+      "Find the AI research laboratory",
+      "I'm looking for the AI research laboratory",
+      "Guide me to AI research laboratory"
     ],
-    "response_text": "Sure, guiding you to Department of Information Technology.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Department of Information Technology"
-    }
-  },
-  {
-    "id": "nav_lecture_hall_8",
-    "utterances": [
-      "lh 8",
-      "show me lecture hall 8",
-      "navigate to lecture hall 8",
-      "take me to lecture hall 8",
-      "where is lecture hall 8",
-      "directions for lecture hall 8",
-      "lecture hall 8",
-      "how to get to lecture hall 8"
-    ],
-    "response_text": "Sure, guiding you to Lecture hall 8.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Lecture hall 8"
-    }
-  },
-  {
-    "id": "nav_front_desk",
-    "utterances": [
-      "how to get to front desk",
-      "where is front desk",
-      "take me to front desk",
-      "navigate to front desk",
-      "directions for front desk",
-      "show me front desk",
-      "front desk"
-    ],
-    "response_text": "Sure, guiding you to Front desk.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Front desk"
-    }
-  },
-  {
-    "id": "nav_evaluator",
-    "utterances": [
-      "show me evaluator",
-      "directions for evaluator",
-      "navigate to evaluator",
-      "take me to evaluator",
-      "evaluator",
-      "where is evaluator",
-      "how to get to evaluator"
-    ],
-    "response_text": "Sure, guiding you to Evaluator.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Evaluator"
-    }
-  },
-  {
-    "id": "nav_male_washroom",
-    "utterances": [
-      "take me to male washroom",
-      "show me male washroom",
-      "male washroom",
-      "where is male washroom",
-      "directions for male washroom",
-      "navigate to male washroom",
-      "how to get to male washroom"
-    ],
-    "response_text": "Sure, guiding you to Male Washroom.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Male Washroom"
-    }
-  },
-  {
-    "id": "nav_laboratory_7",
-    "utterances": [
-      "take me to laboratory 7",
-      "laboratory 7",
-      "lab 7",
-      "directions for laboratory 7",
-      "how to get to laboratory 7",
-      "show me laboratory 7",
-      "navigate to laboratory 7",
-      "where is laboratory 7"
-    ],
-    "response_text": "Sure, guiding you to Laboratory 7.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Laboratory 7"
-    }
-  },
-  {
-    "id": "nav_director_undergraduate_studies",
-    "utterances": [
-      "director undergraduate studies",
-      "show me director undergraduate studies",
-      "how to get to director undergraduate studies",
-      "navigate to director undergraduate studies",
-      "directions for director undergraduate studies",
-      "where is director undergraduate studies",
-      "take me to director undergraduate studies"
-    ],
-    "response_text": "Sure, guiding you to Director undergraduate studies.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Director undergraduate studies"
-    }
-  },
-  {
-    "id": "nav_undergraduate_division",
-    "utterances": [
-      "show me undergraduate division",
-      "how to get to undergraduate division",
-      "where is undergraduate division",
-      "undergraduate division",
-      "navigate to undergraduate division",
-      "take me to undergraduate division",
-      "directions for undergraduate division"
-    ],
-    "response_text": "Sure, guiding you to Undergraduate Division.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Undergraduate Division"
-    }
-  },
-  {
-    "id": "nav_female_washroom",
-    "utterances": [
-      "show me female washroom",
-      "navigate to female washroom",
-      "take me to female washroom",
-      "where is female washroom",
-      "directions for female washroom",
-      "female washroom",
-      "how to get to female washroom"
-    ],
-    "response_text": "Sure, guiding you to feMale Washroom.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "feMale Washroom"
-    }
-  },
-  {
-    "id": "nav_dean_s_office",
-    "utterances": [
-      "where is dean's office",
-      "how to get to dean's office",
-      "navigate to dean's office",
-      "directions for dean's office",
-      "show me dean's office",
-      "dean's office",
-      "take me to dean's office"
-    ],
-    "response_text": "Sure, guiding you to Dean's Office.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Dean's Office"
-    }
-  },
-  {
-    "id": "nav_laboratory_1",
-    "utterances": [
-      "lab 1",
-      "laboratory 1",
-      "where is laboratory 1",
-      "how to get to laboratory 1",
-      "show me laboratory 1",
-      "take me to laboratory 1",
-      "navigate to laboratory 1",
-      "directions for laboratory 1"
-    ],
-    "response_text": "Sure, guiding you to Laboratory 1.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Laboratory 1"
-    }
-  },
-  {
-    "id": "nav_exit",
-    "utterances": [
-      "take me to exit",
-      "navigate to exit",
-      "exit",
-      "how to get to exit",
-      "where is exit",
-      "show me exit",
-      "directions for exit"
-    ],
-    "response_text": "Sure, guiding you to EXIT.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "EXIT"
-    }
-  },
-  {
-    "id": "nav_lecture_hall_1",
-    "utterances": [
-      "directions for lecture hall 1",
-      "lecture hall 1",
-      "navigate to lecture hall 1",
-      "lh 1",
-      "show me lecture hall 1",
-      "where is lecture hall 1",
-      "take me to lecture hall 1",
-      "how to get to lecture hall 1"
-    ],
-    "response_text": "Sure, guiding you to Lecture hall 1.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Lecture hall 1"
-    }
-  },
-  {
-    "id": "nav_lecture_hall_2",
-    "utterances": [
-      "lecture hall 2",
-      "how to get to lecture hall 2",
-      "take me to lecture hall 2",
-      "directions for lecture hall 2",
-      "navigate to lecture hall 2",
-      "lh 2",
-      "where is lecture hall 2",
-      "show me lecture hall 2"
-    ],
-    "response_text": "Sure, guiding you to Lecture hall 2.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Lecture hall 2"
-    }
-  },
-  {
-    "id": "nav_staircase_2",
-    "utterances": [
-      "staircase 2",
-      "navigate to staircase 2",
-      "directions for staircase 2",
-      "take me to staircase 2",
-      "show me staircase 2",
-      "how to get to staircase 2",
-      "where is staircase 2"
-    ],
-    "response_text": "Sure, guiding you to Staircase 2.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Staircase 2"
-    }
-  },
-  {
-    "id": "nav_staircase_1",
-    "utterances": [
-      "where is staircase 1",
-      "staircase 1",
-      "take me to staircase 1",
-      "navigate to staircase 1",
-      "show me staircase 1",
-      "directions for staircase 1",
-      "how to get to staircase 1"
-    ],
-    "response_text": "Sure, guiding you to Staircase 1.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Staircase 1"
-    }
-  },
-  {
-    "id": "nav_department_of_computational_mathematics",
-    "utterances": [
-      "directions for department of computational mathematics",
-      "how to get to department of computational mathematics",
-      "department of computational mathematics",
-      "where is department of computational mathematics",
-      "navigate to department of computational mathematics",
-      "take me to department of computational mathematics",
-      "show me department of computational mathematics"
-    ],
-    "response_text": "Sure, guiding you to Department of Computational Mathematics.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Department of Computational Mathematics"
-    }
-  },
-  {
-    "id": "nav_laboratory_8",
-    "utterances": [
-      "where is laboratory 8",
-      "laboratory 8",
-      "take me to laboratory 8",
-      "navigate to laboratory 8",
-      "how to get to laboratory 8",
-      "lab 8",
-      "show me laboratory 8",
-      "directions for laboratory 8"
-    ],
-    "response_text": "Sure, guiding you to Laboratory 8.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Laboratory 8"
-    }
-  },
-  {
-    "id": "nav_female_washroom",
-    "utterances": [
-      "show me female washroom",
-      "navigate to female washroom",
-      "take me to female washroom",
-      "where is female washroom",
-      "directions for female washroom",
-      "female washroom",
-      "how to get to female washroom"
-    ],
-    "response_text": "Sure, guiding you to FeMale Washroom.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "FeMale Washroom"
-    }
-  },
-  {
-    "id": "nav_high_performance_computer_laboratory",
-    "utterances": [
-      "show me high performance computer laboratory",
-      "high performance computer laboratory",
-      "high performance computer lab",
-      "directions for high performance computer laboratory",
-      "navigate to high performance computer laboratory",
-      "where is high performance computer laboratory",
-      "how to get to high performance computer laboratory",
-      "take me to high performance computer laboratory"
-    ],
-    "response_text": "Sure, guiding you to High Performance Computer Laboratory.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "High Performance Computer Laboratory"
-    }
-  },
-  {
-    "id": "nav_engineering_unit",
-    "utterances": [
-      "directions for engineering unit",
-      "engineering unit",
-      "show me engineering unit",
-      "navigate to engineering unit",
-      "where is engineering unit",
-      "take me to engineering unit",
-      "how to get to engineering unit"
-    ],
-    "response_text": "Sure, guiding you to Engineering unit.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Engineering unit"
-    }
-  },
-  {
-    "id": "nav_instructor_room",
-    "utterances": [
-      "show me instructor room",
-      "where is instructor room",
-      "take me to instructor room",
-      "how to get to instructor room",
-      "instructor room",
-      "directions for instructor room",
-      "navigate to instructor room"
-    ],
-    "response_text": "Sure, guiding you to Instructor Room.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Instructor Room"
-    }
-  },
-  {
-    "id": "nav_laboratory_5",
-    "utterances": [
-      "lab 5",
-      "take me to laboratory 5",
-      "navigate to laboratory 5",
-      "directions for laboratory 5",
-      "where is laboratory 5",
-      "how to get to laboratory 5",
-      "show me laboratory 5",
-      "laboratory 5"
-    ],
-    "response_text": "Sure, guiding you to Laboratory 5.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Laboratory 5"
-    }
-  },
-  {
-    "id": "nav_labratory_2",
-    "utterances": [
-      "directions for labratory 2",
-      "labratory 2",
-      "show me labratory 2",
-      "how to get to labratory 2",
-      "take me to labratory 2",
-      "navigate to labratory 2",
-      "where is labratory 2"
-    ],
-    "response_text": "Sure, guiding you to labratory 2.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "labratory 2"
-    }
-  },
-  {
-    "id": "nav_multimedia_research_laboratory",
-    "utterances": [
-      "directions for multimedia research laboratory",
-      "show me multimedia research laboratory",
-      "multimedia research laboratory",
-      "multimedia research lab",
-      "how to get to multimedia research laboratory",
-      "where is multimedia research laboratory",
-      "take me to multimedia research laboratory",
-      "navigate to multimedia research laboratory"
-    ],
-    "response_text": "Sure, guiding you to Multimedia research laboratory.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Multimedia research laboratory"
-    }
-  },
-  {
-    "id": "nav_lecture_hall_3",
-    "utterances": [
-      "where is lecture hall 3",
-      "take me to lecture hall 3",
-      "lh 3",
-      "show me lecture hall 3",
-      "navigate to lecture hall 3",
-      "lecture hall 3",
-      "how to get to lecture hall 3",
-      "directions for lecture hall 3"
-    ],
-    "response_text": "Sure, guiding you to Lecture hall 3.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Lecture hall 3"
-    }
-  },
-  {
-    "id": "nav_lecturehall_10",
-    "utterances": [
-      "navigate to lecturehall 10",
-      "lecturehall 10",
-      "take me to lecturehall 10",
-      "directions for lecturehall 10",
-      "where is lecturehall 10",
-      "how to get to lecturehall 10",
-      "show me lecturehall 10"
-    ],
-    "response_text": "Sure, guiding you to Lecturehall 10.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Lecturehall 10"
-    }
-  },
-  {
-    "id": "nav_department_of_interdisciplinary_studies",
-    "utterances": [
-      "directions for department of interdisciplinary studies",
-      "take me to department of interdisciplinary studies",
-      "how to get to department of interdisciplinary studies",
-      "show me department of interdisciplinary studies",
-      "navigate to department of interdisciplinary studies",
-      "department of interdisciplinary studies",
-      "where is department of interdisciplinary studies"
-    ],
-    "response_text": "Sure, guiding you to Department of Interdisciplinary Studies.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Department of Interdisciplinary Studies"
-    }
-  },
-  {
-    "id": "nav_faculty_board_room",
-    "utterances": [
-      "how to get to faculty board room",
-      "where is faculty board room",
-      "faculty board room",
-      "show me faculty board room",
-      "navigate to faculty board room",
-      "directions for faculty board room",
-      "take me to faculty board room"
-    ],
-    "response_text": "Sure, guiding you to Faculty Board Room.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Faculty Board Room"
-    }
-  },
-  {
-    "id": "nav_it_research_unit",
-    "utterances": [
-      "show me it research unit",
-      "navigate to it research unit",
-      "how to get to it research unit",
-      "it research unit",
-      "directions for it research unit",
-      "where is it research unit",
-      "take me to it research unit"
-    ],
-    "response_text": "Sure, guiding you to IT Research Unit.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "IT Research Unit"
-    }
-  },
-  {
-    "id": "nav_post_graduate_division",
-    "utterances": [
-      "where is post graduate division",
-      "post graduate division",
-      "show me post graduate division",
-      "take me to post graduate division",
-      "navigate to post graduate division",
-      "directions for post graduate division",
-      "how to get to post graduate division"
-    ],
-    "response_text": "Sure, guiding you to Post Graduate Division.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Post Graduate Division"
-    }
-  },
-  {
-    "id": "nav_laboratory_4",
-    "utterances": [
-      "take me to laboratory 4",
-      "show me laboratory 4",
-      "where is laboratory 4",
-      "navigate to laboratory 4",
-      "directions for laboratory 4",
-      "how to get to laboratory 4",
-      "laboratory 4",
-      "lab 4"
-    ],
-    "response_text": "Sure, guiding you to Laboratory 4.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Laboratory 4"
-    }
-  },
-  {
-    "id": "nav_laboratory_3",
-    "utterances": [
-      "laboratory 3",
-      "take me to laboratory 3",
-      "directions for laboratory 3",
-      "how to get to laboratory 3",
-      "show me laboratory 3",
-      "where is laboratory 3",
-      "navigate to laboratory 3",
-      "lab 3"
-    ],
-    "response_text": "Sure, guiding you to Laboratory 3.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Laboratory 3"
-    }
-  },
-  {
-    "id": "nav_sdc_laboratory",
-    "utterances": [
-      "sdc laboratory",
-      "where is sdc laboratory",
-      "sdc lab",
-      "take me to sdc laboratory",
-      "navigate to sdc laboratory",
-      "how to get to sdc laboratory",
-      "directions for sdc laboratory",
-      "show me sdc laboratory"
-    ],
-    "response_text": "Sure, guiding you to SDC Laboratory.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "SDC Laboratory"
-    }
-  },
-  {
-    "id": "nav_lecture_hall_4",
-    "utterances": [
-      "directions for lecture hall 4",
-      "where is lecture hall 4",
-      "lecture hall 4",
-      "lh 4",
-      "navigate to lecture hall 4",
-      "how to get to lecture hall 4",
-      "take me to lecture hall 4",
-      "show me lecture hall 4"
-    ],
-    "response_text": "Sure, guiding you to Lecture hall 4.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Lecture hall 4"
-    }
-  },
-  {
-    "id": "nav_multimedia_development_laboratory",
-    "utterances": [
-      "multimedia development lab",
-      "where is multimedia development laboratory",
-      "how to get to multimedia development laboratory",
-      "show me multimedia development laboratory",
-      "multimedia development laboratory",
-      "directions for multimedia development laboratory",
-      "take me to multimedia development laboratory",
-      "navigate to multimedia development laboratory"
-    ],
-    "response_text": "Sure, guiding you to multimedia development laboratory.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "multimedia development laboratory"
-    }
-  },
-  {
-    "id": "nav_lecturehall_5",
-    "utterances": [
-      "directions for lecturehall 5",
-      "take me to lecturehall 5",
-      "how to get to lecturehall 5",
-      "lecturehall 5",
-      "show me lecturehall 5",
-      "navigate to lecturehall 5",
-      "where is lecturehall 5"
-    ],
-    "response_text": "Sure, guiding you to Lecturehall 5.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Lecturehall 5"
-    }
-  },
-  {
-    "id": "nav_study_area",
-    "utterances": [
-      "directions for study area",
-      "study area",
-      "take me to study area",
-      "where is study area",
-      "show me study area",
-      "navigate to study area",
-      "how to get to study area"
-    ],
-    "response_text": "Sure, guiding you to Study area.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Study area"
-    }
-  },
-  {
-    "id": "nav_auditorium_2",
-    "utterances": [
-      "where is auditorium 2",
-      "auditorium 2",
-      "navigate to auditorium 2",
-      "directions for auditorium 2",
-      "how to get to auditorium 2",
-      "take me to auditorium 2",
-      "audi 2",
-      "show me auditorium 2"
-    ],
-    "response_text": "Sure, guiding you to Auditorium 2.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Auditorium 2"
-    }
-  },
-  {
-    "id": "nav_embedded_system_laboratory",
-    "utterances": [
-      "how to get to embedded system laboratory",
-      "directions for embedded system laboratory",
-      "where is embedded system laboratory",
-      "show me embedded system laboratory",
-      "embedded system lab",
-      "take me to embedded system laboratory",
-      "embedded system laboratory",
-      "navigate to embedded system laboratory"
-    ],
-    "response_text": "Sure, guiding you to Embedded System Laboratory.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Embedded System Laboratory"
-    }
-  },
-  {
-    "id": "nav_audio_visual_unit_extension",
-    "utterances": [
-      "audio visual unit extension",
-      "navigate to audio visual unit extension",
-      "how to get to audio visual unit extension",
-      "show me audio visual unit extension",
-      "take me to audio visual unit extension",
-      "where is audio visual unit extension",
-      "directions for audio visual unit extension"
-    ],
-    "response_text": "Sure, guiding you to Audio Visual Unit Extension.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Audio Visual Unit Extension"
-    }
-  },
-  {
-    "id": "nav_microcontroller_based_system",
-    "utterances": [
-      "show me microcontroller based system",
-      "microcontroller based system",
-      "take me to microcontroller based system",
-      "directions for microcontroller based system",
-      "where is microcontroller based system",
-      "how to get to microcontroller based system",
-      "navigate to microcontroller based system"
-    ],
-    "response_text": "Sure, guiding you to Microcontroller Based System.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Microcontroller Based System"
-    }
-  },
-  {
-    "id": "nav_server_room",
-    "utterances": [
-      "navigate to server room",
-      "where is server room",
-      "directions for server room",
-      "server room",
-      "how to get to server room",
-      "take me to server room",
-      "show me server room"
-    ],
-    "response_text": "Sure, guiding you to Server room.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Server room"
-    }
-  },
-  {
-    "id": "nav_laboratory_6",
-    "utterances": [
-      "take me to laboratory 6",
-      "how to get to laboratory 6",
-      "directions for laboratory 6",
-      "where is laboratory 6",
-      "navigate to laboratory 6",
-      "lab 6",
-      "laboratory 6",
-      "show me laboratory 6"
-    ],
-    "response_text": "Sure, guiding you to Laboratory 6.",
-    "audio_file": null,
-    "action": {
-      "action": "navigate",
-      "destination": "Laboratory 6"
-    }
-  },
-  {
-    "id": "nav_ai_research_laboratory",
-    "utterances": [
-      "directions for ai research laboratory",
-      "ai research lab",
-      "show me ai research laboratory",
-      "take me to ai research laboratory",
-      "where is ai research laboratory",
-      "navigate to ai research laboratory",
-      "ai research laboratory",
-      "how to get to ai research laboratory"
-    ],
-    "response_text": "Sure, guiding you to AI research laboratory.",
+    "response_text": "Let me show you the way to AI research laboratory.",
     "audio_file": null,
     "action": {
       "action": "navigate",
@@ -829,18 +22,43 @@
     }
   },
   {
-    "id": "nav_auditorium_1",
+    "id": "navigate_audio_visual_unit_extention",
     "utterances": [
-      "show me auditorium 1",
-      "navigate to auditorium 1",
-      "take me to auditorium 1",
-      "directions for auditorium 1",
-      "audi 1",
-      "where is auditorium 1",
-      "auditorium 1",
-      "how to get to auditorium 1"
+      "Where is Audio visual unit extention?",
+      "Where is the Audio visual unit extention?",
+      "Take me to Audio visual unit extention",
+      "Take me to the Audio visual unit extention",
+      "Directions to Audio visual unit extention",
+      "How do I get to Audio visual unit extention?",
+      "How do I get to the Audio visual unit extention?",
+      "Show me the way to Audio visual unit extention",
+      "Find the Audio visual unit extention",
+      "I'm looking for the Audio visual unit extention",
+      "Guide me to Audio visual unit extention"
     ],
-    "response_text": "Sure, guiding you to Auditorium 1.",
+    "response_text": "Let me show you the way to Audio visual unit extention.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Audio visual unit extention"
+    }
+  },
+  {
+    "id": "navigate_auditorium_1",
+    "utterances": [
+      "Where is Auditorium 1?",
+      "Where is the Auditorium 1?",
+      "Take me to Auditorium 1",
+      "Take me to the Auditorium 1",
+      "Directions to Auditorium 1",
+      "How do I get to Auditorium 1?",
+      "How do I get to the Auditorium 1?",
+      "Show me the way to Auditorium 1",
+      "Find the Auditorium 1",
+      "I'm looking for the Auditorium 1",
+      "Guide me to Auditorium 1"
+    ],
+    "response_text": "Let me show you the way to Auditorium 1.",
     "audio_file": null,
     "action": {
       "action": "navigate",
@@ -848,22 +66,905 @@
     }
   },
   {
-    "id": "nav_de_laboratory",
+    "id": "navigate_auditorium_2",
     "utterances": [
-      "directions for de laboratory",
-      "where is de laboratory",
-      "navigate to de laboratory",
-      "de laboratory",
-      "show me de laboratory",
-      "how to get to de laboratory",
-      "de lab",
-      "take me to de laboratory"
+      "Where is Auditorium 2?",
+      "Where is the Auditorium 2?",
+      "Take me to Auditorium 2",
+      "Take me to the Auditorium 2",
+      "Directions to Auditorium 2",
+      "How do I get to Auditorium 2?",
+      "How do I get to the Auditorium 2?",
+      "Show me the way to Auditorium 2",
+      "Find the Auditorium 2",
+      "I'm looking for the Auditorium 2",
+      "Guide me to Auditorium 2"
     ],
-    "response_text": "Sure, guiding you to DE Laboratory.",
+    "response_text": "Let me show you the way to Auditorium 2.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Auditorium 2"
+    }
+  },
+  {
+    "id": "navigate_de_laboratory",
+    "utterances": [
+      "Where is DE Laboratory?",
+      "Where is the DE Laboratory?",
+      "Take me to DE Laboratory",
+      "Take me to the DE Laboratory",
+      "Directions to DE Laboratory",
+      "How do I get to DE Laboratory?",
+      "How do I get to the DE Laboratory?",
+      "Show me the way to DE Laboratory",
+      "Find the DE Laboratory",
+      "I'm looking for the DE Laboratory",
+      "Guide me to DE Laboratory"
+    ],
+    "response_text": "Let me show you the way to DE Laboratory.",
     "audio_file": null,
     "action": {
       "action": "navigate",
       "destination": "DE Laboratory"
+    }
+  },
+  {
+    "id": "navigate_dean_office",
+    "utterances": [
+      "Where is DEAN office?",
+      "Where is the DEAN office?",
+      "Take me to DEAN office",
+      "Take me to the DEAN office",
+      "Directions to DEAN office",
+      "How do I get to DEAN office?",
+      "How do I get to the DEAN office?",
+      "Show me the way to DEAN office",
+      "Find the DEAN office",
+      "I'm looking for the DEAN office",
+      "Guide me to DEAN office"
+    ],
+    "response_text": "Let me show you the way to DEAN office.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "DEAN office"
+    }
+  },
+  {
+    "id": "navigate_department_of_infromation_technology",
+    "utterances": [
+      "Where is DEpartment of Infromation technology?",
+      "Where is the DEpartment of Infromation technology?",
+      "Take me to DEpartment of Infromation technology",
+      "Take me to the DEpartment of Infromation technology",
+      "Directions to DEpartment of Infromation technology",
+      "How do I get to DEpartment of Infromation technology?",
+      "How do I get to the DEpartment of Infromation technology?",
+      "Show me the way to DEpartment of Infromation technology",
+      "Find the DEpartment of Infromation technology",
+      "I'm looking for the DEpartment of Infromation technology",
+      "Guide me to DEpartment of Infromation technology"
+    ],
+    "response_text": "Let me show you the way to DEpartment of Infromation technology.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "DEpartment of Infromation technology"
+    }
+  },
+  {
+    "id": "navigate_departement_of_interdisciplinary_studies",
+    "utterances": [
+      "Where is Departement of interdisciplinary studies?",
+      "Where is the Departement of interdisciplinary studies?",
+      "Take me to Departement of interdisciplinary studies",
+      "Take me to the Departement of interdisciplinary studies",
+      "Directions to Departement of interdisciplinary studies",
+      "How do I get to Departement of interdisciplinary studies?",
+      "How do I get to the Departement of interdisciplinary studies?",
+      "Show me the way to Departement of interdisciplinary studies",
+      "Find the Departement of interdisciplinary studies",
+      "I'm looking for the Departement of interdisciplinary studies",
+      "Guide me to Departement of interdisciplinary studies"
+    ],
+    "response_text": "Let me show you the way to Departement of interdisciplinary studies.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Departement of interdisciplinary studies"
+    }
+  },
+  {
+    "id": "navigate_department_of_computational_mathematic",
+    "utterances": [
+      "Where is Department of Computational mathematic?",
+      "Where is the Department of Computational mathematic?",
+      "Take me to Department of Computational mathematic",
+      "Take me to the Department of Computational mathematic",
+      "Directions to Department of Computational mathematic",
+      "How do I get to Department of Computational mathematic?",
+      "How do I get to the Department of Computational mathematic?",
+      "Show me the way to Department of Computational mathematic",
+      "Find the Department of Computational mathematic",
+      "I'm looking for the Department of Computational mathematic",
+      "Guide me to Department of Computational mathematic"
+    ],
+    "response_text": "Let me show you the way to Department of Computational mathematic.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Department of Computational mathematic"
+    }
+  },
+  {
+    "id": "navigate_director_undergraduate_studies",
+    "utterances": [
+      "Where is Director undergraduate studies?",
+      "Where is the Director undergraduate studies?",
+      "Take me to Director undergraduate studies",
+      "Take me to the Director undergraduate studies",
+      "Directions to Director undergraduate studies",
+      "How do I get to Director undergraduate studies?",
+      "How do I get to the Director undergraduate studies?",
+      "Show me the way to Director undergraduate studies",
+      "Find the Director undergraduate studies",
+      "I'm looking for the Director undergraduate studies",
+      "Guide me to Director undergraduate studies"
+    ],
+    "response_text": "Let me show you the way to Director undergraduate studies.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Director undergraduate studies"
+    }
+  },
+  {
+    "id": "navigate_exit",
+    "utterances": [
+      "Where is EXIT?",
+      "Where is the EXIT?",
+      "Take me to EXIT",
+      "Take me to the EXIT",
+      "Directions to EXIT",
+      "How do I get to EXIT?",
+      "How do I get to the EXIT?",
+      "Show me the way to EXIT",
+      "Find the EXIT",
+      "I'm looking for the EXIT",
+      "Guide me to EXIT"
+    ],
+    "response_text": "Let me show you the way to EXIT.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "EXIT"
+    }
+  },
+  {
+    "id": "navigate_embedded_system_laboratory",
+    "utterances": [
+      "Where is Embedded system laboratory?",
+      "Where is the Embedded system laboratory?",
+      "Take me to Embedded system laboratory",
+      "Take me to the Embedded system laboratory",
+      "Directions to Embedded system laboratory",
+      "How do I get to Embedded system laboratory?",
+      "How do I get to the Embedded system laboratory?",
+      "Show me the way to Embedded system laboratory",
+      "Find the Embedded system laboratory",
+      "I'm looking for the Embedded system laboratory",
+      "Guide me to Embedded system laboratory"
+    ],
+    "response_text": "Let me show you the way to Embedded system laboratory.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Embedded system laboratory"
+    }
+  },
+  {
+    "id": "navigate_engineering_unit",
+    "utterances": [
+      "Where is Engineering unit?",
+      "Where is the Engineering unit?",
+      "Take me to Engineering unit",
+      "Take me to the Engineering unit",
+      "Directions to Engineering unit",
+      "How do I get to Engineering unit?",
+      "How do I get to the Engineering unit?",
+      "Show me the way to Engineering unit",
+      "Find the Engineering unit",
+      "I'm looking for the Engineering unit",
+      "Guide me to Engineering unit"
+    ],
+    "response_text": "Let me show you the way to Engineering unit.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Engineering unit"
+    }
+  },
+  {
+    "id": "navigate_evaluator",
+    "utterances": [
+      "Where is Evaluator?",
+      "Where is the Evaluator?",
+      "Take me to Evaluator",
+      "Take me to the Evaluator",
+      "Directions to Evaluator",
+      "How do I get to Evaluator?",
+      "How do I get to the Evaluator?",
+      "Show me the way to Evaluator",
+      "Find the Evaluator",
+      "I'm looking for the Evaluator",
+      "Guide me to Evaluator"
+    ],
+    "response_text": "Let me show you the way to Evaluator.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Evaluator"
+    }
+  },
+  {
+    "id": "navigate_faculty_board_room",
+    "utterances": [
+      "Where is Faculty board room?",
+      "Where is the Faculty board room?",
+      "Take me to Faculty board room",
+      "Take me to the Faculty board room",
+      "Directions to Faculty board room",
+      "How do I get to Faculty board room?",
+      "How do I get to the Faculty board room?",
+      "Show me the way to Faculty board room",
+      "Find the Faculty board room",
+      "I'm looking for the Faculty board room",
+      "Guide me to Faculty board room"
+    ],
+    "response_text": "Let me show you the way to Faculty board room.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Faculty board room"
+    }
+  },
+  {
+    "id": "navigate_female_washroom",
+    "utterances": [
+      "Where is Female washroom?",
+      "Where is the Female washroom?",
+      "Take me to Female washroom",
+      "Take me to the Female washroom",
+      "Directions to Female washroom",
+      "How do I get to Female washroom?",
+      "How do I get to the Female washroom?",
+      "Show me the way to Female washroom",
+      "Find the Female washroom",
+      "I'm looking for the Female washroom",
+      "Guide me to Female washroom"
+    ],
+    "response_text": "Let me show you the way to Female washroom.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Female washroom"
+    }
+  },
+  {
+    "id": "navigate_front_desk",
+    "utterances": [
+      "Where is Front desk?",
+      "Where is the Front desk?",
+      "Take me to Front desk",
+      "Take me to the Front desk",
+      "Directions to Front desk",
+      "How do I get to Front desk?",
+      "How do I get to the Front desk?",
+      "Show me the way to Front desk",
+      "Find the Front desk",
+      "I'm looking for the Front desk",
+      "Guide me to Front desk"
+    ],
+    "response_text": "Let me show you the way to Front desk.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Front desk"
+    }
+  },
+  {
+    "id": "navigate_high_performance_computer_labrotary",
+    "utterances": [
+      "Where is HIgh performance computer labrotary?",
+      "Where is the HIgh performance computer labrotary?",
+      "Take me to HIgh performance computer labrotary",
+      "Take me to the HIgh performance computer labrotary",
+      "Directions to HIgh performance computer labrotary",
+      "How do I get to HIgh performance computer labrotary?",
+      "How do I get to the HIgh performance computer labrotary?",
+      "Show me the way to HIgh performance computer labrotary",
+      "Find the HIgh performance computer labrotary",
+      "I'm looking for the HIgh performance computer labrotary",
+      "Guide me to HIgh performance computer labrotary"
+    ],
+    "response_text": "Let me show you the way to HIgh performance computer labrotary.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "HIgh performance computer labrotary"
+    }
+  },
+  {
+    "id": "navigate_it_research_unit",
+    "utterances": [
+      "Where is IT research unit?",
+      "Where is the IT research unit?",
+      "Take me to IT research unit",
+      "Take me to the IT research unit",
+      "Directions to IT research unit",
+      "How do I get to IT research unit?",
+      "How do I get to the IT research unit?",
+      "Show me the way to IT research unit",
+      "Find the IT research unit",
+      "I'm looking for the IT research unit",
+      "Guide me to IT research unit"
+    ],
+    "response_text": "Let me show you the way to IT research unit.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "IT research unit"
+    }
+  },
+  {
+    "id": "navigate_lecture_hall_8",
+    "utterances": [
+      "Where is LECTURE HALL 8?",
+      "Where is the LECTURE HALL 8?",
+      "Take me to LECTURE HALL 8",
+      "Take me to the LECTURE HALL 8",
+      "Directions to LECTURE HALL 8",
+      "How do I get to LECTURE HALL 8?",
+      "How do I get to the LECTURE HALL 8?",
+      "Show me the way to LECTURE HALL 8",
+      "Find the LECTURE HALL 8",
+      "I'm looking for the LECTURE HALL 8",
+      "Guide me to LECTURE HALL 8"
+    ],
+    "response_text": "Let me show you the way to LECTURE HALL 8.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "LECTURE HALL 8"
+    }
+  },
+  {
+    "id": "navigate_laboratory_4",
+    "utterances": [
+      "Where is Laboratory 4?",
+      "Where is the Laboratory 4?",
+      "Take me to Laboratory 4",
+      "Take me to the Laboratory 4",
+      "Directions to Laboratory 4",
+      "How do I get to Laboratory 4?",
+      "How do I get to the Laboratory 4?",
+      "Show me the way to Laboratory 4",
+      "Find the Laboratory 4",
+      "I'm looking for the Laboratory 4",
+      "Guide me to Laboratory 4"
+    ],
+    "response_text": "Let me show you the way to Laboratory 4.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Laboratory 4"
+    }
+  },
+  {
+    "id": "navigate_laboratory_5",
+    "utterances": [
+      "Where is Laboratory 5?",
+      "Where is the Laboratory 5?",
+      "Take me to Laboratory 5",
+      "Take me to the Laboratory 5",
+      "Directions to Laboratory 5",
+      "How do I get to Laboratory 5?",
+      "How do I get to the Laboratory 5?",
+      "Show me the way to Laboratory 5",
+      "Find the Laboratory 5",
+      "I'm looking for the Laboratory 5",
+      "Guide me to Laboratory 5"
+    ],
+    "response_text": "Let me show you the way to Laboratory 5.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Laboratory 5"
+    }
+  },
+  {
+    "id": "navigate_laboratory_7",
+    "utterances": [
+      "Where is Laboratory 7?",
+      "Where is the Laboratory 7?",
+      "Take me to Laboratory 7",
+      "Take me to the Laboratory 7",
+      "Directions to Laboratory 7",
+      "How do I get to Laboratory 7?",
+      "How do I get to the Laboratory 7?",
+      "Show me the way to Laboratory 7",
+      "Find the Laboratory 7",
+      "I'm looking for the Laboratory 7",
+      "Guide me to Laboratory 7"
+    ],
+    "response_text": "Let me show you the way to Laboratory 7.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Laboratory 7"
+    }
+  },
+  {
+    "id": "navigate_laboratory_8",
+    "utterances": [
+      "Where is Laboratory 8?",
+      "Where is the Laboratory 8?",
+      "Take me to Laboratory 8",
+      "Take me to the Laboratory 8",
+      "Directions to Laboratory 8",
+      "How do I get to Laboratory 8?",
+      "How do I get to the Laboratory 8?",
+      "Show me the way to Laboratory 8",
+      "Find the Laboratory 8",
+      "I'm looking for the Laboratory 8",
+      "Guide me to Laboratory 8"
+    ],
+    "response_text": "Let me show you the way to Laboratory 8.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Laboratory 8"
+    }
+  },
+  {
+    "id": "navigate_lecture_hall_1",
+    "utterances": [
+      "Where is Lecture hall 1?",
+      "Where is the Lecture hall 1?",
+      "Take me to Lecture hall 1",
+      "Take me to the Lecture hall 1",
+      "Directions to Lecture hall 1",
+      "How do I get to Lecture hall 1?",
+      "How do I get to the Lecture hall 1?",
+      "Show me the way to Lecture hall 1",
+      "Find the Lecture hall 1",
+      "I'm looking for the Lecture hall 1",
+      "Guide me to Lecture hall 1"
+    ],
+    "response_text": "Let me show you the way to Lecture hall 1.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Lecture hall 1"
+    }
+  },
+  {
+    "id": "navigate_lecture_hall_2",
+    "utterances": [
+      "Where is Lecture hall 2?",
+      "Where is the Lecture hall 2?",
+      "Take me to Lecture hall 2",
+      "Take me to the Lecture hall 2",
+      "Directions to Lecture hall 2",
+      "How do I get to Lecture hall 2?",
+      "How do I get to the Lecture hall 2?",
+      "Show me the way to Lecture hall 2",
+      "Find the Lecture hall 2",
+      "I'm looking for the Lecture hall 2",
+      "Guide me to Lecture hall 2"
+    ],
+    "response_text": "Let me show you the way to Lecture hall 2.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Lecture hall 2"
+    }
+  },
+  {
+    "id": "navigate_lecture_hall_3",
+    "utterances": [
+      "Where is Lecture hall 3?",
+      "Where is the Lecture hall 3?",
+      "Take me to Lecture hall 3",
+      "Take me to the Lecture hall 3",
+      "Directions to Lecture hall 3",
+      "How do I get to Lecture hall 3?",
+      "How do I get to the Lecture hall 3?",
+      "Show me the way to Lecture hall 3",
+      "Find the Lecture hall 3",
+      "I'm looking for the Lecture hall 3",
+      "Guide me to Lecture hall 3"
+    ],
+    "response_text": "Let me show you the way to Lecture hall 3.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Lecture hall 3"
+    }
+  },
+  {
+    "id": "navigate_lecture_hall_4",
+    "utterances": [
+      "Where is Lecture hall 4?",
+      "Where is the Lecture hall 4?",
+      "Take me to Lecture hall 4",
+      "Take me to the Lecture hall 4",
+      "Directions to Lecture hall 4",
+      "How do I get to Lecture hall 4?",
+      "How do I get to the Lecture hall 4?",
+      "Show me the way to Lecture hall 4",
+      "Find the Lecture hall 4",
+      "I'm looking for the Lecture hall 4",
+      "Guide me to Lecture hall 4"
+    ],
+    "response_text": "Let me show you the way to Lecture hall 4.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Lecture hall 4"
+    }
+  },
+  {
+    "id": "navigate_lecturehall_10",
+    "utterances": [
+      "Where is Lecturehall 10?",
+      "Where is the Lecturehall 10?",
+      "Take me to Lecturehall 10",
+      "Take me to the Lecturehall 10",
+      "Directions to Lecturehall 10",
+      "How do I get to Lecturehall 10?",
+      "How do I get to the Lecturehall 10?",
+      "Show me the way to Lecturehall 10",
+      "Find the Lecturehall 10",
+      "I'm looking for the Lecturehall 10",
+      "Guide me to Lecturehall 10"
+    ],
+    "response_text": "Let me show you the way to Lecturehall 10.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Lecturehall 10"
+    }
+  },
+  {
+    "id": "navigate_lecturehall_5",
+    "utterances": [
+      "Where is Lecturehall 5?",
+      "Where is the Lecturehall 5?",
+      "Take me to Lecturehall 5",
+      "Take me to the Lecturehall 5",
+      "Directions to Lecturehall 5",
+      "How do I get to Lecturehall 5?",
+      "How do I get to the Lecturehall 5?",
+      "Show me the way to Lecturehall 5",
+      "Find the Lecturehall 5",
+      "I'm looking for the Lecturehall 5",
+      "Guide me to Lecturehall 5"
+    ],
+    "response_text": "Let me show you the way to Lecturehall 5.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Lecturehall 5"
+    }
+  },
+  {
+    "id": "navigate_microconttroller_based_system",
+    "utterances": [
+      "Where is Microconttroller based system?",
+      "Where is the Microconttroller based system?",
+      "Take me to Microconttroller based system",
+      "Take me to the Microconttroller based system",
+      "Directions to Microconttroller based system",
+      "How do I get to Microconttroller based system?",
+      "How do I get to the Microconttroller based system?",
+      "Show me the way to Microconttroller based system",
+      "Find the Microconttroller based system",
+      "I'm looking for the Microconttroller based system",
+      "Guide me to Microconttroller based system"
+    ],
+    "response_text": "Let me show you the way to Microconttroller based system.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Microconttroller based system"
+    }
+  },
+  {
+    "id": "navigate_multimedia_research_laboratory",
+    "utterances": [
+      "Where is Multimedia research laboratory?",
+      "Where is the Multimedia research laboratory?",
+      "Take me to Multimedia research laboratory",
+      "Take me to the Multimedia research laboratory",
+      "Directions to Multimedia research laboratory",
+      "How do I get to Multimedia research laboratory?",
+      "How do I get to the Multimedia research laboratory?",
+      "Show me the way to Multimedia research laboratory",
+      "Find the Multimedia research laboratory",
+      "I'm looking for the Multimedia research laboratory",
+      "Guide me to Multimedia research laboratory"
+    ],
+    "response_text": "Let me show you the way to Multimedia research laboratory.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Multimedia research laboratory"
+    }
+  },
+  {
+    "id": "navigate_sdc_laboratory",
+    "utterances": [
+      "Where is SDC Laboratory?",
+      "Where is the SDC Laboratory?",
+      "Take me to SDC Laboratory",
+      "Take me to the SDC Laboratory",
+      "Directions to SDC Laboratory",
+      "How do I get to SDC Laboratory?",
+      "How do I get to the SDC Laboratory?",
+      "Show me the way to SDC Laboratory",
+      "Find the SDC Laboratory",
+      "I'm looking for the SDC Laboratory",
+      "Guide me to SDC Laboratory"
+    ],
+    "response_text": "Let me show you the way to SDC Laboratory.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "SDC Laboratory"
+    }
+  },
+  {
+    "id": "navigate_server_room",
+    "utterances": [
+      "Where is Server room?",
+      "Where is the Server room?",
+      "Take me to Server room",
+      "Take me to the Server room",
+      "Directions to Server room",
+      "How do I get to Server room?",
+      "How do I get to the Server room?",
+      "Show me the way to Server room",
+      "Find the Server room",
+      "I'm looking for the Server room",
+      "Guide me to Server room"
+    ],
+    "response_text": "Let me show you the way to Server room.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Server room"
+    }
+  },
+  {
+    "id": "navigate_study_area",
+    "utterances": [
+      "Where is Study area?",
+      "Where is the Study area?",
+      "Take me to Study area",
+      "Take me to the Study area",
+      "Directions to Study area",
+      "How do I get to Study area?",
+      "How do I get to the Study area?",
+      "Show me the way to Study area",
+      "Find the Study area",
+      "I'm looking for the Study area",
+      "Guide me to Study area"
+    ],
+    "response_text": "Let me show you the way to Study area.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "Study area"
+    }
+  },
+  {
+    "id": "navigate_instructor_room",
+    "utterances": [
+      "Where is instructor room?",
+      "Where is the instructor room?",
+      "Take me to instructor room",
+      "Take me to the instructor room",
+      "Directions to instructor room",
+      "How do I get to instructor room?",
+      "How do I get to the instructor room?",
+      "Show me the way to instructor room",
+      "Find the instructor room",
+      "I'm looking for the instructor room",
+      "Guide me to instructor room"
+    ],
+    "response_text": "Let me show you the way to instructor room.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "instructor room"
+    }
+  },
+  {
+    "id": "navigate_labratory_1",
+    "utterances": [
+      "Where is labratory 1?",
+      "Where is the labratory 1?",
+      "Take me to labratory 1",
+      "Take me to the labratory 1",
+      "Directions to labratory 1",
+      "How do I get to labratory 1?",
+      "How do I get to the labratory 1?",
+      "Show me the way to labratory 1",
+      "Find the labratory 1",
+      "I'm looking for the labratory 1",
+      "Guide me to labratory 1"
+    ],
+    "response_text": "Let me show you the way to labratory 1.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "labratory 1"
+    }
+  },
+  {
+    "id": "navigate_labratory_2",
+    "utterances": [
+      "Where is labratory 2?",
+      "Where is the labratory 2?",
+      "Take me to labratory 2",
+      "Take me to the labratory 2",
+      "Directions to labratory 2",
+      "How do I get to labratory 2?",
+      "How do I get to the labratory 2?",
+      "Show me the way to labratory 2",
+      "Find the labratory 2",
+      "I'm looking for the labratory 2",
+      "Guide me to labratory 2"
+    ],
+    "response_text": "Let me show you the way to labratory 2.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "labratory 2"
+    }
+  },
+  {
+    "id": "navigate_labratory_3",
+    "utterances": [
+      "Where is labratory 3?",
+      "Where is the labratory 3?",
+      "Take me to labratory 3",
+      "Take me to the labratory 3",
+      "Directions to labratory 3",
+      "How do I get to labratory 3?",
+      "How do I get to the labratory 3?",
+      "Show me the way to labratory 3",
+      "Find the labratory 3",
+      "I'm looking for the labratory 3",
+      "Guide me to labratory 3"
+    ],
+    "response_text": "Let me show you the way to labratory 3.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "labratory 3"
+    }
+  },
+  {
+    "id": "navigate_labratory_6",
+    "utterances": [
+      "Where is labratory 6?",
+      "Where is the labratory 6?",
+      "Take me to labratory 6",
+      "Take me to the labratory 6",
+      "Directions to labratory 6",
+      "How do I get to labratory 6?",
+      "How do I get to the labratory 6?",
+      "Show me the way to labratory 6",
+      "Find the labratory 6",
+      "I'm looking for the labratory 6",
+      "Guide me to labratory 6"
+    ],
+    "response_text": "Let me show you the way to labratory 6.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "labratory 6"
+    }
+  },
+  {
+    "id": "navigate_male_washroom",
+    "utterances": [
+      "Where is male washroom?",
+      "Where is the male washroom?",
+      "Take me to male washroom",
+      "Take me to the male washroom",
+      "Directions to male washroom",
+      "How do I get to male washroom?",
+      "How do I get to the male washroom?",
+      "Show me the way to male washroom",
+      "Find the male washroom",
+      "I'm looking for the male washroom",
+      "Guide me to male washroom"
+    ],
+    "response_text": "Let me show you the way to male washroom.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "male washroom"
+    }
+  },
+  {
+    "id": "navigate_multimedia_development_laboratory",
+    "utterances": [
+      "Where is multimedia development laboratory?",
+      "Where is the multimedia development laboratory?",
+      "Take me to multimedia development laboratory",
+      "Take me to the multimedia development laboratory",
+      "Directions to multimedia development laboratory",
+      "How do I get to multimedia development laboratory?",
+      "How do I get to the multimedia development laboratory?",
+      "Show me the way to multimedia development laboratory",
+      "Find the multimedia development laboratory",
+      "I'm looking for the multimedia development laboratory",
+      "Guide me to multimedia development laboratory"
+    ],
+    "response_text": "Let me show you the way to multimedia development laboratory.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "multimedia development laboratory"
+    }
+  },
+  {
+    "id": "navigate_post_graduate_division",
+    "utterances": [
+      "Where is post graduate division?",
+      "Where is the post graduate division?",
+      "Take me to post graduate division",
+      "Take me to the post graduate division",
+      "Directions to post graduate division",
+      "How do I get to post graduate division?",
+      "How do I get to the post graduate division?",
+      "Show me the way to post graduate division",
+      "Find the post graduate division",
+      "I'm looking for the post graduate division",
+      "Guide me to post graduate division"
+    ],
+    "response_text": "Let me show you the way to post graduate division.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "post graduate division"
+    }
+  },
+  {
+    "id": "navigate_undergraduate_devision",
+    "utterances": [
+      "Where is undergraduate devision?",
+      "Where is the undergraduate devision?",
+      "Take me to undergraduate devision",
+      "Take me to the undergraduate devision",
+      "Directions to undergraduate devision",
+      "How do I get to undergraduate devision?",
+      "How do I get to the undergraduate devision?",
+      "Show me the way to undergraduate devision",
+      "Find the undergraduate devision",
+      "I'm looking for the undergraduate devision",
+      "Guide me to undergraduate devision"
+    ],
+    "response_text": "Let me show you the way to undergraduate devision.",
+    "audio_file": null,
+    "action": {
+      "action": "navigate",
+      "destination": "undergraduate devision"
     }
   }
 ]

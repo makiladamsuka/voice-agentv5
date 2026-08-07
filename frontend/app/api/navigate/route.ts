@@ -5,7 +5,7 @@ import path from "path";
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const destination = searchParams.get("destination");
-  const origin = searchParams.get("origin") || "Front desk";
+  const origin = searchParams.get("origin") || "You are here";
 
   if (!destination) {
     return NextResponse.json({ error: "destination query param required" }, { status: 400 });
@@ -19,7 +19,7 @@ import sys, json, os
 
 # Suppress stdout to prevent Wayfinder prints from breaking JSON parsing
 original_stdout = sys.stdout
-sys.stdout = open(os.devnull, 'w')
+sys.stdout = open(os.devnull, 'w', encoding='utf-8')
 
 sys.path.insert(0, ${JSON.stringify(backendDir)})
 from voice.wayfinding import Wayfinder
@@ -59,7 +59,7 @@ print(json.dumps(result))
   for (const python of pythonCandidates) {
     try {
       const result = await new Promise<string>((resolve, reject) => {
-        execFile(python, ["-c", script], { timeout: 20_000 }, (err, stdout, stderr) => {
+        execFile(python, ["-c", script], { timeout: 20_000, env: { ...process.env, PYTHONIOENCODING: "utf-8" } }, (err, stdout, stderr) => {
           if (err) return reject(new Error(`[${python}] ${stderr || err.message}`));
           if (!stdout.trim()) return reject(new Error(`[${python}] empty output`));
           resolve(stdout.trim());

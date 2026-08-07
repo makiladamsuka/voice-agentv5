@@ -3,7 +3,7 @@
     {
       "id": "1781148136543",
       "x": -3,
-      "z": 6,
+      "z": 5,
       "building": "building_2",
       "label": "Department of Interdisciplinary Studies",
       "type": "room",
@@ -22,20 +22,20 @@
       "type": "room",
       "size": [
         7,
-        1.5,
-        10.5
+        1,
+        9
       ]
     },
     {
       "id": "1781197519029",
-      "x": -2,
+      "x": -1,
       "z": -6,
       "building": "building_1",
       "label": "Evaluator",
       "type": "room",
       "size": [
         1.5,
-        1.5,
+        1,
         1.5
       ]
     },
@@ -48,7 +48,7 @@
       "type": "room",
       "size": [
         1.5,
-        3.5,
+        1,
         1.5
       ],
       "color": "#949090"
@@ -62,7 +62,7 @@
       "type": "room",
       "size": [
         4,
-        3,
+        1,
         1.5
       ]
     },
@@ -88,13 +88,13 @@
       "type": "room",
       "size": [
         2,
-        2,
+        1,
         2
       ]
     },
     {
       "id": "1781198355817",
-      "x": -1,
+      "x": -2,
       "z": -6,
       "building": "building_2",
       "label": "Male Washroom",
@@ -115,7 +115,7 @@
       "type": "room",
       "size": [
         1.5,
-        1.5,
+        1,
         1.5
       ],
       "color": "#949090"
@@ -129,7 +129,7 @@
       "type": "room",
       "size": [
         3,
-        2,
+        1,
         2.5
       ]
     },
@@ -142,7 +142,7 @@
       "type": "room",
       "size": [
         2.5,
-        1.5,
+        1,
         2.5
       ]
     },
@@ -155,7 +155,7 @@
       "type": "room",
       "size": [
         2,
-        1.5,
+        1,
         2
       ]
     },
@@ -181,7 +181,7 @@
       "type": "room",
       "size": [
         1.5,
-        2,
+        1,
         1.5
       ]
     },
@@ -200,7 +200,7 @@
     },
     {
       "id": "1781449357559",
-      "x": -3.5,
+      "x": -3,
       "z": -6,
       "building": "building_1",
       "label": "Staircase 1",
@@ -213,7 +213,7 @@
     },
     {
       "id": "1781449365887",
-      "x": 0.5,
+      "x": 0,
       "z": -6,
       "building": "building_2",
       "label": "Staircase 2",
@@ -226,7 +226,7 @@
     },
     {
       "id": "1782232089496",
-      "x": -3.5,
+      "x": -3,
       "z": -4.5,
       "building": "building_1",
       "label": "Waypoint",
@@ -258,7 +258,7 @@
     },
     {
       "id": "1782232097490",
-      "x": 0.5,
+      "x": 0,
       "z": -4.5,
       "building": "building_2",
       "label": "Waypoint",
@@ -362,7 +362,7 @@
     },
     {
       "id": "1782232131083",
-      "x": 0.5,
+      "x": 0,
       "z": -5,
       "building": "building_2",
       "label": "Waypoint",
@@ -403,7 +403,7 @@
     {
       "id": "1782233955933",
       "x": 2.5,
-      "z": 6,
+      "z": 5,
       "building": "building_2",
       "label": "Waypoint",
       "type": "waypoint"
@@ -712,7 +712,7 @@
         12,
         14
       ],
-      "color": "#ffffff",
+      "color": "#242424",
       "name": "Building 1",
       "removed_cells": [
         "0_3",
@@ -760,7 +760,7 @@
         18,
         14
       ],
-      "color": "#ffffff",
+      "color": "#242424",
       "name": "Building 2",
       "removed_cells": [
         "1_3",

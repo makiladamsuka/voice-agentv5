@@ -408,7 +408,7 @@ voice_profile:
   viz_pose_voice_hz: 0
 
 talk_gesture:
-  enabled: false             # OFF during TTS isolation — primary serial/GIL jitter source
+  enabled: true             # OFF during TTS isolation — primary serial/GIL jitter source
   pose_duration: 0.4
   poll_interval: 0.08
   vertical_speed: 0.5

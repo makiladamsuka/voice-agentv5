@@ -696,11 +696,10 @@ def main():
         )
 
     talk_gesture_cfg = cfg.get("talk_gesture", {}) or {}
-    if talk_gesture_cfg.get("enabled", True):
+    if talk_gesture_cfg.get("enabled", True) and arms_cfg.get("enabled", False):
         from core.talk_gesture_service import TalkGestureService
         
         # Need presets path, default to arms presets path if not provided
-        arms_cfg = cfg.get("arms", {}) or {}
         default_presets = arms_cfg.get("presets_path", "tests/arm_pose_presets.json")
         presets_str = talk_gesture_cfg.get("presets_path", default_presets)
         presets_path = Path(presets_str)

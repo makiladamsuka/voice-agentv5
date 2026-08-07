@@ -25,7 +25,23 @@ def encode_image(image_path: Path) -> str:
 def _clients() -> list[tuple[OpenAI, str]]:
     """Return a list of (client, model) pairs to try in order."""
     options: list[tuple[OpenAI, str]] = []
+    
     if os.getenv("OPENROUTER_API_KEY"):
+        # Most reliable OpenRouter free vision models
+        options.append((
+            OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=os.getenv("OPENROUTER_API_KEY"),
+            ),
+            "google/gemini-2.0-flash-exp:free",
+        ))
+        options.append((
+            OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=os.getenv("OPENROUTER_API_KEY"),
+            ),
+            "qwen/qwen-2.5-vl-72b-instruct:free",
+        ))
         options.append((
             OpenAI(
                 base_url="https://openrouter.ai/api/v1",
@@ -33,21 +49,7 @@ def _clients() -> list[tuple[OpenAI, str]]:
             ),
             "meta-llama/llama-3.2-11b-vision-instruct:free",
         ))
-        options.append((
-            OpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=os.getenv("OPENROUTER_API_KEY"),
-            ),
-            "qwen/qwen-2-vl-7b-instruct:free",
-        ))
-    if os.getenv("GROQ_API_KEY"):
-        options.append((
-            OpenAI(
-                base_url="https://api.groq.com/openai/v1",
-                api_key=os.getenv("GROQ_API_KEY"),
-            ),
-            "llama-3.2-11b-vision-instruct",
-        ))
+        
     return options
 
 

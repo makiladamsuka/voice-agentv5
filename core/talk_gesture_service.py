@@ -191,7 +191,8 @@ class TalkGestureService:
             target_pose: Target pose dictionary with a0, a1, a2, a3 keys.
             duration: Total duration for the movement loop in seconds.
             wait_until_reached: If True, blocks until target is reached (used for returning home).
-            check_speaking: If True, aborts the movement immediately if speaking flag becomes false.
+            check_speaking: If True, aborts the movement after 3 consecutive False ticks
+                to avoid aborting on a single-tick Blackboard write race.
         """
         # Read current arm positions
         current = self.bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
@@ -203,6 +204,10 @@ class TalkGestureService:
         # 50 Hz Blackboard + serial storms during TTS and competed with LocalSpeaker.
         poll_interval = max(0.02, float(self.poll_interval))
         start_time = time.time()
+        # Debounce: require this many consecutive False reads before aborting.
+        # Prevents a single-tick BB write race from killing mid-pose movement.
+        _not_speaking_streak = 0
+        _NOT_SPEAKING_ABORT_TICKS = 3
 
         while True:
             elapsed = time.time() - start_time
@@ -211,7 +216,12 @@ class TalkGestureService:
             if check_speaking:
                 bb_state = self.bb.read("agent_speaking")
                 if not bb_state.get("agent_speaking", False):
-                    break
+                    _not_speaking_streak += 1
+                    if _not_speaking_streak >= _NOT_SPEAKING_ABORT_TICKS:
+                        break
+                else:
+                    _not_speaking_streak = 0  # reset on any True read
+
 
             if wait_until_reached:
                 err = sum(abs(pos[i] - target[i]) for i in range(4))

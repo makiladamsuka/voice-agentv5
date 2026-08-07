@@ -154,6 +154,7 @@ export function useNluAdapter(): NluAdapter {
   const nlu = useNluVoice({
     nluServerUrl: process.env.NEXT_PUBLIC_NLU_SERVER_URL ?? "ws://localhost:8765/ws/voice",
     deepgramApiKey: process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY,
+    playChimes: true,
     onResponse: handleResponse,
     onStateChange: handleStateChange,
     onVolumeChange: (vol: number) => {

@@ -499,80 +499,54 @@ async def _reload_nlu_endpoint(request) -> None:
     return JSONResponse({"status": "ok", "message": "NLU runtime reloading."})
 
 
+_greet_ws_clients: set = set()
+_last_processed_greet_seq: int = 0
+
+
 async def _greet_ws_endpoint(websocket):
     """Dedicated WebSocket for pushing proactive face greetings independently."""
     await websocket.accept()
-    if _bb is None: return
-    last_seq = _bb.read("face_greeting_seq").get("face_greeting_seq", 0)
+    _greet_ws_clients.add(websocket)
+    log.info("Browser connected to NLU greeting WebSocket.")
     try:
         while True:
-            await asyncio.sleep(0.5)
-            state = _bb.read("face_greeting_seq", "face_greeting_text", "agent_speaking", "user_speaking")
-            seq = state.get("face_greeting_seq", 0)
-            if seq > last_seq:
-                last_seq = seq
-                text = state.get("face_greeting_text", "")
-                
-                if text and not state.get("agent_speaking") and not state.get("user_speaking"):
-                    print(f"[NLU] Sending proactive face greeting: '{text}'")
-                    
-                    loop = asyncio.get_running_loop()
-                    audio_file = await loop.run_in_executor(None, _generate_dynamic_tts, text)
-                    
-                    audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
-                    audio_path = str(APP_DIR / "assets" / "audio_cache" / audio_file) if audio_file else None
-
-                    sync = get_speech_sync_service()
-                    if sync is not None:
-                        sync.arm_utterance(reply_text=text, audio_path=audio_path)
-                    
-                    if _bb is not None:
-                        _bb.write(conv_state="speaking", agent_speaking=True)
-                    
-                    # Play audio on hardware speaker if available
-                    if audio_path and Path(audio_path).exists():
-                        from voice.offline_voice.runtime import play_audio
-                        await loop.run_in_executor(None, play_audio, Path(audio_path))
-
-                    await websocket.send_text(json.dumps({
-                        "type": "greeting",
-                        "text": text,
-                        "audio_url": audio_url
-                    }))
-                    
-                    # Wait for estimated audio duration then clear speaking flag.
-                    # ~120ms per word as a rough TTS duration estimate.
-                    word_count = len(text.split())
-                    clear_delay = max(1.5, word_count * 0.12 + 0.5)
-                    await asyncio.sleep(clear_delay)
-                    if _bb is not None:
-                        _bb.write(conv_state="waiting", agent_speaking=False)
-    except Exception as e:
-        if "disconnect" not in type(e).__name__.lower():
-            log.error(f"[NLU] Greeting WS error: {e}")
+            await websocket.receive_text()
+    except Exception:
+        pass
+    finally:
+        _greet_ws_clients.discard(websocket)
 
 
 async def _monitor_face_greetings_loop() -> None:
-    """Background task in NLU server to process face greetings and play speech locally."""
+    """Single background loop in NLU server to handle face greetings.
+
+    Guarantees each face_greeting_seq is processed EXACTLY ONCE.
+    If a browser WebSocket is connected, pushes to the browser.
+    If no browser is connected, plays audio via local hardware speaker.
+    """
+    global _last_processed_greet_seq
     if _bb is None:
         return
-    last_seq = _bb.read("face_greeting_seq").get("face_greeting_seq", 0)
-    from voice.offline_voice.runtime import play_audio
+    _last_processed_greet_seq = _bb.read("face_greeting_seq").get("face_greeting_seq", 0)
 
     while _bb.read("running").get("running", True):
         await asyncio.sleep(0.3)
         try:
             state = _bb.read("face_greeting_seq", "face_greeting_text", "agent_speaking", "user_speaking")
             seq = state.get("face_greeting_seq", 0)
-            if seq > last_seq:
-                last_seq = seq
+            if seq > _last_processed_greet_seq:
+                _last_processed_greet_seq = seq
                 text = str(state.get("face_greeting_text") or "").strip()
                 if text and not state.get("agent_speaking") and not state.get("user_speaking"):
-                    print(f"[NLU] Playing proactive face greeting audio on speaker: '{text}'")
+                    log.info(f"[NLU] Processing proactive face greeting (#{seq}): '{text}'")
+                    print(f"[NLU] Processing proactive face greeting (#{seq}): '{text}'")
+
                     loop = asyncio.get_running_loop()
                     audio_file = await loop.run_in_executor(None, _generate_dynamic_tts, text)
                     if audio_file:
+                        audio_url = f"/assets/audio_cache/{audio_file}"
                         audio_path = APP_DIR / "assets" / "audio_cache" / audio_file
+
                         sync = get_speech_sync_service()
                         if sync is not None:
                             sync.arm_utterance(reply_text=text, audio_path=str(audio_path))
@@ -580,7 +554,16 @@ async def _monitor_face_greetings_loop() -> None:
                         if _bb is not None:
                             _bb.write(conv_state="speaking", agent_speaking=True)
 
-                        await loop.run_in_executor(None, play_audio, audio_path)
+                        if _greet_ws_clients:
+                            payload = json.dumps({"type": "greeting", "text": text, "audio_url": audio_url})
+                            for ws in list(_greet_ws_clients):
+                                try:
+                                    await ws.send_text(payload)
+                                except Exception:
+                                    pass
+                        else:
+                            from voice.offline_voice.runtime import play_audio
+                            await loop.run_in_executor(None, play_audio, audio_path)
 
                         word_count = len(text.split())
                         clear_delay = max(1.8, word_count * 0.12 + 0.6)

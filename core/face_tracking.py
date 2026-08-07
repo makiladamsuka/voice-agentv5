@@ -61,7 +61,7 @@ FAR_SQUINT_MAX_SEC = 0.55
 
 # ── Hand / gesture constants ─────────────────────────────────────────────────
 SKIN_BLOB_MIN_AREA_RATIO = 0.15   # blob must cover 15% of frame
-HI_WAVE_COOLDOWN_SEC = 5.0
+HI_WAVE_COOLDOWN_SEC = 30.0
 BYE_WAVE_NEAR_FACE_PX = 110       # hand-near-face trigger distance (pixels)
 
 

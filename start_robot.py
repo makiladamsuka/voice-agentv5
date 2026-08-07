@@ -646,8 +646,12 @@ def main():
             name="AnimationEngine",
         ),
     ]
+    face_greeting_arm_cfg = cfg.get("face_greeting_arm", {}) or {}
+    arm_greeting_enabled = bool(face_greeting_arm_cfg.get("enabled", True)) and arm_controller is not None and arm_controller.enabled
+
+    # Fallback face greeting voice monitor (only if arm greeting is disabled)
     face_greeting_cfg = cfg.get("face_greeting", {}) or {}
-    if face_greeting_cfg.get("enabled", True):
+    if face_greeting_cfg.get("enabled", True) and not arm_greeting_enabled:
         from core.face_greeting import FaceGreetingMonitor
 
         threads.append(
@@ -658,9 +662,8 @@ def main():
             )
         )
     
-    # Face greeting arm gestures (separate from voice greetings)
-    face_greeting_arm_cfg = cfg.get("face_greeting_arm", {}) or {}
-    if face_greeting_arm_cfg.get("enabled", True) and arm_controller is not None and arm_controller.enabled:
+    # Face greeting arm gestures (handles both arms and voice greetings when active)
+    if arm_greeting_enabled:
         from core.face_greeting_arm import FaceGreetingArmService
 
         threads.append(

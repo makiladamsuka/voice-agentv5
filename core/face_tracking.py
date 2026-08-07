@@ -742,11 +742,15 @@ class FaceTracker:
                         dw, dh = self.detect_res
                         hand_area_ratio = (hand_w * hand_h) / (dw * dh)
                         
-                        hand_cx = (max(xs) + min(xs)) / 2.0
-                        hand_cy = (max(ys) + min(ys)) / 2.0
+                        # Use palm_center (middle of hand palm) for precise camera centering
+                        palm_px, palm_py = best_hand.palm_center
+
+                        # 70% offset of the hand bounding box half-height
+                        hand_box_offset_y = 0.10 * (hand_h * 0.5)
+                        hand_box_offset_x = 0.10 * (hand_w * 0.5)
                         
-                        raw_hand_norm_x = (hand_cx / dw) * 2.0 - 1.0
-                        raw_hand_norm_y = (hand_cy / dh) * 2.0 - 1.0
+                        raw_hand_norm_x = ((palm_px + hand_box_offset_x) / dw) * 2.0 - 1.0
+                        raw_hand_norm_y = ((palm_py + hand_box_offset_y) / dh) * 2.0 - 1.0
                         
                         # Compare against current or last known face area
                         compare_area = face_area if face_detected else self._last_face_area
@@ -760,9 +764,9 @@ class FaceTracker:
                                 self._hand_offset_y = raw_hand_norm_y - current_aim_y
                                 self._was_hand_tracking = True
                             else:
-                                # Smoothly decay the offset so it glides to the middle of the hand
-                                self._hand_offset_x *= 0.92
-                                self._hand_offset_y *= 0.92
+                                # Smoothly decay the initial offset so camera glides and centralizes directly on palm middle
+                                self._hand_offset_x *= 0.80
+                                self._hand_offset_y *= 0.80
                                 
                             track_kind = "hand"
                             # Override face tracking so servo loop follows hand
@@ -770,17 +774,11 @@ class FaceTracker:
                             # Disable hi/bye gestures when fallback tracking is active
                             hand_gesture = ""
                             hand_gesture_side = ""
-                        else:
-                            self._was_hand_tracking = False
                             
                         # Always publish hand coordinates so they can be drawn on stream HUD
                         hand_detected = True
-                        if self._was_hand_tracking:
-                            hand_norm_x = raw_hand_norm_x - self._hand_offset_x
-                            hand_norm_y = raw_hand_norm_y - self._hand_offset_y
-                        else:
-                            hand_norm_x = raw_hand_norm_x
-                            hand_norm_y = raw_hand_norm_y
+                        hand_norm_x = raw_hand_norm_x
+                        hand_norm_y = raw_hand_norm_y
                             
                         hand_physical_side = best_hand.physical_side
 
@@ -975,6 +973,20 @@ class FaceTracker:
                             stream_frame,
                             "center",
                             (cx_s + 8, cy_s),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.4,
+                            (0, 255, 255),
+                            1,
+                        )
+                    elif track_kind == "hand":
+                        cx_s = int((hand_norm_x + 1.0) * 0.5 * self.stream_res[0])
+                        cy_s = int((hand_norm_y + 1.0) * 0.5 * self.stream_res[1])
+                        cv2.circle(stream_frame, (cx_s, cy_s), 8, (0, 255, 255), 2)
+                        cv2.circle(stream_frame, (cx_s, cy_s), 3, (0, 255, 255), -1)
+                        cv2.putText(
+                            stream_frame,
+                            "HAND AIM",
+                            (cx_s + 10, cy_s + 4),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.4,
                             (0, 255, 255),

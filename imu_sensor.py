@@ -339,6 +339,8 @@ def startup_level_calibrate(
     Averages raw filter angles from still samples, then sets absolute offsets so
     horizon leveling starts from pitch ≈ 0°. Returns (roll_off, pitch_off, residual_pitch, n).
     """
+    initial_roll_offset = reader.filter.roll_offset_deg
+    initial_pitch_offset = reader.filter.pitch_offset_deg
     reader.filter.roll_offset_deg = 0.0
     reader.filter.pitch_offset_deg = 0.0
     if warmup_sec > 0:
@@ -359,6 +361,11 @@ def startup_level_calibrate(
         min_samples=min_samples,
         pitch_only=pitch_only,
     )
+    
+    # Restore manual offsets configured by user
+    reader.filter.roll_offset_deg += initial_roll_offset
+    reader.filter.pitch_offset_deg += initial_pitch_offset
+    
     calibrated_at = time.time()
     latest = reader.latest()
     deadline = time.time() + 0.1
@@ -502,7 +509,7 @@ class HorizonTiltBias:
         # by dividing by the mechanical gear ratio.
         bias = (pitch_deg * self.gain * self.bias_sign) / self.mechanical_scale
         bias = max(-self._max_bias_deg, min(self._max_bias_deg, bias))
-        value = base_center - bias
+        value = base_center + bias
         lo = max(tilt_min, base_center - self._max_down_from_center_deg)
         hi = min(tilt_max, base_center + self._max_up_from_center_deg)
         return max(lo, min(hi, value))

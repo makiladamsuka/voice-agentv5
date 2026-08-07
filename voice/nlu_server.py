@@ -49,17 +49,30 @@ log = logging.getLogger("NluServer")
 _bb: "Blackboard | None" = None
 _runtime = None  # OfflineVoiceRuntime, lazy-loaded on first connection
 _wayfinder = None  # Wayfinder, injected from start_robot.py (or lazy-loaded)
+_nlu_ready: bool = False
+_nlu_error: bool = False
 
+
+_nlu_lock = threading.Lock()
 
 def _get_runtime():
-    """Lazy-load the NLU runtime on first WebSocket connection."""
-    global _runtime
-    if _runtime is None:
-        from voice.offline_voice.runtime import OfflineVoiceRuntime
-        log.info("Loading NLU runtime (ChromaDB intent matcher)...")
-        _runtime = OfflineVoiceRuntime(_bb)
-        log.info("NLU runtime ready.")
-    return _runtime
+    """Load or return the NLU runtime (SentenceTransformer weights pre-warmed)."""
+    global _runtime, _nlu_ready
+    with _nlu_lock:
+        if _runtime is None:
+            from voice.offline_voice.runtime import OfflineVoiceRuntime
+            log.info("Loading NLU runtime (NumPy fast-path matcher + SentenceTransformer weights)...")
+            _runtime = OfflineVoiceRuntime(_bb)
+            _nlu_ready = True
+            log.info("NLU runtime ready.")
+        return _runtime
+
+def prewarm_nlu_runtime():
+    """Warm up the NLU runtime safely at server startup."""
+    try:
+        _get_runtime()
+    except Exception as e:
+        log.warning(f"NLU runtime pre-warming deferred to first request: {e}")
 
 
 def _get_wayfinder():
@@ -119,13 +132,13 @@ async def _voice_ws_endpoint(websocket) -> None:
     
     speculative_cache = {}
     pending_ambiguity_category = None
-    last_discussed_category = None
+    last_discussed_topic = None
     # ── Echo / duplicate suppression ──────────────────────────────────────
     # Use a mutable dict so reassignment works correctly in all scopes.
     import time as _time
     _echo = {
         "norm": "",
-        "reply_norm": "",
+        "recent_replies": [],
         "ts": 0.0,
         "suppress_sec": 10.0,
         "speaking": False,
@@ -133,11 +146,70 @@ async def _voice_ws_endpoint(websocket) -> None:
     # ── Speculative throttle ──────────────────────────────────────────────
     _spec = {"last_norm": "", "last_ts": 0.0, "min_interval": 1.0}
 
+    import re
     def _normalize_text(t: str) -> str:
-        return t.lower().strip(" \t\r\n.,?!;:")
+        cleaned = re.sub(r'[^a-z0-9 ]+', '', (t or "").lower())
+        return ' '.join(cleaned.split())
 
     if _bb is not None:
         _bb.write(voice_session_active=True, conv_state="listening")
+
+    # ── Proactive Greeting Poller ──────────────────────────────────────────
+    async def _poll_face_greetings():
+        if _bb is None: return
+        last_seq = _bb.read("face_greeting_seq").get("face_greeting_seq", 0)
+        while True:
+            await asyncio.sleep(0.5)
+            try:
+                state = _bb.read("face_greeting_seq", "face_greeting_text", "agent_speaking", "user_speaking")
+                seq = state.get("face_greeting_seq", 0)
+                if seq > last_seq:
+                    last_seq = seq
+                    text = state.get("face_greeting_text", "")
+                    
+                    if text and not state.get("agent_speaking") and not state.get("user_speaking") and not _echo.get("speaking"):
+                        print(f"[NLU] Sending proactive face greeting: '{text}'")
+                        _echo["speaking"] = True
+                        
+                        loop = asyncio.get_running_loop()
+                        audio_file = await loop.run_in_executor(None, _generate_dynamic_tts, text)
+                        
+                        audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
+                        audio_path = str(APP_DIR / "assets" / "audio_cache" / audio_file) if audio_file else None
+
+                        utterance_id = ""
+                        duration_ms = 0
+                        sync = get_speech_sync_service()
+                        if sync is not None:
+                            utterance_id, duration_ms = sync.arm_utterance(
+                                reply_text=text,
+                                audio_path=audio_path,
+                            )
+                        
+                        _dur_sec = (duration_ms / 1000.0) if duration_ms else 6.0
+                        _reply_norm = _normalize_text(text)
+                        if _reply_norm:
+                            _echo["recent_replies"] = [_reply_norm] + _echo.get("recent_replies", [])[:2]
+                        _echo["ts"] = _time.monotonic()
+                        _echo["suppress_sec"] = max(4.0, _dur_sec + 2.0)
+                        
+                        await websocket.send_text(json.dumps({
+                            "type": "response",
+                            "reply_text": text,
+                            "audio_url": audio_url,
+                            "action": {},
+                            "utterance_id": utterance_id,
+                            "duration_ms": duration_ms,
+                        }))
+                        await websocket.send_text(json.dumps({"type": "state", "conv_state": "speaking"}))
+                        if _bb is not None:
+                            _bb.write(conv_state="speaking", agent_speaking=True)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.error(f"[NLU] Greeting poll error: {e}")
+
+    greeting_task = asyncio.create_task(_poll_face_greetings())
 
     try:
         while True:
@@ -150,6 +222,8 @@ async def _voice_ws_endpoint(websocket) -> None:
                 continue
 
             if msg_type == "speculative_transcript":
+                if not _nlu_ready or _nlu_error:
+                    continue  # Ignore interim transcripts while weights are still loading
                 user_text = msg.get("text", "").strip()
                 if user_text:
                     if pending_ambiguity_category:
@@ -172,6 +246,8 @@ async def _voice_ws_endpoint(websocket) -> None:
                     is_fallback = result and result.get("is_fallback")
                     if result and not is_fallback:
                         speculative_cache[norm_text] = result
+                        if len(speculative_cache) > 50:
+                            speculative_cache.clear()
                         
                         # Generate TTS in the background so it's ready for the final turn
                         reply_text = result.get("reply_text")
@@ -191,7 +267,20 @@ async def _voice_ws_endpoint(websocket) -> None:
                             }))
                 continue
 
-            if msg_type == "transcript":
+            elif msg_type == "transcript":
+                # Wait asynchronously if the server is still loading weights in the background
+                if not _nlu_ready:
+                    print("[NLU] Waiting for background NLU pre-warm to finish...")
+                while not _nlu_ready:
+                    if _nlu_error:
+                        await websocket.send_text(json.dumps({"type": "state", "conv_state": "error"}))
+                        break
+                    await websocket.send_text(json.dumps({"type": "state", "conv_state": "connecting"}))
+                    await asyncio.sleep(0.5)
+                
+                if _nlu_error:
+                    continue
+
                 original_text = msg.get("text", "").strip()
                 if not original_text:
                     continue
@@ -202,10 +291,26 @@ async def _voice_ws_endpoint(websocket) -> None:
                 _norm_incoming = _normalize_text(original_text)
                 _now = _time.monotonic()
                 _dt = _now - _echo["ts"]
+                is_duplicate_prompt = (_norm_incoming == _echo.get("norm", ""))
+                
+                recent_replies = _echo.get("recent_replies", [])
+                is_reply_echo = False
+                for rep in recent_replies:
+                    if not rep or len(_norm_incoming) < 3: continue
+                    if _norm_incoming in rep or rep in _norm_incoming:
+                        is_reply_echo = True
+                        break
+                    inc_words = set(_norm_incoming.split())
+                    rep_words = set(rep.split())
+                    if len(inc_words) >= 2 and (len(inc_words & rep_words) / len(inc_words)) >= 0.6:
+                        is_reply_echo = True
+                        break
+
                 if _echo["speaking"] or (_dt < _echo["suppress_sec"]):
-                    print(f"[NLU] Echo suppressed (speaking={_echo['speaking']}, {_dt:.1f}s < {_echo['suppress_sec']:.1f}s): '{original_text}'")
-                    await websocket.send_text(json.dumps({"type": "state", "conv_state": "speaking" if _echo["speaking"] else "listening"}))
-                    continue
+                    if is_duplicate_prompt or is_reply_echo:
+                        print(f"[NLU] Echo suppressed (speaking={_echo['speaking']}, {_dt:.1f}s < {_echo['suppress_sec']:.1f}s): '{original_text}'")
+                        await websocket.send_text(json.dumps({"type": "state", "conv_state": "speaking" if _echo["speaking"] else "listening"}))
+                        continue
 
                 _echo["norm"] = _norm_incoming
                 _echo["ts"] = _now
@@ -220,6 +325,12 @@ async def _voice_ws_endpoint(websocket) -> None:
                 if pending_ambiguity_category:
                     user_text = f"{pending_ambiguity_category} {original_text}"
                     print(f"  [Context injected] Rewrote query to: '{user_text}'")
+                elif last_discussed_topic:
+                    import re
+                    replaced = re.sub(r'\b(it|there|that)\b', last_discussed_topic, original_text, flags=re.IGNORECASE)
+                    if replaced.lower() != original_text.lower():
+                        user_text = replaced
+                        print(f"  [Context injected] Rewrote pronoun query to: '{user_text}'")
 
                 # Update blackboard — show "thinking" on robot face
                 think_start_ts = _time.monotonic()
@@ -230,6 +341,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                 )
 
                 norm_text = _normalize_text(user_text)
+                loop = asyncio.get_running_loop()
                 
                 # Only use exact matches for speculative cache to avoid substring bugs
                 # (e.g., 'laboratory 1' in 'laboratory 10')
@@ -242,7 +354,6 @@ async def _voice_ws_endpoint(websocket) -> None:
                 else:
                     # Run NLU in a thread so we don't block the asyncio event loop
                     runtime = _get_runtime()
-                    loop = asyncio.get_running_loop()
                     result = await loop.run_in_executor(
                         None, _match_intent, runtime, user_text
                     )
@@ -250,8 +361,8 @@ async def _voice_ws_endpoint(websocket) -> None:
                 if result:
                     is_fallback = result.get("is_fallback")
                     
-                    if is_fallback and not pending_ambiguity_category and last_discussed_category:
-                        retry_text = f"{last_discussed_category} {original_text}"
+                    if is_fallback and not pending_ambiguity_category and last_discussed_topic:
+                        retry_text = f"{last_discussed_topic} {original_text}"
                         print(f"  [Context retry] Retrying fallback query as: '{retry_text}'")
                         runtime = _get_runtime()
                         loop = asyncio.get_running_loop()
@@ -266,10 +377,10 @@ async def _voice_ws_endpoint(websocket) -> None:
                     
                     action = result.get("action", {})
                     if action.get("action") == "navigate" and action.get("destination"):
-                        last_discussed_category = get_dest_category(action.get("destination"))
+                        last_discussed_topic = action.get("destination")
                     elif not is_fallback:
                         # Clear context if user successfully changed topics
-                        last_discussed_category = None
+                        last_discussed_topic = None
 
                     # ── Events fallback: inject poster buttons even when NLU
                     # has no compiled event intents yet (empty compiled_intents.json).
@@ -294,10 +405,24 @@ async def _voice_ws_endpoint(websocket) -> None:
                                 },
                             }
 
+                if not result:
+                    log.warning("[NLU] _match_intent returned None — skipping response.")
+                    await websocket.send_text(json.dumps({"type": "state", "conv_state": "listening"}))
+                    continue
+
                 print(
                     f"[NLU] Reply: '{result.get('reply_text', '')[:80]}' "
                     f"audio={result.get('audio_url')}"
                 )
+
+                # Ensure dynamic TTS audio is generated if missing
+                if not result.get("audio_url") and result.get("reply_text"):
+                    audio_file = await loop.run_in_executor(
+                        None, _generate_dynamic_tts, result["reply_text"]
+                    )
+                    if audio_file:
+                        result["audio_url"] = f"/assets/audio_cache/{audio_file}"
+                        result["audio_path"] = str(APP_DIR / "assets" / "audio_cache" / audio_file)
 
                 # Ensure "thinking" state is visible on screen for at least 400ms before speaking
                 elapsed_think = _time.monotonic() - think_start_ts
@@ -325,9 +450,13 @@ async def _voice_ws_endpoint(websocket) -> None:
                     _bb.write(conv_state="speaking", agent_speaking=True)
 
                 _dur_sec = (duration_ms / 1000.0) if duration_ms else 6.0
-                _echo["reply_norm"] = _normalize_text(result.get("reply_text", ""))
+                _reply_norm = _normalize_text(result.get("reply_text", ""))
+                if _reply_norm:
+                    _echo["recent_replies"] = [_reply_norm] + _echo.get("recent_replies", [])[:2]
                 _echo["ts"] = _time.monotonic()
-                _echo["suppress_sec"] = max(15.0, _dur_sec + 6.0)
+                # Suppress window = audio duration + 2s tail, minimum 4s.
+                # (was max(15.0,...) which silently ate all follow-up queries)
+                _echo["suppress_sec"] = max(4.0, _dur_sec + 2.0)
                 _echo["speaking"] = True
 
                 await websocket.send_text(json.dumps({
@@ -383,6 +512,7 @@ async def _voice_ws_endpoint(websocket) -> None:
         else:
             log.error(f"NLU WebSocket error: {exc}")
     finally:
+        greeting_task.cancel()
         sync = get_speech_sync_service()
         if sync is not None:
             sync.end_playback()
@@ -399,7 +529,30 @@ async def _voice_ws_endpoint(websocket) -> None:
 async def _health_endpoint(request) -> None:
     """Simple JSON health check for use by the smoke test and monitoring."""
     from starlette.responses import JSONResponse
-    return JSONResponse({"status": "ok", "mode": "nlu"})
+    return JSONResponse({"status": "ok", "mode": "nlu", "ready": _nlu_ready})
+
+
+async def _reload_nlu_endpoint(request) -> None:
+    """POST /reload-nlu — clears the cached runtime so it reloads from disk.
+
+    Called by the Knowledge Base admin page after saving new intents.
+    Also deletes the numpy embedding cache so the new knowledge domain
+    embeddings are rebuilt on the next request.
+    """
+    from starlette.responses import JSONResponse
+    import shutil
+    reload_nlu_runtime()
+    # Delete numpy cache files so the matcher rebuilds with new intents
+    db_dir = APP_DIR / "voice" / "event_db"
+    for cache_file in ("embeddings_cache.npy", "embeddings_meta.json"):
+        p = db_dir / cache_file
+        if p.exists():
+            try:
+                p.unlink()
+            except Exception:
+                pass
+    log.info("[NluServer] /reload-nlu: cache cleared, will rebuild on next query.")
+    return JSONResponse({"status": "ok", "message": "NLU runtime reloading."})
 
 
 def _build_app():
@@ -416,6 +569,7 @@ def _build_app():
         debug=False,
         routes=[
             Route("/health", _health_endpoint, methods=["GET"]),
+            Route("/reload-nlu", _reload_nlu_endpoint, methods=["POST"]),
             WebSocketRoute("/ws/voice", _voice_ws_endpoint),
         ],
     )
@@ -444,7 +598,7 @@ def _get_event_buttons(max_buttons: int = 4) -> list:
     Falls back to plain strings when no posters exist yet.
     """
     assets_dir = APP_DIR / "assets"
-    extracted_path = APP_DIR / "event_db" / "extracted_events.json"
+    extracted_path = APP_DIR / "voice" / "event_db" / "extracted_events.json"
 
     extracted: dict[str, dict] = {}
     try:
@@ -473,14 +627,16 @@ def _get_event_buttons(max_buttons: int = 4) -> list:
                 continue
             meta = extracted.get(f.name, {})
             title = (meta.get("title") or "").strip()
-            if not title:
+            if not title or not any(c.isalpha() for c in title):
                 stem = f.stem
                 parts = stem.split("_")
                 readable_parts = [p for p in parts if not p.isdigit()]
                 if readable_parts:
                     title = " ".join(readable_parts).replace("-", " ").strip().title()
-                if not title or not any(c.isalpha() for c in title):
-                    title = category_map.get(category, "Campus Event")
+                else:
+                    base_cat = category_map.get(category, "Campus Event")
+                    suffix = parts[-1] if parts else stem
+                    title = f"{base_cat} ({suffix[-5:]})"
             entries.append((f.stat().st_mtime, {
                 "label": title,
                 "filename": f.name,
@@ -507,6 +663,19 @@ def _match_intent(runtime, user_text: str) -> dict:
     Synchronous NLU matching (runs in a thread via run_in_executor).
     Returns a dict with reply_text, audio_url, and action.
     """
+    try:
+        return _match_intent_internal(runtime, user_text)
+    except Exception as exc:
+        log.error(f"[NLU] Exception during _match_intent: {exc}", exc_info=True)
+        fallback_text = "I'm sorry, I encountered an internal issue. How else can I help?"
+        return {
+            "reply_text": fallback_text,
+            "audio_url": None,
+            "action": {},
+            "is_fallback": True,
+        }
+
+def _match_intent_internal(runtime, user_text: str) -> dict:
     from voice.offline_voice.runtime import route_domain, get_time_reply
 
     audio_base = APP_DIR / "assets" / "audio_cache"
@@ -541,7 +710,7 @@ def _match_intent(runtime, user_text: str) -> dict:
         # Fallback for STT mishearings: If the strict regex router sent it to the wrong domain,
         # the vector database will return no matches. We trust ChromaDB to find it in other domains.
         if not intent:
-            for fallback_domain in ["navigate", "events", "smalltalk"]:
+            for fallback_domain in ["knowledge", "navigate", "events", "smalltalk"]:
                 if fallback_domain != domain:
                     intent = runtime.matcher.match(user_text, domain=fallback_domain)
                     if intent:
@@ -571,11 +740,22 @@ def _match_intent(runtime, user_text: str) -> dict:
                     },
                 }, audio_file)
 
+        response_text = intent.get("response_text", "")
         audio_file = intent.get("audio_file")
         
+        if isinstance(response_text, list) and len(response_text) > 0:
+            import random
+            idx = random.randint(0, len(response_text) - 1)
+            response_text = response_text[idx]
+            
+            if isinstance(audio_file, list) and len(audio_file) > idx:
+                audio_file = audio_file[idx]
+            else:
+                audio_file = None
+                
         # Generate dynamic TTS for intents lacking precompiled audio (e.g., ambiguity prompts)
-        if not audio_file and intent.get("response_text"):
-            audio_file = _generate_dynamic_tts(intent["response_text"])
+        if not audio_file and response_text:
+            audio_file = _generate_dynamic_tts(response_text)
             
         audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
 
@@ -595,7 +775,7 @@ def _match_intent(runtime, user_text: str) -> dict:
                 action["suggested_buttons"] = _get_event_buttons()
 
         return _with_audio_path({
-            "reply_text": intent.get("response_text", ""),
+            "reply_text": response_text,
             "audio_url": audio_url,
             "action": action,
             "ambiguity_category": intent.get("ambiguity_category"),
@@ -612,10 +792,10 @@ def _match_intent(runtime, user_text: str) -> dict:
     }, None)
 
 def _generate_dynamic_fallback(transcript: str) -> str:
-    """Use an LLM to generate a conversational fallback response."""
+    """Use an LLM to generate a short conversational fallback response."""
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        return "I didn't quite catch that. I can help you with campus events or directions!"
+        return "I'm not sure about that. Try asking about events or directions!"
         
     try:
         client = OpenAI(
@@ -628,21 +808,20 @@ def _generate_dynamic_fallback(transcript: str) -> str:
                 {
                     "role": "system",
                     "content": (
-                        "You are NEma, a friendly campus guide robot. "
-                        "The user said something you didn't understand or don't know about. "
-                        "Reply in 1 short sentence apologizing and saying you don't know about that, "
-                        "but you can help with campus events or directions."
+                        "You are NEma, a campus guide robot. "
+                        "The user asked something out of domain. "
+                        "Reply in max 10 words apologizing briefly and offering help with campus events or directions."
                     )
                 },
                 {"role": "user", "content": transcript}
             ],
-            max_tokens=60,
-            temperature=0.7
+            max_tokens=25,
+            temperature=0.5
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
         log.error(f"Dynamic fallback LLM failed: {e}")
-        return "I didn't quite catch that. I can help you with campus events or directions!"
+        return "I'm not sure about that. Try asking about events or directions!"
 
 
 _tts_lock = threading.Lock()
@@ -727,12 +906,14 @@ def _navigate_response(destination: str) -> dict:
         # Verify it's a genuine confident match (label contains the query or vice-versa)
         dest_lc = destination.lower().strip()
         label_lc = exact_match["label"].lower()
-        # Only treat as unambiguous if the destination exactly contains a number
-        # (e.g. "Auditorium 1") — means user already picked a specific one
+        # If the label exactly matches the destination, it is unambiguous.
+        # Otherwise, if it's a substring match, only trust it if the destination has a number.
         import re as _re
         dest_has_number = bool(_re.search(r'\d', dest_lc))
-        label_matches_exactly = (dest_lc in label_lc or label_lc in dest_lc)
-        if dest_has_number and label_matches_exactly:
+        
+        if dest_lc == label_lc:
+            candidates = [exact_match]
+        elif dest_has_number and (dest_lc in label_lc or label_lc in dest_lc):
             # Route directly to navigation — no disambiguation needed
             candidates = [exact_match]
         else:
@@ -852,28 +1033,13 @@ def run_nlu_server(
         print("[NluServer] ERROR: uvicorn not installed. Run: pip install uvicorn[standard]")
         return
 
+    # ── Start server IMMEDIATELY, load weights in background ──────────────
+    # This ensures the port opens instantly so the frontend doesn't timeout
+    # when clicking the mic button. If they speak before it's ready, it waits.
+    
     app = _build_app()
     log.info(f"[NluServer] Starting on ws://{host}:{port}/ws/voice")
     print(f"[NluServer] WebSocket server starting on port {port}...")
-
-    # Pre-load NLU runtime at startup so the first speech is instant
-    try:
-        print("[NluServer] Pre-loading NLU runtime (ChromaDB + embeddings)...")
-        _get_runtime()
-    except Exception as exc:
-        log.warning(f"[NluServer] Pre-loading NLU runtime failed: {exc}")
-
-    # Pre-build amplitude sidecars for all cached MP3s so ffmpeg is never
-    # called during a live voice turn (eliminates CPU spikes on Pi).
-    try:
-        from voice.audio_envelope import build_all_sidecars
-        audio_cache = APP_DIR / "assets" / "audio_cache"
-        if audio_cache.is_dir():
-            n = build_all_sidecars(audio_cache)
-            if n:
-                print(f"[NluServer] Pre-built {n} amplitude sidecar(s).")
-    except Exception as exc:
-        log.warning(f"Sidecar pre-build failed: {exc}")
 
     config = uvicorn.Config(
         app,
@@ -888,8 +1054,39 @@ def run_nlu_server(
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
+    def _prewarm_sidecars():
+        """Pre-build amplitude sidecars for all cached MP3s so ffmpeg is never
+        called during a live voice turn (eliminates CPU spikes on Pi).
+        """
+        try:
+            from voice.audio_envelope import build_all_sidecars
+            audio_cache = APP_DIR / "assets" / "audio_cache"
+            if audio_cache.is_dir():
+                n = build_all_sidecars(audio_cache)
+                if n:
+                    print(f"[NluServer] Pre-built {n} amplitude sidecar(s).")
+        except Exception as exc:
+            log.warning(f"Sidecar pre-build failed: {exc}")
+
+    def _prewarm_nlu():
+        """Load NLU models into RAM safely in a background thread."""
+        global _nlu_error
+        print("[NluServer] Pre-loading NLU runtime in background...")
+        try:
+            _get_runtime()
+            print("[NluServer] NLU runtime ready (SentenceTransformer loaded).")
+        except Exception as exc:
+            _nlu_error = True
+            log.warning(f"[NluServer] NLU pre-warm failed: {exc}")
+
     async def _run():
         serve_task = asyncio.create_task(server.serve())
+        # Give the server a moment to bind, then pre-warm in background
+        await asyncio.sleep(0.3)
+        print(f"[NluServer] Port {port} open — building audio sidecars in background...")
+        asyncio.get_running_loop().run_in_executor(None, _prewarm_nlu)
+        asyncio.get_running_loop().run_in_executor(None, _prewarm_sidecars)
+        
         # Poll the Blackboard running flag so we shut down cleanly on Ctrl+C
         while bb.read("running")["running"] and not serve_task.done():
             await asyncio.sleep(0.5)

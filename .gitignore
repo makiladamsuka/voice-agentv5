@@ -7,6 +7,9 @@ voice/event_db/
 .env
 .DS_Store
 *.log
+assets/audio_cache/dyn_*
+*.amp.json
+test.wav
 
 # Frontend (native Next.js kiosk)
 frontend/node_modules/

@@ -1,6 +1,6 @@
 # Voice Agent V5 — Raspberry Pi Kiosk Stack
 
-An end-to-end autonomous Raspberry Pi 4 kiosk stack featuring **YuNet face tracking**, **servos & TFT eyes**, **browser VAD + local ChromaDB NLU voice pipeline**, **48kHz audio sync**, and a **Next.js interactive touchscreen kiosk UI**.
+An end-to-end autonomous Raspberry Pi 4 kiosk stack featuring **YuNet face tracking**, **servos & TFT eyes**, **browser VAD + local SentenceTransformer NLU voice pipeline**, **48kHz audio sync**, and a **Next.js interactive touchscreen kiosk UI**.
 
 ---
 
@@ -189,7 +189,7 @@ python voice/compiler/intent_compiler.py
 1. **AI Extraction**: Uses OpenRouter/Groq to parse title, date, time, location, and description from poster images into `voice/event_db/extracted_events.json`.
 2. **Utterance Generation**: Generates standard user questions for each event poster into `voice/event_db/compiled_intents.json`.
 3. **TTS Speech Synthesis**: Synthesizes 48kHz uncompressed `.wav` audio files into `assets/audio_cache/` so fallback and intent answers play instantly with zero live TTS latency.
-4. **ChromaDB Indexing**: Indexes all intents into the local ChromaDB vector database (`voice/event_db/`).
+4. **Numpy Indexing**: Indexes all intents into a local high-performance Numpy/SentenceTransformer database (`voice/event_db/`).
 
 ---
 
@@ -241,7 +241,7 @@ pnpm start
 | Port | Service | Description |
 |------|---------|-------------|
 | **3000** | Next.js Kiosk UI | Touchscreen user interface & Browser VAD mic capture |
-| **8765** | NLU WebSocket | Local ChromaDB intent matcher & voice state manager |
+| **8765** | NLU WebSocket | Local SentenceTransformer intent matcher & voice state manager |
 | **8080** | Python MediaServer | Serves static assets, poster uploads, map graph APIs |
 | **8082** | Debug Dashboard | Optional 3D ToF map + MJPEG camera stream (`DEBUG_VIZ=1`) |
 
@@ -258,11 +258,11 @@ voice-agentv5/
 │   └── audio_cache/           # Pre-synthesized 48kHz WAV audio files (Generated)
 ├── voice/
 │   ├── nlu_server.py          # FastAPI/Starlette NLU WebSocket server
-│   ├── event_database.py      # ChromaDB event vector database manager
+│   ├── event_database.py      # Knowledge Base event vector database manager
 │   ├── event_indexer.py       # AI Vision poster metadata extractor
 │   ├── compiler/
 │   │   └── intent_compiler.py # Builds compiled_intents.json & synthesizes audio
-│   └── event_db/              # Local ChromaDB index & JSON manifests (Generated)
+│   └── event_db/              # Local Numpy index & JSON manifests (Generated)
 ├── frontend/                  # Next.js kiosk touchscreen interface
 └── scripts/
     ├── launch-kiosk-stack.sh  # Master launch script (Backend + Frontend + Browser)

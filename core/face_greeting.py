@@ -33,26 +33,38 @@ class FaceGreetingMonitor:
 
     def __init__(self, bb: Blackboard, config_path: Path = DEFAULT_CONFIG_PATH) -> None:
         self.bb = bb
-        cfg = _load_yaml(config_path)
-        fg = (cfg.get("face_greeting") or {}) if cfg else {}
-        self.enabled = bool(fg.get("enabled", True))
-        self.cooldown_sec = float(fg.get("cooldown_sec", 60.0))
-        self.hold_sec = float(fg.get("hold_sec", 0.45))
-        self.min_face_area_ratio = float(fg.get("min_face_area_ratio", 0.008))
+        self.config_path = config_path
+        self._last_cfg_mtime = 0.0
         self._face_since: float | None = None
         self._greeted_this_visit = False
         self._last_greet_ts = 0.0
         self._seq = 0
+        self._reload_config()
+
+    def _reload_config(self) -> None:
+        try:
+            mtime = self.config_path.stat().st_mtime
+            if mtime > self._last_cfg_mtime:
+                cfg = _load_yaml(self.config_path)
+                fg = (cfg.get("face_greeting") or {}) if cfg else {}
+                self.enabled = bool(fg.get("enabled", True))
+                self.cooldown_sec = float(fg.get("cooldown_sec", 60.0))
+                self.hold_sec = float(fg.get("hold_sec", 0.45))
+                self.min_face_area_ratio = float(fg.get("min_face_area_ratio", 0.008))
+                self._last_cfg_mtime = mtime
+        except Exception:
+            pass
 
     def run(self) -> None:
-        if not self.enabled:
-            print("[FaceGreeting] Disabled in config.")
-            return
-
         loop_delay = 0.1
-        print("[FaceGreeting] Monitoring for new faces.")
+        print("[FaceGreeting] Monitoring thread started.")
 
         while self.bb.read("running")["running"]:
+            self._reload_config()
+            if not self.enabled:
+                time.sleep(loop_delay)
+                continue
+
             now = time.time()
             state = self.bb.read(
                 "face_detected",

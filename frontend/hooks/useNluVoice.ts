@@ -191,7 +191,9 @@ export function useNluVoice({
   /** Timestamp when speaking ends — used to reject Deepgram echo transcripts */
   const speakingEndedAtRef = useRef<number>(0);
   /** How long (ms) to reject Deepgram results after TTS ends (echo cooldown) */
-  const ECHO_COOLDOWN_MS = 2500;
+  const ECHO_COOLDOWN_MS = 500;
+  /** Stores recent robot replies to filter out self-echo transcripts */
+  const recentRobotRepliesRef = useRef<string[]>([]);
 
   const apiKey =
     deepgramApiKey ?? process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY ?? "";
@@ -203,27 +205,46 @@ export function useNluVoice({
       setState(newState);
       onStateChange?.(newState);
 
-      // Mute the mic track at the OS/browser level when not listening
-      // so no physical audio reaches Deepgram during thinking/speaking/waiting.
+      // Mute mic track & pause recorder when robot is busy (thinking/speaking/waiting)
+      const shouldMute =
+        newState === "speaking" ||
+        newState === "thinking" ||
+        newState === "waiting";
+
       if (mediaStreamRef.current) {
-        const shouldMute =
-          newState === "speaking" ||
-          newState === "thinking" ||
-          newState === "waiting";
         mediaStreamRef.current.getAudioTracks().forEach(t => {
           t.enabled = !shouldMute;
         });
       }
 
-      if (playChimes) {
-        if (newState === "listening" && oldState !== "listening") {
+      if (recorderRef.current) {
+        try {
+          if (shouldMute && recorderRef.current.state === "recording") {
+            recorderRef.current.pause();
+            console.log("[NluVoice] Mic recorder PAUSED (robot busy)");
+          } else if (!shouldMute && recorderRef.current.state === "paused") {
+            recorderRef.current.resume();
+            console.log("[NluVoice] Mic recorder RESUMED (listening)");
+          }
+        } catch (e) {
+          console.warn("[NluVoice] Mic pause/resume error:", e);
+        }
+      }
+
+      // Play synthesized audio chimes on state transitions (Alexa/Pepper pattern)
+      // Guard: NEVER play chimes while robot is speaking/thinking/waiting — only on clean listening transitions.
+      if (oldState !== newState && playChimes) {
+        const robotBusy = newState === "speaking" || newState === "thinking" || newState === "waiting";
+        const comingFromSpeaking = oldState === "speaking" || oldState === "waiting";
+        if (newState === "listening" && !comingFromSpeaking) {
+          // Only chime when transitioning TO listening from idle/connecting (not from speaking)
           playStartChime();
         } else if (newState === "thinking" && oldState === "listening") {
           playStopChime();
         }
       }
     },
-    [onStateChange, playChimes],
+    [onStateChange],
   );
 
   const onVolumeChangeRef = useRef(onVolumeChange);
@@ -274,6 +295,12 @@ export function useNluVoice({
       durationMs?: number,
     ) => {
       console.log("[NluVoice] Playing reply:", replyText?.slice(0, 80), audioUrl);
+      if (replyText) {
+        const normReply = replyText.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+        if (normReply) {
+          recentRobotRepliesRef.current = [normReply, ...recentRobotRepliesRef.current.slice(0, 4)];
+        }
+      }
       // Stop any prior clip first (may send tts_done if it was actually playing).
       stopCurrentAudio();
       const playGen = ++playGenerationRef.current;
@@ -380,14 +407,23 @@ export function useNluVoice({
         }
       }
 
-      if (!apiKey || !replyText) {
-        if (utteranceId) {
-          sendPlaybackStart(utteranceId);
-          isPlayingRef.current = true;
-          await new Promise((r) =>
-            setTimeout(r, Math.max(800, durationMs ?? 2000)),
-          );
+      if (!resolvedUrl) {
+        try {
+          if (typeof window !== "undefined" && "speechSynthesis" in window && replyText) {
+            console.log("[NluVoice] Speaking using Web Speech API fallback:", replyText);
+            const utterance = new SpeechSynthesisUtterance(replyText);
+            utterance.rate = 1.0;
+            sendPlaybackStart(utteranceId ?? "");
+            await new Promise<void>((resolve) => {
+              utterance.onend = () => resolve();
+              utterance.onerror = () => resolve();
+              window.speechSynthesis.speak(utterance);
+            });
+          }
+        } catch (e) {
+          console.warn("[NluVoice] SpeechSynthesis fallback failed:", e);
         }
+
         finishPlayback();
         return;
       }
@@ -408,6 +444,10 @@ export function useNluVoice({
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || nluWs.current?.readyState !== WebSocket.OPEN) return;
+      if (stateRef.current !== "listening" && stateRef.current !== "idle") {
+        console.log(`[NluVoice] Rejecting sendTranscript("${trimmed}") — state is "${stateRef.current}"`);
+        return;
+      }
       console.log(`[NluVoice] → NLU: "${trimmed}"`);
       setLastTranscript(trimmed);
       setVoiceState("thinking");
@@ -470,6 +510,31 @@ export function useNluVoice({
       const transcript: string = alt?.transcript ?? "";
       if (!transcript.trim()) return;
 
+      // ── Self-Echo Filter: Check if transcript matches recent robot replies ─────
+      const normInc = transcript.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+      if (normInc) {
+        for (const reply of recentRobotRepliesRef.current) {
+          if (!reply) continue;
+          if (reply.includes(normInc) || normInc.includes(reply)) {
+            console.log(`[NluVoice] Blocked self-echo (substring of reply): "${transcript}"`);
+            pendingTranscriptRef.current = "";
+            return;
+          }
+          const incWords = normInc.split(/\s+/).filter((w) => w.length > 2);
+          const repWords = new Set(reply.split(/\s+/).filter((w) => w.length > 2));
+          if (incWords.length > 0) {
+            const matchCount = incWords.filter((w) => repWords.has(w)).length;
+            if (matchCount / incWords.length >= 0.4) {
+              console.log(
+                `[NluVoice] Blocked self-echo (${matchCount}/${incWords.length} words overlap): "${transcript}"`
+              );
+              pendingTranscriptRef.current = "";
+              return;
+            }
+          }
+        }
+      }
+
       // Keep latest interim for UtteranceEnd fallback; show live text via pending
       pendingTranscriptRef.current = transcript;
 
@@ -512,8 +577,8 @@ export function useNluVoice({
       smart_format: "true",
       interim_results: "true",
       vad_events: "true",
-      endpointing: "200", // Aggressive VAD endpointing for faster turnaround
-      utterance_end_ms: "300", // 300ms silence threshold for snappy end-of-speech detection
+      endpointing: "1000", // 1000ms silence → Deepgram won't cut off mid-sentence
+      utterance_end_ms: "1000", // 1 second silence threshold (Deepgram API requires >= 1000)
     });
 
     const cleanKw = (text: string) => 
@@ -623,9 +688,11 @@ export function useNluVoice({
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
+          // Enable browser AEC so the robot's speaker output is NOT fed back
+          // into Deepgram as a user transcript (hardware echo loop prevention).
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
         },
       });
       mediaStreamRef.current = stream;
@@ -645,10 +712,10 @@ export function useNluVoice({
     recorderRef.current = recorder;
 
     recorder.ondataavailable = (event) => {
-      const isRobotBusy =
-        stateRef.current === "speaking" || stateRef.current === "thinking";
+      // STRICT HARD LOCK: Only stream mic bytes to Deepgram while actively listening
+      const isListening = stateRef.current === "listening";
       if (
-        !isRobotBusy &&
+        isListening &&
         event.data.size > 0 &&
         dgWs.current?.readyState === WebSocket.OPEN &&
         isActiveRef.current
@@ -656,8 +723,7 @@ export function useNluVoice({
         event.data.arrayBuffer().then((buf) => {
           if (
             dgWs.current?.readyState === WebSocket.OPEN &&
-            stateRef.current !== "speaking" &&
-            stateRef.current !== "thinking"
+            stateRef.current === "listening"
           ) {
             dgWs.current.send(buf);
           }

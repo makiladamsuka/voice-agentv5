@@ -16,6 +16,7 @@ export interface AppConfig {
 
   // agent dispatch configuration
   agentName?: string;
+  sandboxId?: string;
 }
 
 export const APP_CONFIG_DEFAULTS: AppConfig = {

@@ -8,6 +8,10 @@ import os
 from pathlib import Path
 
 from openai import OpenAI
+from dotenv import load_dotenv
+
+APP_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(APP_DIR / ".env")
 
 POSTER_CATEGORIES = ("events", "competitions", "posts")
 VALID_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -22,31 +26,21 @@ def _clients() -> list[tuple[OpenAI, str]]:
     """Return a list of (client, model) pairs to try in order."""
     options: list[tuple[OpenAI, str]] = []
     if os.getenv("OPENROUTER_API_KEY"):
-        # Try OpenRouter Free Auto-Router (picks active free vision models automatically)
         options.append((
             OpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=os.getenv("OPENROUTER_API_KEY"),
             ),
-            "openrouter/free",
-        ))
-        # Try specific Free Vision models as secondary fallbacks
-        options.append((
-            OpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=os.getenv("OPENROUTER_API_KEY"),
-            ),
-            "google/gemma-4-31b-it:free",
+            "meta-llama/llama-3.2-11b-vision-instruct:free",
         ))
         options.append((
             OpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=os.getenv("OPENROUTER_API_KEY"),
             ),
-            "nvidia/nemotron-nano-12b-v2-vl:free",
+            "qwen/qwen-2-vl-7b-instruct:free",
         ))
     if os.getenv("GROQ_API_KEY"):
-        # Groq vision model as fallback
         options.append((
             OpenAI(
                 base_url="https://api.groq.com/openai/v1",
@@ -108,8 +102,7 @@ def index_posters(assets_dir: Path) -> list[dict]:
     """Scan events/competitions/posts posters and extract structured metadata."""
     clients = _clients()
     if not clients:
-        print("No OPENROUTER_API_KEY or GROQ_API_KEY — skipping poster indexing")
-        return []
+        print("No OPENROUTER_API_KEY or GROQ_API_KEY — using fallback metadata from filenames.")
 
     extracted: list[dict] = []
     print(f"Scanning posters in {assets_dir} ({', '.join(POSTER_CATEGORIES)})...")
@@ -121,10 +114,29 @@ def index_posters(assets_dir: Path) -> list[dict]:
             if file_path.suffix.lower() not in VALID_EXTENSIONS:
                 continue
             print(f"   Processing {category}/{file_path.name}...")
-            data = _extract_poster(file_path, clients)
+            data = _extract_poster(file_path, clients) if clients else None
             if data is None:
-                print(f"   All providers failed for {file_path.name} — skipping.")
-                continue
+                print(f"   AI extraction skipped/failed for {file_path.name} — creating fallback metadata.")
+                stem = file_path.stem
+                parts = stem.split("_")
+                readable = [p for p in parts if not p.isdigit()]
+                if readable:
+                    derived_title = " ".join(readable).replace("-", " ").strip().title()
+                else:
+                    cat_map = {
+                        "events": "Campus Event",
+                        "competitions": "Competition",
+                        "posts": "Campus Post",
+                    }
+                    base_name = cat_map.get(category, "Campus Highlight")
+                    derived_title = f"{base_name} ({parts[-1][-4:] if parts else stem[-4:]})"
+                data = {
+                    "title": derived_title,
+                    "date": None,
+                    "time": None,
+                    "location": None,
+                    "description": f"Details and information regarding {derived_title}.",
+                }
             data["source_file"] = file_path.name
             data["category"] = category
             extracted.append(data)
@@ -132,3 +144,4 @@ def index_posters(assets_dir: Path) -> list[dict]:
 
     print(f"Poster indexing complete ({len(extracted)} item(s))")
     return extracted
+

@@ -6,12 +6,17 @@ the agent_speaking state to external scripts like test_talk_runner.py.
 
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
 import json
+import tempfile
 from pathlib import Path
 
 
-_FLAG_FILE = Path("/tmp/voice_agent_speaking.json")
+_FLAG_FILE = Path(tempfile.gettempdir()) / "voice_agent_speaking.json"
 
 
 def write_speaking_flag(speaking: bool) -> None:
@@ -26,9 +31,11 @@ def write_speaking_flag(speaking: bool) -> None:
         # Atomic write with file locking
         temp_file = _FLAG_FILE.with_suffix(".tmp")
         with open(temp_file, "w") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            if fcntl:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             json.dump(data, f)
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            if fcntl:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         
         temp_file.replace(_FLAG_FILE)
     except Exception as e:
@@ -47,9 +54,11 @@ def read_speaking_flag() -> bool:
             return False
         
         with open(_FLAG_FILE, "r") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            if fcntl:
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
             data = json.load(f)
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            if fcntl:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             return data.get("agent_speaking", False)
     except Exception:
         return False

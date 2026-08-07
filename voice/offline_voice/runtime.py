@@ -18,6 +18,9 @@ from voice.sentiment import write_conv_emotion
 
 try:
     import os as _os
+    _os.environ["OMP_NUM_THREADS"] = "1"
+    _os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    _os.environ["MKL_NUM_THREADS"] = "1"
     _os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
     import pygame
     pygame.mixer.init()
@@ -420,9 +423,10 @@ class IntentMatcher:
                     metadatas.append({"intent_id": intent["id"], "domain": domain})
 
             if ids:
-                batch = 200
+                batch = 16
                 for start in range(0, len(ids), batch):
                     end = start + batch
+                    print(f"  [ChromaDB] Embedding batch {start} to {min(end, len(ids))}...")
                     self.collection.add(
                         ids=ids[start:end],
                         documents=documents[start:end],

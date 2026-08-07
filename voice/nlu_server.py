@@ -209,6 +209,8 @@ async def _voice_ws_endpoint(websocket) -> None:
 
             elif msg_type == "transcript":
                 # Wait asynchronously if the server is still loading weights in the background
+                if not _nlu_ready:
+                    print("[NLU] Waiting for background NLU pre-warm to finish...")
                 while not _nlu_ready:
                     await websocket.send_text(json.dumps({"type": "state", "conv_state": "connecting"}))
                     await asyncio.sleep(0.5)

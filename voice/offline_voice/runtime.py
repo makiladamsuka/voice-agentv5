@@ -85,12 +85,27 @@ _SMALLTALK_RE = re.compile(
 )
 
 
+_KNOWLEDGE_RE = re.compile(
+    r"\b("
+    r"what is|what are|tell me about|explain|describe"
+    r"|who is|who are|how old is|when was"
+    r"|history of|about the|about this"
+    r"|university of moratuwa|uom|faculty of it|fit"
+    r"|undergraduate|postgraduate|admission|research"
+    r"|courses|programs|degrees|contact|location|address"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
 def route_domain(text: str) -> str:
-    """Route a transcript to: 'tool_time', 'navigate', 'smalltalk', or 'events'."""
+    """Route a transcript to: 'tool_time', 'knowledge', 'navigate', 'smalltalk', or 'events'."""
     if _TIME_RE.search(text):
         return "tool_time"
     if _NAVIGATE_RE.search(text):
         return "navigate"
+    if _KNOWLEDGE_RE.search(text):
+        return "knowledge"
     if _SMALLTALK_RE.search(text):
         return "smalltalk"
     return "events"
@@ -109,6 +124,7 @@ DOMAIN_THRESHOLDS = {
     "events": 0.8,
     "smalltalk": 0.9,
     "navigate": 0.75,
+    "knowledge": 0.85,
 }
 AMBIGUITY_MARGIN = 0.15
 
@@ -117,6 +133,7 @@ DOMAIN_SOURCES = {
     "events": "compiled_intents.json",
     "smalltalk": "smalltalk_intents.json",
     "navigate": "navigate_intents.json",
+    "knowledge": "knowledge_intents.json",
 }
 
 

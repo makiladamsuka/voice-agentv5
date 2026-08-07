@@ -449,6 +449,29 @@ async def _health_endpoint(request) -> None:
     return JSONResponse({"status": "ok", "mode": "nlu", "ready": _nlu_ready})
 
 
+async def _reload_nlu_endpoint(request) -> None:
+    """POST /reload-nlu — clears the cached runtime so it reloads from disk.
+
+    Called by the Knowledge Base admin page after saving new intents.
+    Also deletes the numpy embedding cache so the new knowledge domain
+    embeddings are rebuilt on the next request.
+    """
+    from starlette.responses import JSONResponse
+    import shutil
+    reload_nlu_runtime()
+    # Delete numpy cache files so the matcher rebuilds with new intents
+    db_dir = APP_DIR / "voice" / "event_db"
+    for cache_file in ("embeddings_cache.npy", "embeddings_meta.json"):
+        p = db_dir / cache_file
+        if p.exists():
+            try:
+                p.unlink()
+            except Exception:
+                pass
+    log.info("[NluServer] /reload-nlu: cache cleared, will rebuild on next query.")
+    return JSONResponse({"status": "ok", "message": "NLU runtime reloading."})
+
+
 def _build_app():
     """Build and return the Starlette ASGI app."""
     try:
@@ -463,6 +486,7 @@ def _build_app():
         debug=False,
         routes=[
             Route("/health", _health_endpoint, methods=["GET"]),
+            Route("/reload-nlu", _reload_nlu_endpoint, methods=["POST"]),
             WebSocketRoute("/ws/voice", _voice_ws_endpoint),
         ],
     )
@@ -603,7 +627,7 @@ def _match_intent_internal(runtime, user_text: str) -> dict:
         # Fallback for STT mishearings: If the strict regex router sent it to the wrong domain,
         # the vector database will return no matches. We trust ChromaDB to find it in other domains.
         if not intent:
-            for fallback_domain in ["navigate", "events", "smalltalk"]:
+            for fallback_domain in ["knowledge", "navigate", "events", "smalltalk"]:
                 if fallback_domain != domain:
                     intent = runtime.matcher.match(user_text, domain=fallback_domain)
                     if intent:

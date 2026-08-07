@@ -1,0 +1,132 @@
+# ============================================================
+# Knowledge Base — University of Moratuwa / Faculty of IT
+# ============================================================
+# Each entry is one "topic" the robot can answer.
+#
+# FIELDS:
+#   topic    : unique ID (no spaces, use underscores)
+#   aliases  : phrases a visitor might say to ask about this topic
+#   reply    : what the robot says (keep it to 1-2 natural sentences)
+#
+# After editing this file run:
+#   python voice/compiler/knowledge_compiler.py
+# or click "Compile" on the Knowledge Base admin page.
+# ============================================================
+
+- topic: faculty_of_it
+  aliases:
+    - faculty of it
+    - faculty of information technology
+    - FIT
+    - what is FIT
+    - tell me about FIT
+    - about the faculty
+    - about this faculty
+    - what is this faculty
+  reply: >
+    The Faculty of Information Technology, or FIT, is one of Sri Lanka's
+    leading IT faculties. It offers undergraduate and postgraduate programs
+    in Computer Science, IT, and Data Science.
+
+- topic: university_overview
+  aliases:
+    - university of moratuwa
+    - UOM
+    - about the university
+    - this university
+    - what is UOM
+    - tell me about the university
+    - where are we
+    - what place is this
+  reply: >
+    We are at the University of Moratuwa, one of Sri Lanka's top technological
+    universities, founded in 1972 and located in Katubedda, Moratuwa. It
+    specialises in Engineering, Architecture, and Information Technology.
+
+- topic: undergraduate_programs
+  aliases:
+    - undergraduate programs
+    - bachelor programs
+    - degree programs
+    - what degrees are offered
+    - what courses are available
+    - courses at FIT
+    - BSc programs
+  reply: >
+    The Faculty of IT offers a four-year BSc Honours program in Information
+    Technology, covering areas like software engineering, data science, AI,
+    and networking.
+
+- topic: postgraduate_programs
+  aliases:
+    - postgraduate programs
+    - masters programs
+    - MSc
+    - PhD programs
+    - postgrad
+    - higher studies
+  reply: >
+    FIT offers MSc programs in IT Management, Data Science, and Cybersecurity,
+    as well as PhD research opportunities in various computing disciplines.
+
+- topic: admission
+  aliases:
+    - how to apply
+    - admission requirements
+    - z-score
+    - A/L cutoff
+    - entry requirements
+    - how to get in
+    - eligibility
+  reply: >
+    Admission to UOM is based on Sri Lankan A/L results and the Z-score system,
+    managed by the University Grants Commission. Specific cutoffs vary by year
+    and program.
+
+- topic: location
+  aliases:
+    - where is the university
+    - university address
+    - how to get here
+    - location of UOM
+    - where is UOM located
+  reply: >
+    The University of Moratuwa is located in Katubedda, Moratuwa, about 16
+    kilometres south of Colombo. You can reach it by train or bus along the
+    southern coastal line.
+
+- topic: contact
+  aliases:
+    - contact details
+    - phone number
+    - email address
+    - how to contact
+    - university phone
+    - university email
+  reply: >
+    You can contact the University of Moratuwa at their main office on
+    (+94) 011 265 0301, or visit www.mrt.ac.lk for more information.
+
+- topic: history
+  aliases:
+    - history of UOM
+    - when was the university founded
+    - how old is this university
+    - when was FIT established
+    - founding of UOM
+  reply: >
+    The University of Moratuwa was established in 1972 as a full university,
+    building on the College of Technology founded in 1966. The Faculty of
+    Information Technology was established in 2001.
+
+- topic: research
+  aliases:
+    - research at UOM
+    - research projects
+    - research centers
+    - what research is done here
+    - academic research
+  reply: >
+    UOM is a research-active university with multiple research centres covering
+    AI, robotics, sustainable engineering, and more. FIT has dedicated labs for
+    machine learning, cybersecurity, and IoT research.

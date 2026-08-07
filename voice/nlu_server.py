@@ -154,62 +154,7 @@ async def _voice_ws_endpoint(websocket) -> None:
     if _bb is not None:
         _bb.write(voice_session_active=True, conv_state="listening")
 
-    # ── Proactive Greeting Poller ──────────────────────────────────────────
-    async def _poll_face_greetings():
-        if _bb is None: return
-        last_seq = _bb.read("face_greeting_seq").get("face_greeting_seq", 0)
-        while True:
-            await asyncio.sleep(0.5)
-            try:
-                state = _bb.read("face_greeting_seq", "face_greeting_text", "agent_speaking", "user_speaking")
-                seq = state.get("face_greeting_seq", 0)
-                if seq > last_seq:
-                    last_seq = seq
-                    text = state.get("face_greeting_text", "")
-                    
-                    if text and not state.get("agent_speaking") and not state.get("user_speaking") and not _echo.get("speaking"):
-                        print(f"[NLU] Sending proactive face greeting: '{text}'")
-                        _echo["speaking"] = True
-                        
-                        loop = asyncio.get_running_loop()
-                        audio_file = await loop.run_in_executor(None, _generate_dynamic_tts, text)
-                        
-                        audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
-                        audio_path = str(APP_DIR / "assets" / "audio_cache" / audio_file) if audio_file else None
 
-                        utterance_id = ""
-                        duration_ms = 0
-                        sync = get_speech_sync_service()
-                        if sync is not None:
-                            utterance_id, duration_ms = sync.arm_utterance(
-                                reply_text=text,
-                                audio_path=audio_path,
-                            )
-                        
-                        _dur_sec = (duration_ms / 1000.0) if duration_ms else 6.0
-                        _reply_norm = _normalize_text(text)
-                        if _reply_norm:
-                            _echo["recent_replies"] = [_reply_norm] + _echo.get("recent_replies", [])[:2]
-                        _echo["ts"] = _time.monotonic()
-                        _echo["suppress_sec"] = max(4.0, _dur_sec + 2.0)
-                        
-                        await websocket.send_text(json.dumps({
-                            "type": "response",
-                            "reply_text": text,
-                            "audio_url": audio_url,
-                            "action": {},
-                            "utterance_id": utterance_id,
-                            "duration_ms": duration_ms,
-                        }))
-                        await websocket.send_text(json.dumps({"type": "state", "conv_state": "speaking"}))
-                        if _bb is not None:
-                            _bb.write(conv_state="speaking", agent_speaking=True)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                log.error(f"[NLU] Greeting poll error: {e}")
-
-    greeting_task = asyncio.create_task(_poll_face_greetings())
 
     try:
         while True:
@@ -512,7 +457,6 @@ async def _voice_ws_endpoint(websocket) -> None:
         else:
             log.error(f"NLU WebSocket error: {exc}")
     finally:
-        greeting_task.cancel()
         sync = get_speech_sync_service()
         if sync is not None:
             sync.end_playback()
@@ -555,6 +499,45 @@ async def _reload_nlu_endpoint(request) -> None:
     return JSONResponse({"status": "ok", "message": "NLU runtime reloading."})
 
 
+async def _greet_ws_endpoint(websocket):
+    """Dedicated WebSocket for pushing proactive face greetings independently."""
+    await websocket.accept()
+    if _bb is None: return
+    last_seq = _bb.read("face_greeting_seq").get("face_greeting_seq", 0)
+    try:
+        while True:
+            await asyncio.sleep(0.5)
+            state = _bb.read("face_greeting_seq", "face_greeting_text", "agent_speaking", "user_speaking")
+            seq = state.get("face_greeting_seq", 0)
+            if seq > last_seq:
+                last_seq = seq
+                text = state.get("face_greeting_text", "")
+                
+                if text and not state.get("agent_speaking") and not state.get("user_speaking"):
+                    print(f"[NLU] Sending proactive face greeting: '{text}'")
+                    
+                    loop = asyncio.get_running_loop()
+                    audio_file = await loop.run_in_executor(None, _generate_dynamic_tts, text)
+                    
+                    audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
+                    audio_path = str(APP_DIR / "assets" / "audio_cache" / audio_file) if audio_file else None
+
+                    sync = get_speech_sync_service()
+                    if sync is not None:
+                        sync.arm_utterance(reply_text=text, audio_path=audio_path)
+                    
+                    if _bb is not None:
+                        _bb.write(conv_state="speaking", agent_speaking=True)
+                    
+                    await websocket.send_text(json.dumps({
+                        "type": "greeting",
+                        "text": text,
+                        "audio_url": audio_url
+                    }))
+    except Exception as e:
+        if "disconnect" not in type(e).__name__.lower():
+            log.error(f"[NLU] Greeting WS error: {e}")
+
 def _build_app():
     """Build and return the Starlette ASGI app."""
     try:
@@ -571,6 +554,7 @@ def _build_app():
             Route("/health", _health_endpoint, methods=["GET"]),
             Route("/reload-nlu", _reload_nlu_endpoint, methods=["POST"]),
             WebSocketRoute("/ws/voice", _voice_ws_endpoint),
+            WebSocketRoute("/ws/greet", _greet_ws_endpoint),
         ],
     )
 

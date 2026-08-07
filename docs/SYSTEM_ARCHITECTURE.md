@@ -338,13 +338,13 @@ sequenceDiagram
    - **Poster Parsing:** Vision LLMs parse event poster images in `assets/events/` into structured JSON (title, date, location, description).
    - **Utterance Generation:** Generates synthetic user query variations for each poster.
    - **Audio Pre-Synthesis:** Synthesizes uncompressed 48kHz WAV audio into `assets/audio_cache/`.
-   - **ChromaDB Vector Store:** Indexes text embeddings into the persistent local ChromaDB database (`voice/event_db/`).
+   - **ChromaDB Vector Store:** Encodes text utterances into **384-dimensional dense vector embeddings** using the **`all-MiniLM-L6-v2`** ONNX / SentenceTransformer model (`embedding_functions.DefaultEmbeddingFunction()`). Indexes embeddings into the persistent local ChromaDB database (`voice/event_db/`).
 
 2. **Runtime Voice Capture & Silero VAD:**
    - Client mic captures speech; **Silero VAD** (Web Audio) detects voice activity and signals exact end-of-speech.
 
 3. **0ms Synthesis Latency Local Cache Hit:**
-   - User utterance is converted into a vector embedding and queried against ChromaDB. If the vector distance is $< 0.25$, the server plays the matching pre-synthesized 48kHz `.wav` file with **0ms synthesis delay** and zero API cost.
+   - User utterance is encoded into a $384\text{-D}$ embedding using `all-MiniLM-L6-v2` and matched via **Cosine Similarity**. If the cosine vector distance is $< 0.25$, the server plays the matching pre-synthesized 48kHz `.wav` file with **0ms synthesis delay** and zero API cost.
 
 4. **Cloud LLM & Live TTS Fallback:**
    - If no local vector match exists, the request falls back to online LLMs (Groq Llama 3 70B / OpenRouter) and streams real-time TTS audio via Deepgram.

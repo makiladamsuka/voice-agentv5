@@ -213,6 +213,30 @@ function KioskViewUI({
   const [navData, setNavData] = useState<any | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [faceGreetingEnabled, setFaceGreetingEnabled] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/face-greeting")
+      .then((res) => res.json())
+      .then((data) => setFaceGreetingEnabled(data.enabled))
+      .catch(console.error);
+  }, []);
+
+  const toggleFaceGreeting = async () => {
+    const newVal = !faceGreetingEnabled;
+    setFaceGreetingEnabled(newVal);
+    try {
+      await fetch("/api/face-greeting", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: newVal }),
+      });
+    } catch (e) {
+      console.error("Failed to toggle face greeting", e);
+      setFaceGreetingEnabled(!newVal); // revert
+    }
+  };
+
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [qrUrl, setQrUrl] = useState("");
   const [time, setTime] = useState("");
@@ -1654,6 +1678,26 @@ function KioskViewUI({
                   NLU mode
                 </p>
               )}
+              
+              <div className="flex items-center justify-between py-2 border-b border-[var(--kiosk-border)]">
+                <div className="flex flex-col">
+                  <span className="font-semibold">Auto-Greet</span>
+                  <span className="text-[12px] text-[var(--kiosk-muted)]">Greet people when they approach</span>
+                </div>
+                <PopButton
+                  onClick={toggleFaceGreeting}
+                  className={`w-12 h-6 rounded-full transition-colors relative ${
+                    faceGreetingEnabled ? "bg-[#10B981]" : "bg-[var(--kiosk-border)]"
+                  }`}
+                  aria-label="Toggle Auto Greet"
+                >
+                  <span 
+                    className={`absolute top-1 bottom-1 w-4 bg-white rounded-full transition-all shadow-sm ${
+                      faceGreetingEnabled ? "left-7" : "left-1"
+                    }`}
+                  />
+                </PopButton>
+              </div>
               <div className="flex items-center justify-between py-2">
                 <span className="font-semibold">Theme</span>
                 <ThemeToggle />

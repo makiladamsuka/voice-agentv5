@@ -1,100 +1,94 @@
-# Voice Agent V5 — 5-Minute Introductory Presentation & Speech Script
+# Voice Agent V5 — 5-Minute Presentation Script (Simple English)
 
-**Title:** Voice Agent V5: Multimodal Autonomous Kiosk Robot  
-**Target Duration:** 5 Minutes (~700 spoken words @ 135 wpm)  
-**Target Audience:** University Dean, Department Heads, Academic Evaluators, and Engineering Panel  
-**Deliverable File:** `docs/INTRODUCTORY_SPEECH_5MIN.md`  
+**Title:** Voice Agent V5: Interactive Campus Kiosk Robot  
+**Target Duration:** 5 Minutes (~650 spoken words @ 130 wpm)  
+**Tone:** Plain, clear, simple conversational English (no complex academic jargon)  
+**File Location:** `docs/INTRODUCTORY_SPEECH_5MIN.md`  
 
 ---
 
-## ⏱️ Speech Delivery & Timing Map
+## ⏱️ Speech Schedule & Timing
 
 ```
-[0:00 - 1:00]  PART 1: The Vision & Problem Statement (Hook)
-[1:00 - 2:15]  PART 2: System Architecture & Distributed Compute
-[2:15 - 3:30]  PART 3: Zero-Latency Multimodal AI & Vector NLU
-[3:30 - 4:15]  PART 4: Engineering Innovations & Hardware Problem Solving
-[4:15 - 5:00]  PART 5: Benchmarks, Real-World Impact & Closing
+[0:00 - 1:00]  PART 1: Introduction & What the Robot Does
+[1:00 - 2:15]  PART 2: How the Brain & Motors Work Together
+[2:15 - 3:30]  PART 3: Camera Vision & Instant Voice AI
+[3:30 - 4:15]  PART 4: Clever Solutions to Hardware Problems
+[4:15 - 5:00]  PART 5: Results & Conclusion
 ```
 
 ---
 
 ## 🎙️ Spoken Speech Script (Verbatim)
 
-### PART 1: The Vision & Problem Statement (0:00 – 1:00)
+### PART 1: Introduction & What the Robot Does (0:00 – 1:00)
 
-> "Respected Dean, Members of the Faculty, and Distinguished Guests,
+> "Hello everyone! Today, I’m excited to show you **Voice Agent V5**, an interactive kiosk robot we built for our campus.
 > 
-> Imagine walking into our university building or a campus event hall, looking for a classroom or poster details, and instead of staring at a cold, static touchscreen display, you are greeted by an interactive, expressive robot. The robot turns its physical head to face you, greets you warmly, waves its robotic arm, and responds to your spoken questions in under 40 milliseconds with natural voice and synchronized screen graphics.
+> Imagine walking into a hall or building on campus. Instead of using a boring, quiet touchscreen, you meet a friendly robot. When you walk up to it, the robot turns its head to face you, waves its arm, and talks to you! You can ask questions like *'Where is the hackathon?'* or *'What events are happening today?'*, and it answers you instantly in a natural voice.
 > 
-> This is **Voice Agent V5** — an end-to-end multimodal autonomous kiosk and physical robotic platform that we have built from the ground up.
-> 
-> Traditional public kiosks fail because they are passive and cold. On the other hand, traditional humanoid robots fail because they are prohibitively expensive, suffer from high cloud latency, and quickly overheat on embedded hardware. Our goal with Voice Agent V5 was to solve this fundamental trade-off: creating a real-time, responsive, physically engaging robot built on low-cost, power-efficient hardware."
+> Most public kiosks are just flat screens that no one wants to talk to. And most fancy humanoid robots cost thousands of dollars and take 3 seconds to respond over the internet. We built Voice Agent V5 to solve this—creating a fast, friendly, interactive robot using low-cost, smart hardware."
 
 ---
 
-### PART 2: System Architecture & Distributed Compute (1:00 – 2:15)
+### PART 2: How the Brain & Motors Work Together (1:00 – 2:15)
 
-> "To achieve real-time performance without lag or micro-stutters, we designed a heterogeneous, multi-tiered architecture.
+> "So, how does everything work under the hood?
 > 
-> At the core of the system is an overclocked **Raspberry Pi 4 Model B** running 64-bit Linux. The Pi 4 acts as the central brain — hosting our computer vision AI, natural language understanding engine, vector database, and Next.js 14 touchscreen kiosk user interface.
+> We use a **Raspberry Pi 4** as the main brain. It runs the camera vision, handles the voice AI, and powers the touchscreen display you see on the kiosk.
 > 
-> To ensure microsecond-level timing for physical motors without overloading the main CPU, we offloaded all actuator controls to an embedded **ESP32 microcontroller** over a custom high-speed 115,200 baud USB serial protocol. The ESP32 manages a PCA9685 12-bit PWM controller to drive the 2-DOF head pan-tilt servos and a 4-DOF articulated robotic arm, alongside a TB6612FNG motor driver with optical quadrature encoders for closed-loop 360-degree body spins.
+> To control the physical robot body, we use a small, separate microcontroller called the **ESP32**. The ESP32 acts like the muscles—it controls the motors that turn the head, wave the arm, and spin the robot base around when someone approaches.
 > 
-> Connecting all software modules is our centralized shared-memory bus — **The Blackboard Architecture**. By using atomic state locks and zero-CPU condition variables, six concurrent worker threads exchange real-time perception and kinematic data at zero idle CPU overhead."
+> The Raspberry Pi talks to the ESP32 using a USB serial connection. To keep everything fast and organized, we built a shared memory system called the **Blackboard**. All parts of the robot—the camera, sensors, motors, and voice—share information through this Blackboard cleanly without slowing down the computer."
 
 ---
 
-### PART 3: Zero-Latency Multimodal AI & Vector NLU (2:15 – 3:30)
+### PART 3: Camera Vision & Instant Voice AI (2:15 – 3:30)
 
-> "What truly makes Voice Agent V5 unique is its perception and zero-latency conversational intelligence.
+> "Now, let’s talk about the AI.
 > 
-> For computer vision, we implemented OpenCV’s neural **YuNet face detector**, running on downsampled camera feeds with adaptive Region-of-Interest sub-windowing. When the user speaks, our system enters a zero-CPU speech pause mode, automatically throttling vision processing to preserve maximum CPU capacity for audio.
+> First, for vision: We use a camera with a face-detection AI model called **YuNet**. The camera tracks your face so the robot's head looks right at you. When you start talking, the robot automatically pauses camera tracking for a moment so the computer can focus 100% on audio.
 > 
-> For voice, cloud-dependent speech systems often suffer from 2 to 3 seconds of latency. We solved this by building a **5-tier hybrid NLU pipeline**:
+> Second, for voice: Usually, AI voice agents take 2 to 3 seconds to answer because they send audio to servers on the internet. That delay feels slow and awkward.
 > 
-> Before deployment, our automated poster compiler uses Vision LLMs to extract poster information, generates synthetic question variations, pre-synthesizes uncompressed 48kHz WAV audio files, and encodes them into 384-dimensional dense vector embeddings using the **`all-MiniLM-L6-v2`** model stored inside a local **ChromaDB vector store**.
-> 
-> At runtime, when a user asks a question, Silero VAD detects end-of-speech, and our system performs a cosine similarity search against ChromaDB. On a local vector match, the robot plays pre-cached 48kHz audio with **zero milliseconds of synthesis latency**! If an un-indexed question is asked, the system seamlessly falls back to cloud LLMs like Groq Llama-3 or local offline speech engines."
+> To fix this, we created an instant local search system. When we add event posters, our system automatically creates questions and saves pre-made audio files on the Pi. When a student asks a question, the robot matches the question using vector search (`all-MiniLM-L6-v2`) and plays the answer **instantly—in under 40 milliseconds**! If someone asks something new, it automatically falls back to online AI models like Groq Llama 3."
 
 ---
 
-### PART 4: Engineering Innovations & Hardware Problem Solving (3:30 – 4:15)
+### PART 4: Clever Solutions to Hardware Problems (3:30 – 4:15)
 
-> "Throughout development, we encountered and solved critical hardware constraints.
+> "While building this robot, we ran into some tough hardware problems, but we found clever solutions.
 > 
-> For instance, when driving dual hardware SPI buses on the Pi 4 to render animated TFT round eye graphics at 60 FPS, the required SPI pins physically collided with the Pi’s hardware I2S audio pins required by MEMS microphones. 
+> For example: When we ran the robot's animated screen eyes on the Pi 4, the screen wiring clashed with the digital microphone wiring. If we plugged both into the Pi 4, the microphone stopped working!
 > 
-> To resolve this without compromise, we engineered a dedicated **Pi Zero 2 W voice node** equipped with an INMP441 MEMS microphone. This physically and electrically isolated the microphone from motor PWM noise and eliminated all hardware pin collisions.
+> To fix this, we added a small, cheap **Raspberry Pi Zero 2 W** dedicated just to the microphone. This separated the mic from the main board and stopped motor electrical noise from messing up the audio.
 > 
-> Furthermore, we implemented a **TCA9548A 8-channel I2C multiplexer** to operate three ST VL53L0X Time-of-Flight laser distance sensors simultaneously, giving the robot 3-zone spatial awareness to detect approaching users from up to 2.2 meters away."
+> We also added three laser distance sensors (Time-of-Flight sensors) on the left, center, and right. These act like eyes that tell the robot when someone is walking up to it from up to 2 meters away!"
 
 ---
 
-### PART 5: Benchmarks, Real-World Impact & Closing (4:15 – 5:00)
+### PART 5: Results & Conclusion (4:15 – 5:00)
 
-> "In our empirical benchmarks on the Pi 4:
-> - Vision runs at a smooth **18 to 24 Frames Per Second**.
-> - Servo control loops operate deterministically at **50 Hz**.
-> - Local vector voice queries respond in **less than 40 milliseconds**.
-> - Peak CPU load remains safely below 78% with zero thermal throttling.
+> "Here are our main results:
+> - The camera tracks faces smoothly at **20 frames per second**.
+> - The head and arm motors move smoothly at **50 updates per second**.
+> - Voice answers start playing in **less than 40 milliseconds**.
+> - The computer stays cool and doesn’t overheat.
 > 
-> In conclusion, Voice Agent V5 proves that high-performance, zero-latency multimodal robotics does not require tens of thousands of dollars in high-end industrial hardware. Through intelligent software decoupling, vector pre-indexing, and optimized embedded system design, we have created a scalable, engaging platform for campus navigation and human-robot interaction.
+> To wrap up: Voice Agent V5 proves that you don't need super expensive hardware to build a fast, smart, interactive robot. By combining smart software, low-cost microcontrollers, and fast local vector search, we created a fun and useful robot for our campus.
 > 
-> Thank you, and I welcome any questions from the panel."
+> Thank you so much! I’d be happy to answer any questions."
 
 ---
 
-## 📌 Presentation Quick-Reference Card (Cheat Sheet)
+## 📌 Quick Summary Card (Cheat Sheet)
 
-| Topic | Key Metric / Detail to Remember |
+| Topic | Simple Explanation |
 | :--- | :--- |
-| **Main Host Processor** | Raspberry Pi 4 Model B (Quad-Core Cortex-A72 @ 2.1 GHz) |
-| **Embedded Controller** | ESP32 NodeMCU DevKit (Dual-Core Xtensa @ 240 MHz, FreeRTOS) |
-| **Shared Memory** | `core/blackboard.py` (Mutex lock-free reads, zero-CPU `wait_for`) |
-| **Vision Neural Model** | OpenCV YuNet ONNX (`face_detection_yunet_2023mar.onnx`) |
-| **Vector DB & Model** | ChromaDB + `all-MiniLM-L6-v2` (384-dimensional dense vectors) |
-| **Local Response Latency** | $< 40\text{ ms}$ (Local 48kHz WAV Cache Hit) |
-| **Mic Node & Pi Zero 2 W** | Solved pin conflict between dual SPI eyes and I2S microphone |
-| **Actuator Drivers** | PCA9685 12-bit PWM (Servos) + TB6612FNG (N20 Base Spin Motor) |
-| **Proximity Sensors** | 3x ST VL53L0X Laser ToF sensors via TCA9548A I2C Multiplexer (`0x70`) |
+| **Main Brain** | Raspberry Pi 4 Model B (Runs AI, Vision, Voice, and Touchscreen UI) |
+| **Motor Muscle** | ESP32 Microcontroller (Controls head servos, arm servos, and base spin motor) |
+| **Shared Memory** | `Blackboard` (`core/blackboard.py`) — connects vision, motors, and voice smoothly |
+| **Face Tracking** | YuNet AI model (tracks user's face so head follows you) |
+| **Instant Voice Search** | Local vector search (`all-MiniLM-L6-v2`) plays pre-saved audio in $<40\text{ ms}$ |
+| **Microphone Fix** | Dedicated Pi Zero 2 W node (solves pin conflict with screen eyes & motor noise) |
+| **Distance Sensors** | 3x Laser Distance (ToF) sensors detect when someone walks up to the robot |

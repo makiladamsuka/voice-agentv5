@@ -1,8 +1,8 @@
-# Voice Agent V5 — 5-Minute Presentation Script (Simple English)
+# Nema Kiosk Robot — 5-Minute Presentation Script (Simple English)
 
-**Title:** Voice Agent V5: Interactive Campus Kiosk Robot  
+**Robot Name:** Nema  
 **Target Duration:** 5 Minutes (~650 spoken words @ 130 wpm)  
-**Tone:** Plain, clear, simple conversational English (no complex academic jargon)  
+**Tone:** Plain, clear, simple conversational English  
 **File Location:** `docs/INTRODUCTORY_SPEECH_5MIN.md`  
 
 ---
@@ -10,74 +10,80 @@
 ## ⏱️ Speech Schedule & Timing
 
 ```
-[0:00 - 1:00]  PART 1: Introduction & What the Robot Does
-[1:00 - 2:15]  PART 2: How the Brain & Motors Work Together
-[2:15 - 3:30]  PART 3: Camera Vision & Instant Voice AI
-[3:30 - 4:15]  PART 4: Clever Solutions to Hardware Problems
-[4:15 - 5:00]  PART 5: Results & Conclusion
+[0:00 - 1:00]  PART 1: Introduction, Meet Nema, & What it Does
+[1:00 - 2:15]  PART 2: The Brain, the Muscles, & the Dedicated Mic Node
+[2:15 - 3:30]  PART 3: Software division (Frontend vs Backend) & Local AI
+[3:30 - 4:15]  PART 4: 3D Model & Our 3 Custom PCBs
+[4:15 - 5:00]  PART 5: Benchmarks & Closing
 ```
 
 ---
 
 ## 🎙️ Spoken Speech Script (Verbatim)
 
-### PART 1: Introduction & What the Robot Does (0:00 – 1:00)
+### PART 1: Introduction, Meet Nema, & What it Does (0:00 – 1:00)
 
-> "Hello everyone! Today, I’m excited to show you **Voice Agent V5**, an interactive kiosk robot we built for our campus.
+> "Hello everyone! Today, I am very excited to introduce **Nema**, our interactive campus kiosk robot.
 > 
-> Imagine walking into a hall or building on campus. Instead of using a boring, quiet touchscreen, you meet a friendly robot. When you walk up to it, the robot turns its head to face you, waves its arm, and talks to you! You can ask questions like *'Where is the hackathon?'* or *'What events are happening today?'*, and it answers you instantly in a natural voice.
+> Nema is designed to be a friendly, welcoming robot for visitors on our campus. It does three main things:
 > 
-> Most public kiosks are just flat screens that no one wants to talk to. And most fancy humanoid robots cost thousands of dollars and take 3 seconds to respond over the internet. We built Voice Agent V5 to solve this—creating a fast, friendly, interactive robot using low-cost, smart hardware."
-
----
-
-### PART 2: How the Brain & Motors Work Together (1:00 – 2:15)
-
-> "So, how does everything work under the hood?
+> First, it is a **greeting robot**. When you walk up to it, Nema detects your presence, looks right at you, and greets you.
+> Second, it acts as an **information kiosk**. You can ask Nema about happening events on campus.
+> Third, it helps you find your way around by showing you **how to navigate to faculty places**.
 > 
-> We use a **Raspberry Pi 4** as the main brain. It runs the camera vision, handles the voice AI, and powers the touchscreen display you see on the kiosk.
-> 
-> To control the physical robot body, we use a small, separate microcontroller called the **ESP32**. The ESP32 acts like the muscles—it controls the motors that turn the head, wave the arm, and spin the robot base around when someone approaches.
-> 
-> The Raspberry Pi talks to the ESP32 using a USB serial connection. To keep everything fast and organized, we built a shared memory system called the **Blackboard**. All parts of the robot—the camera, sensors, motors, and voice—share information through this Blackboard cleanly without slowing down the computer."
+> Instead of using a boring, static touchscreen, students can talk directly to Nema and get help in a natural, friendly way."
 
 ---
 
-### PART 3: Camera Vision & Instant Voice AI (2:15 – 3:30)
+### PART 2: The Brain, the Muscles, & the Dedicated Mic Node (1:00 – 2:15)
 
-> "Now, let’s talk about the AI.
+> "To make Nema work smoothly, we split the hardware compute into three main parts:
 > 
-> First, for vision: We use a camera with a face-detection AI model called **YuNet**. The camera tracks your face so the robot's head looks right at you. When you start talking, the robot automatically pauses camera tracking for a moment so the computer can focus 100% on audio.
+> First, we use a **Raspberry Pi 4** as the main brain. It runs our face tracking code, decides Nema's emotions, and handles the voice AI.
 > 
-> Second, for voice: Usually, AI voice agents take 2 to 3 seconds to answer because they send audio to servers on the internet. That delay feels slow and awkward.
+> Second, we use an **ESP32 microcontroller** to control the physical hardware. It acts like the muscles, directly moving the servos for the head pan-tilt, controling the arm, and spinning the base motor.
 > 
-> To fix this, we created an instant local search system. When we add event posters, our system automatically creates questions and saves pre-made audio files on the Pi. When a student asks a question, the robot matches the question using vector search (`all-MiniLM-L6-v2`) and plays the answer **instantly—in under 40 milliseconds**! If someone asks something new, it automatically falls back to online AI models like Groq Llama 3."
-
----
-
-### PART 4: Clever Solutions to Hardware Problems (3:30 – 4:15)
-
-> "While building this robot, we ran into some tough hardware problems, but we found clever solutions.
-> 
-> For example: When we ran the robot's animated screen eyes on the Pi 4, the screen wiring clashed with the digital microphone wiring. If we plugged both into the Pi 4, the microphone stopped working!
-> 
-> To fix this, we added a small, cheap **Raspberry Pi Zero 2 W** dedicated just to the microphone. This separated the mic from the main board and stopped motor electrical noise from messing up the audio.
-> 
-> We also added three laser distance sensors (Time-of-Flight sensors) on the left, center, and right. These act like eyes that tell the robot when someone is walking up to it from up to 2 meters away!"
+> Third, we have a **Raspberry Pi Zero 2 W** running as a dedicated microphone module. Usually, running round screen eyes on the Pi 4 conflicts with digital mic wiring. By using the Pi Zero 2 W just for the microphone, we stopped all wiring clashes and isolated the audio from motor electrical noise."
 
 ---
 
-### PART 5: Results & Conclusion (4:15 – 5:00)
+### PART 3: Software division (Frontend vs Backend) & Local AI (2:15 – 3:30)
 
-> "Here are our main results:
-> - The camera tracks faces smoothly at **20 frames per second**.
-> - The head and arm motors move smoothly at **50 updates per second**.
-> - Voice answers start playing in **less than 40 milliseconds**.
-> - The computer stays cool and doesn’t overheat.
+> "Our software is split into two major parts: the **Backend** and the **Frontend**.
 > 
-> To wrap up: Voice Agent V5 proves that you don't need super expensive hardware to build a fast, smart, interactive robot. By combining smart software, low-cost microcontrollers, and fast local vector search, we created a fun and useful robot for our campus.
+> The **Backend** runs in Python and controls all the physical robot functions. It captures camera video to perform face tracking, changes Nema’s emotions, and talks to the ESP32 to move the motors.
 > 
-> Thank you so much! I’d be happy to answer any questions."
+> The **Frontend** is a Next.js touchscreen interface. It is what users see and touch on the kiosk. It displays the calendar of events, interactive maps to faculty locations, and live voice visualizers.
+> 
+> To answer questions instantly without awkward internet lag, we pre-save voice answers on the Pi. When a student asks a question, the backend matches it using local vector search (`all-MiniLM-L6-v2`) and plays the voice file **instantly—in under 40 milliseconds**!"
+
+---
+
+### PART 4: 3D Model & Our 3 Custom PCBs (3:30 – 4:15)
+
+> "Nema is built using a custom 3D-designed robot body. To make the electronics clean, stable, and professional, we designed **three custom Printed Circuit Boards (PCBs)**:
+> 
+> The first PCB is for the **Raspberry Pi 4**. It plugs directly into the Pi 4 and handles the connections for the two round SPI display eyes and the head IMU sensor.
+> 
+> The second PCB is for the **ESP32**. It mounts the ESP32 and connects all the hardware controls—including the servos, the base motor driver, the encoders, and the laser distance sensors.
+> 
+> The third PCB is for the **Raspberry Pi Zero 2 W**. It mounts the Pi Zero and its digital INMP441 MEMS microphone module so we get clean, clear voice capture.
+> 
+> These custom boards eliminate messy wiring and make the hardware extremely reliable."
+
+---
+
+### PART 5: Benchmarks & Closing (4:15 – 5:00)
+
+> "In our tests, Nema performs incredibly well:
+> - Face tracking runs smoothly at **20 frames per second**.
+> - Physical motor adjustments run at **50 updates per second**.
+> - Local voice matching responds in **less than 40 milliseconds**.
+> - The 3 custom PCBs keep the wiring clean and secure.
+> 
+> In conclusion, Nema proves that we can build a fast, smart, and physically interactive kiosk robot using smart software division, custom electronics, and low-cost hardware.
+> 
+> Thank you so much! I am happy to answer any questions."
 
 ---
 
@@ -85,10 +91,10 @@
 
 | Topic | Simple Explanation |
 | :--- | :--- |
-| **Main Brain** | Raspberry Pi 4 Model B (Runs AI, Vision, Voice, and Touchscreen UI) |
-| **Motor Muscle** | ESP32 Microcontroller (Controls head servos, arm servos, and base spin motor) |
-| **Shared Memory** | `Blackboard` (`core/blackboard.py`) — connects vision, motors, and voice smoothly |
-| **Face Tracking** | YuNet AI model (tracks user's face so head follows you) |
-| **Instant Voice Search** | Local vector search (`all-MiniLM-L6-v2`) plays pre-saved audio in $<40\text{ ms}$ |
-| **Microphone Fix** | Dedicated Pi Zero 2 W node (solves pin conflict with screen eyes & motor noise) |
-| **Distance Sensors** | 3x Laser Distance (ToF) sensors detect when someone walks up to the robot |
+| **Robot Name** | **Nema** (Friendly interactive greeting, event, and navigation kiosk robot) |
+| **Pi 4 Brain PCB** | Custom PCB hosting Pi 4, dual round SPI screen eyes, and head IMU sensor |
+| **ESP32 Muscle PCB** | Custom PCB hosting ESP32 and motor/servo/encoder/ToF sensor controls |
+| **Pi Zero Mic PCB** | Custom PCB hosting Pi Zero 2 W and digital INMP441 MEMS microphone |
+| **Backend Role** | Face tracking, showing emotions, and hardware communication controls |
+| **Frontend Role** | Touchscreen display showing campus events, interactive maps, and waveforms |
+| **NLU Matcher** | Local vector search (`all-MiniLM-L6-v2`) playing audio in $<40\text{ ms}$ |

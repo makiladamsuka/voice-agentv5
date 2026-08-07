@@ -10,8 +10,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 import numpy as np
-import chromadb
-from chromadb.utils import embedding_functions
 import speech_recognition as sr
 
 from voice.sentiment import write_conv_emotion
@@ -161,11 +159,6 @@ class IntentMatcher:
 
     def __init__(self, db_path: Path):
         self._db_path = db_path
-        # ChromaDB is deferred until actually needed (avoids loading ONNX model
-        # when the numpy fast-path cache already exists).
-        self.client = None
-        self.collection = None
-        self._ef = None
 
         self.intents_map: dict = {}
         self.exact_match_map: dict = {}
@@ -175,24 +168,7 @@ class IntentMatcher:
         self._np_meta: list[dict] = []                  # [{intent_id, domain}, ...]
         self._embed_model = None                        # lazy SentenceTransformer
 
-    def _ensure_chromadb(self) -> bool:
-        """Lazily init ChromaDB client. Returns True if available."""
-        if self.client is not None:
-            return True
-        try:
-            self.client = chromadb.PersistentClient(path=str(self._db_path))
-            self._ef = embedding_functions.DefaultEmbeddingFunction()
-            self.collection = self.client.get_or_create_collection(
-                name="compiled_intents",
-                embedding_function=self._ef,
-            )
-            return True
-        except Exception as e:
-            print(f"  [Matcher] ChromaDB init failed: {e}")
-            self.client = None
-            self.collection = None
-            self._ef = None
-            return False
+
 
     # ── Tier-0: exact hashmap lookup ─────────────────────────────────────────
 
@@ -270,18 +246,7 @@ class IntentMatcher:
                 pairs.append((domain, intent))
         return pairs
 
-    def _cache_is_current(self, expected_docs: int) -> bool:
-        """True if Chroma already holds the expected docs WITH domain metadata."""
-        if self.collection is None or expected_docs == 0:
-            return False
-        try:
-            if self.collection.count() != expected_docs:
-                return False
-            sample = self.collection.peek(limit=1)
-            metadatas = sample.get("metadatas") or []
-            return bool(metadatas) and "domain" in metadatas[0]
-        except Exception:
-            return False
+
 
     # ── Option 1: numpy embedding cache helpers ───────────────────────────────
 
@@ -298,26 +263,7 @@ class IntentMatcher:
         except Exception:
             return False
 
-    def _build_npy_cache(self, db_dir: Path) -> None:
-        """Extract embeddings from ChromaDB and save as fast numpy arrays."""
-        if self.collection is None:
-            print("  [Matcher] Cannot build numpy cache: ChromaDB collection not available.")
-            return
-        print("  [Matcher] Building numpy embedding cache from ChromaDB...")
-        all_items = self.collection.get(include=["embeddings", "metadatas"])  # type: ignore
-        raw_embs = all_items.get("embeddings")
-        raw_meta = all_items.get("metadatas")
-        if raw_embs is None or len(raw_embs) == 0:
-            print("  [Matcher] No embeddings found in ChromaDB to cache.")
-            return
-        arr = np.array(raw_embs, dtype=np.float32)
-        meta_list = list(raw_meta) if raw_meta is not None else []
-        npy, meta_path = self._npy_cache_paths(db_dir)
-        np.save(str(npy), arr)
-        meta_path.write_text(json.dumps(meta_list), encoding="utf-8")
-        self._np_embeddings = arr
-        self._np_meta = meta_list
-        print(f"  [Matcher] Numpy cache saved: {arr.shape[0]} embeddings × {arr.shape[1]}d")
+
 
     def _build_npy_cache_direct(self, db_dir: Path, pairs: list[tuple[str, dict]]) -> None:
         """Build numpy embedding cache directly with SentenceTransformer (no ChromaDB).
@@ -385,62 +331,17 @@ class IntentMatcher:
 
         # ── Option 1: build/load numpy embedding cache ─────────────
         if self._npy_cache_is_current(db_dir, expected_docs):
-            # Fast path: numpy cache already up to date — skip ChromaDB entirely
+            # Fast path: numpy cache already up to date
             self._load_npy_cache(db_dir)
             print(
                 f"Loaded {len(self.intents_map)} intents "
-                f"({expected_docs} utterances) — numpy fast-path active (ChromaDB skipped)."
+                f"({expected_docs} utterances) — numpy fast-path active."
             )
             return
 
-        # Numpy cache missing or stale — need to rebuild from ChromaDB.
-        # Only now do we initialise the ChromaDB client (which loads the ONNX model).
-        if not self._ensure_chromadb():
-            print("  [Matcher] ChromaDB unavailable and numpy cache missing — "
-                  "building numpy cache directly with SentenceTransformer...")
-            self._build_npy_cache_direct(db_dir, pairs)
-            return
-
-        if not self._cache_is_current(expected_docs):
-            print(
-                f"Indexing {len(pairs)} intents into ChromaDB "
-                f"({expected_docs} utterances)..."
-            )
-            try:
-                self.client.delete_collection("compiled_intents")
-            except Exception:
-                pass
-            self.collection = self.client.get_or_create_collection(
-                name="compiled_intents",
-                embedding_function=embedding_functions.DefaultEmbeddingFunction(),
-            )
-
-            ids, documents, metadatas = [], [], []
-            for domain, intent in pairs:
-                for i, utt in enumerate(intent.get("utterances") or []):
-                    ids.append(f"{intent['id']}_{i}")
-                    documents.append(utt)
-                    metadatas.append({"intent_id": intent["id"], "domain": domain})
-
-            if ids:
-                batch = 16
-                for start in range(0, len(ids), batch):
-                    end = start + batch
-                    print(f"  [ChromaDB] Embedding batch {start} to {min(end, len(ids))}...")
-                    self.collection.add(
-                        ids=ids[start:end],
-                        documents=documents[start:end],
-                        metadatas=metadatas[start:end],
-                    )
-            print(f"Successfully indexed {len(ids)} utterances.")
-        else:
-            print(
-                f"Loaded {len(self.intents_map)} intents "
-                f"({expected_docs} utterances) from ChromaDB cache."
-            )
-
-        # Extract embeddings from ChromaDB into numpy for fast future queries
-        self._build_npy_cache(db_dir)
+        # Numpy cache missing or stale — rebuild it
+        print("  [Matcher] Building numpy cache directly with SentenceTransformer...")
+        self._build_npy_cache_direct(db_dir, pairs)
 
     # ── Option 1: numpy fast matching path ───────────────────────────────────
 

@@ -50,6 +50,7 @@ _bb: "Blackboard | None" = None
 _runtime = None  # OfflineVoiceRuntime, lazy-loaded on first connection
 _wayfinder = None  # Wayfinder, injected from start_robot.py (or lazy-loaded)
 _nlu_ready: bool = False
+_nlu_error: bool = False
 
 
 _nlu_lock = threading.Lock()
@@ -137,7 +138,7 @@ async def _voice_ws_endpoint(websocket) -> None:
     import time as _time
     _echo = {
         "norm": "",
-        "reply_norm": "",
+        "recent_replies": [],
         "ts": 0.0,
         "suppress_sec": 10.0,
         "speaking": False,
@@ -164,7 +165,7 @@ async def _voice_ws_endpoint(websocket) -> None:
                 continue
 
             if msg_type == "speculative_transcript":
-                if not _nlu_ready:
+                if not _nlu_ready or _nlu_error:
                     continue  # Ignore interim transcripts while weights are still loading
                 user_text = msg.get("text", "").strip()
                 if user_text:
@@ -188,6 +189,8 @@ async def _voice_ws_endpoint(websocket) -> None:
                     is_fallback = result and result.get("is_fallback")
                     if result and not is_fallback:
                         speculative_cache[norm_text] = result
+                        if len(speculative_cache) > 50:
+                            speculative_cache.clear()
                         
                         # Generate TTS in the background so it's ready for the final turn
                         reply_text = result.get("reply_text")
@@ -212,8 +215,14 @@ async def _voice_ws_endpoint(websocket) -> None:
                 if not _nlu_ready:
                     print("[NLU] Waiting for background NLU pre-warm to finish...")
                 while not _nlu_ready:
+                    if _nlu_error:
+                        await websocket.send_text(json.dumps({"type": "state", "conv_state": "error"}))
+                        break
                     await websocket.send_text(json.dumps({"type": "state", "conv_state": "connecting"}))
                     await asyncio.sleep(0.5)
+                
+                if _nlu_error:
+                    continue
 
                 original_text = msg.get("text", "").strip()
                 if not original_text:
@@ -227,16 +236,18 @@ async def _voice_ws_endpoint(websocket) -> None:
                 _dt = _now - _echo["ts"]
                 is_duplicate_prompt = (_norm_incoming == _echo.get("norm", ""))
                 
-                reply_norm = _echo.get("reply_norm", "")
+                recent_replies = _echo.get("recent_replies", [])
                 is_reply_echo = False
-                if reply_norm and len(_norm_incoming) >= 3:
-                    if _norm_incoming in reply_norm or reply_norm in _norm_incoming:
+                for rep in recent_replies:
+                    if not rep or len(_norm_incoming) < 3: continue
+                    if _norm_incoming in rep or rep in _norm_incoming:
                         is_reply_echo = True
-                    else:
-                        inc_words = set(_norm_incoming.split())
-                        rep_words = set(reply_norm.split())
-                        if len(inc_words) >= 2 and (len(inc_words & rep_words) / len(inc_words)) >= 0.6:
-                            is_reply_echo = True
+                        break
+                    inc_words = set(_norm_incoming.split())
+                    rep_words = set(rep.split())
+                    if len(inc_words) >= 2 and (len(inc_words & rep_words) / len(inc_words)) >= 0.6:
+                        is_reply_echo = True
+                        break
 
                 if _echo["speaking"] or (_dt < _echo["suppress_sec"]):
                     if is_duplicate_prompt or is_reply_echo:
@@ -382,7 +393,9 @@ async def _voice_ws_endpoint(websocket) -> None:
                     _bb.write(conv_state="speaking", agent_speaking=True)
 
                 _dur_sec = (duration_ms / 1000.0) if duration_ms else 6.0
-                _echo["reply_norm"] = _normalize_text(result.get("reply_text", ""))
+                _reply_norm = _normalize_text(result.get("reply_text", ""))
+                if _reply_norm:
+                    _echo["recent_replies"] = [_reply_norm] + _echo.get("recent_replies", [])[:2]
                 _echo["ts"] = _time.monotonic()
                 # Suppress window = audio duration + 2s tail, minimum 4s.
                 # (was max(15.0,...) which silently ate all follow-up queries)
@@ -999,11 +1012,13 @@ def run_nlu_server(
 
     def _prewarm_nlu():
         """Load NLU models into RAM safely in a background thread."""
+        global _nlu_error
         print("[NluServer] Pre-loading NLU runtime in background...")
         try:
             _get_runtime()
             print("[NluServer] NLU runtime ready (SentenceTransformer loaded).")
         except Exception as exc:
+            _nlu_error = True
             log.warning(f"[NluServer] NLU pre-warm failed: {exc}")
 
     async def _run():

@@ -279,13 +279,13 @@ class IntentMatcher:
                 meta_list.append({"intent_id": intent["id"], "domain": domain})
 
         if not documents:
-            print("  [Matcher] No utterances to embed.")
-            return
-
-        print(f"  [Matcher] Embedding {len(documents)} utterances with SentenceTransformer...")
-        model = self._get_embed_model()
-        embeddings = model.encode(documents, show_progress_bar=False, normalize_embeddings=False)
-        arr = np.array(embeddings, dtype=np.float32)
+            print("  [Matcher] No utterances to embed. Saving empty cache.")
+            arr = np.empty((0, 384), dtype=np.float32)
+        else:
+            print(f"  [Matcher] Embedding {len(documents)} utterances with SentenceTransformer...")
+            model = self._get_embed_model()
+            embeddings = model.encode(documents, show_progress_bar=False, normalize_embeddings=False)
+            arr = np.array(embeddings, dtype=np.float32)
 
         npy, meta_path = self._npy_cache_paths(db_dir)
         np.save(str(npy), arr)

@@ -189,7 +189,7 @@ class FaceTracker:
         hand_cfg = _cfg(cfg, "hand_fallback", default={}) or {}
         # self._hand_fallback_enabled = bool(hand_cfg.get("enabled", True))
         self._hand_max_num = int(hand_cfg.get("max_hands", 1))
-        # self._hi_gesture_enabled = bool(hand_cfg.get("hi_gesture", True))
+        self._hi_gesture_enabled = bool(hand_cfg.get("hi_gesture", True))
         self._bye_gesture_from_hand = bool(hand_cfg.get("bye_gesture", True))
         
         # Waving detection config
@@ -730,6 +730,25 @@ class FaceTracker:
                         if dist < 300:  # Hand near face threshold
                             hand_gesture = "bye_wave"
                             hand_gesture_side = best_hand.physical_side
+
+                    # Hi gesture: frontside hand away from face (with 30s cooldown)
+                    hi_cooldown_until = float(self.bb.read("hi_wave_cooldown_until").get("hi_wave_cooldown_until", 0.0))
+                    if (
+                        self._hi_gesture_enabled
+                        and best_hand.is_frontside
+                        and not hand_gesture
+                        and now >= hi_cooldown_until
+                    ):
+                        is_near_face = False
+                        if face_detected:
+                            face_px_x = int((face_norm_x + 1.0) * 0.5 * dw)
+                            face_px_y = int((face_norm_y + 1.0) * 0.5 * dh)
+                            dist = ((px - face_px_x) ** 2 + (py - face_px_y) ** 2) ** 0.5
+                            if dist < 300:
+                                is_near_face = True
+                        if not is_near_face:
+                            hand_gesture = "hi_wave"
+                            hand_gesture_side = best_hand.physical_side
                             
                     # ── Face -> Hand Fallback Logic ──
                     # Calculate hand bounding box area based on landmarks
@@ -860,6 +879,8 @@ class FaceTracker:
             if hand_gesture:
                 prev_seq = int(self.bb.read("hand_gesture_seq")["hand_gesture_seq"])
                 gesture_seq_delta = {"hand_gesture_seq": prev_seq + 1}
+                if hand_gesture == "hi_wave":
+                    gesture_seq_delta["hi_wave_cooldown_until"] = now + HI_WAVE_COOLDOWN_SEC
 
             # ── Publish to Blackboard ────────────────────────────────────────
             snapshots = self._person_memory.snapshots(now) if self._person_memory else []

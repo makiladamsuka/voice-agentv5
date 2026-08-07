@@ -213,10 +213,10 @@ servo:
   baud: 115200
   pan_min: 25.0
   pan_max: 150.0
-  tilt_min: 75.0
-  tilt_max: 150.0
+  tilt_min: 40.0
+  tilt_max: 100.0
   pan_center: 100.0
-  tilt_center: 110.0  # mechanical upright (0°)
+  tilt_center: 70.0  # mechanical upright (0°)
   # 1 command unit = 1 physical servo degree (firmware bug fixed)
   tilt_mechanical_scale: 1.0   # mech° = (tilt_cmd - tilt_center) * scale
   tilt_max_mechanical_deg: 45.0
@@ -231,8 +231,8 @@ servo:
   tilt_track_sign: -1.0           # flip to 1.0 if face below center but head tilts up
   tilt_track_alpha: 0.39 # vertical bearing filter during track (faster than face_alpha_y)
   pan_max_step_deg: 0.75 # hard cap per loop tick (prevents overshoot on fast moves)
-  tilt_max_step_deg: 0.8 # max tilt command change per track tick
-  tilt_track_slew_dps: 18.0       # max tilt speed (cmd deg/s) at full PID correction
+  tilt_max_step_deg: 1.8 # max tilt command change per track tick
+  tilt_track_slew_dps: 28.0       # max tilt speed (cmd deg/s) at full PID correction
   tilt_track_range: 35.0
   pan_error_full_scale: 0.42
   pan_track_min_gain: 0.32

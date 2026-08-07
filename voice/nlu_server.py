@@ -534,6 +534,14 @@ async def _greet_ws_endpoint(websocket):
                         "text": text,
                         "audio_url": audio_url
                     }))
+                    
+                    # Wait for estimated audio duration then clear speaking flag.
+                    # ~120ms per word as a rough TTS duration estimate.
+                    word_count = len(text.split())
+                    clear_delay = max(1.5, word_count * 0.12 + 0.5)
+                    await asyncio.sleep(clear_delay)
+                    if _bb is not None:
+                        _bb.write(conv_state="waiting", agent_speaking=False)
     except Exception as e:
         if "disconnect" not in type(e).__name__.lower():
             log.error(f"[NLU] Greeting WS error: {e}")

@@ -1,0 +1,59 @@
+[
+  {
+    "id": "knowledge_about_uom",
+    "utterances": [
+      "tell me about the university",
+      "about university of moratuwa",
+      "what is uom",
+      "information about uom",
+      "tell me about this campus"
+    ],
+    "response_text": "The University of Moratuwa is a premier technical university renowned for engineering, architecture, and information technology.",
+    "audio_file": null,
+    "action": {
+      "action": "speak"
+    }
+  },
+  {
+    "id": "knowledge_fit",
+    "utterances": [
+      "tell me about faculty of IT",
+      "what is fit",
+      "faculty of information technology",
+      "about fit faculty"
+    ],
+    "response_text": "The Faculty of Information Technology specializes in Computer Science, Software Engineering, and Artificial Intelligence programs.",
+    "audio_file": null,
+    "action": {
+      "action": "speak"
+    }
+  },
+  {
+    "id": "knowledge_library",
+    "utterances": [
+      "when is the library open",
+      "library hours",
+      "is the library open",
+      "where is the library"
+    ],
+    "response_text": "The main university library is open from 8:00 AM to 8:00 PM on weekdays. You can find it on the upper floor.",
+    "audio_file": null,
+    "action": {
+      "action": "speak"
+    }
+  },
+  {
+    "id": "knowledge_canteen",
+    "utterances": [
+      "where is the canteen",
+      "where to eat",
+      "is there a cafeteria",
+      "food and drinks"
+    ],
+    "response_text": "The campus canteen is located on the ground floor near the main quadrangle, serving snacks, meals, and beverages.",
+    "audio_file": null,
+    "action": {
+      "action": "speak"
+    }
+  }
+]

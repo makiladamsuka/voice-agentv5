@@ -1,0 +1,104 @@
+[
+  {
+    "id": "smalltalk_greeting",
+    "utterances": [
+      "hi",
+      "hello",
+      "hey",
+      "hey there",
+      "good morning",
+      "good afternoon",
+      "good evening",
+      "yo",
+      "hi robot",
+      "hello nema"
+    ],
+    "response_text": "Hello there! Welcome to the campus. How can I help you today?",
+    "audio_file": null,
+    "action": {
+      "action": "speak",
+      "suggested_buttons": ["Where is the auditorium?", "What events are happening?"]
+    }
+  },
+  {
+    "id": "smalltalk_mic_check",
+    "utterances": [
+      "can you hear me",
+      "can you hear my voice",
+      "is the mic working",
+      "are you listening",
+      "can you hear me robot",
+      "is anyone there",
+      "testing testing",
+      "test test"
+    ],
+    "response_text": "Yes, I can hear you loud and clear! How can I assist you?",
+    "audio_file": null,
+    "action": {
+      "action": "speak"
+    }
+  },
+  {
+    "id": "smalltalk_identity",
+    "utterances": [
+      "who are you",
+      "what is your name",
+      "what's your name",
+      "who am i talking to",
+      "introduce yourself",
+      "are you a robot"
+    ],
+    "response_text": "I am NEma, your autonomous campus guide robot! I can help you find rooms, events, and locations on campus.",
+    "audio_file": null,
+    "action": {
+      "action": "speak"
+    }
+  },
+  {
+    "id": "smalltalk_what_can_you_do",
+    "utterances": [
+      "what can you do",
+      "how can you help me",
+      "what do you know",
+      "what features do you have",
+      "help me",
+      "can you help"
+    ],
+    "response_text": "I can give you turn-by-turn directions to any room, show you upcoming campus events and competitions, or answer general questions!",
+    "audio_file": null,
+    "action": {
+      "action": "speak",
+      "suggested_buttons": ["Where is the auditorium?", "What events are happening?"]
+    }
+  },
+  {
+    "id": "smalltalk_thanks",
+    "utterances": [
+      "thank you",
+      "thanks",
+      "thanks a lot",
+      "thank you so much",
+      "appreciate it"
+    ],
+    "response_text": "You're very welcome! Have a great time exploring campus.",
+    "audio_file": null,
+    "action": {
+      "action": "speak"
+    }
+  },
+  {
+    "id": "smalltalk_bye",
+    "utterances": [
+      "bye",
+      "goodbye",
+      "see you later",
+      "talk to you later",
+      "catch you later"
+    ],
+    "response_text": "Goodbye! Feel free to ask me whenever you need directions.",
+    "audio_file": null,
+    "action": {
+      "action": "speak"
+    }
+  }
+]

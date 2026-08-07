@@ -39,6 +39,7 @@ import {
 } from "@/hooks/use-voice-config";
 import { useNluAdapter } from "@/hooks/useNluAdapter";
 import type { NluAction } from "@/hooks/useNluVoice";
+import { useFaceGreeting } from "@/hooks/useFaceGreeting";
 
 /** Mount 3D map only when Maps mode / navigation needs it (no idle WebGL). */
 const NavigationMap = dynamic(() => import("@/components/app/isometric-map"), {
@@ -101,6 +102,11 @@ export function KioskView() {
 
 function KioskViewNlu() {
   const nluAdapter = useNluAdapter();
+  
+  useFaceGreeting({
+    isBusy: () => nluAdapter.agentState === "speaking" || nluAdapter.agentState === "thinking",
+  });
+
   const startRef = useRef(nluAdapter.start);
   startRef.current = nluAdapter.start;
   const endRef = useRef(nluAdapter.end);

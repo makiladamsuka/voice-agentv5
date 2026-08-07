@@ -469,7 +469,7 @@ export default function NavigationMap({
                   e.stopPropagation();
                   if (currentFloor === f) return;
                   if (isTransitioningRef.current) return;
-                  
+
                   isTransitioningRef.current = true;
                   setIsTransitioning(true);
                   setIndicatorFloor(f as string);
@@ -759,7 +759,7 @@ export default function NavigationMap({
               </AnimatedFloorGroup>
 
               <OrbitControls
-                enableZoom={true}
+                enableZoom={false}
                 enablePan={true}
                 enableRotate={false}
                 minPolarAngle={40 * (Math.PI / 180)}

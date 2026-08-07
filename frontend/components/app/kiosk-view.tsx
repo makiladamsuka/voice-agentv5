@@ -59,7 +59,7 @@ const PANEL =
   "rounded-[28px] bg-[var(--kiosk-surface)] border border-[var(--kiosk-border)]";
 const PAGE_PAD = "p-4";
 const ICON_BTN =
-  "w-11 h-11 rounded-full border border-[var(--kiosk-border)] flex items-center justify-center text-[var(--kiosk-muted)]";
+  "w-14 h-14 rounded-full border border-[var(--kiosk-border)] flex items-center justify-center text-[var(--kiosk-muted)]";
 
 const EVENT_CATEGORY_META: Record<
   string,
@@ -885,7 +885,7 @@ function KioskViewUI({
                   {hasTranscript && (
                     <div className="absolute top-4 right-20 flex flex-col items-end z-40 pointer-events-none">
                       <div className="bg-black/60 backdrop-blur-md text-white px-5 py-4 rounded-3xl text-left max-w-sm shadow-xl border border-white/10">
-                        <div className="font-semibold text-[15px] leading-relaxed">
+                        <div className="font-semibold text-[20px] leading-relaxed">
                           {talkCaption.text.includes("\n") || talkCaption.text.includes(", then ") ? (
                             <ul className="list-disc pl-5 space-y-1">
                               {talkCaption.text.split(/(?:\.\n|, then )/).map((step: string, i: number) => {
@@ -906,7 +906,7 @@ function KioskViewUI({
                     aria-label="Close"
                     className={`absolute top-4 right-4 z-30 ${ICON_BTN} bg-[var(--kiosk-surface)] shadow-sm`}
                   >
-                    <span className="material-symbols-outlined text-[22px]">
+                    <span className="material-symbols-outlined text-[28px]">
                       close
                     </span>
                   </PopButton>
@@ -934,7 +934,7 @@ function KioskViewUI({
                   {hasTranscript && (
                     <div className="absolute top-4 right-20 flex flex-col items-end z-40 pointer-events-none">
                       <div className="bg-black/60 backdrop-blur-md text-white px-5 py-4 rounded-3xl text-left max-w-sm shadow-xl border border-white/10">
-                        <div className="font-semibold text-[15px] leading-relaxed">
+                        <div className="font-semibold text-[20px] leading-relaxed">
                           {talkCaption.text.includes("\n") || talkCaption.text.includes(", then ") ? (
                             <ul className="list-disc pl-5 space-y-1">
                               {talkCaption.text.split(/(?:\.\n|, then )/).map((step: string, i: number) => {
@@ -955,7 +955,7 @@ function KioskViewUI({
                     aria-label="Close map"
                     className={`absolute top-4 right-4 z-30 ${ICON_BTN} bg-[var(--kiosk-surface)] shadow-sm`}
                   >
-                    <span className="material-symbols-outlined text-[22px]">
+                    <span className="material-symbols-outlined text-[28px]">
                       close
                     </span>
                   </PopButton>
@@ -993,7 +993,7 @@ function KioskViewUI({
                   aria-label="Close"
                   className={ICON_BTN}
                 >
-                  <span className="material-symbols-outlined text-[22px]">
+                  <span className="material-symbols-outlined text-[28px]">
                     close
                     </span>
                 </PopButton>
@@ -1067,13 +1067,13 @@ function KioskViewUI({
                   aria-label="Close"
                   className={`absolute top-4 right-4 ${ICON_BTN}`}
                 >
-                  <span className="material-symbols-outlined text-[22px]">
+                  <span className="material-symbols-outlined text-[28px]">
                     close
                   </span>
                 </PopButton>
 
                 <div className="flex-1 flex flex-col items-center justify-center gap-6 w-full">
-                  <p className={`text-[24px] font-semibold text-center text-[var(--kiosk-text)] min-h-[3rem] px-4 ${
+                  <p className={`text-[30px] font-semibold text-center text-[var(--kiosk-text)] min-h-[3rem] px-4 ${
                     focusedEvent ? "max-w-sm" : "max-w-lg"
                   }`}>
                     {talkCaption.isUser ? (
@@ -1113,7 +1113,7 @@ function KioskViewUI({
                           <PopButton
                             key={idx}
                             onClick={handleButtonClick}
-                            className="px-5 py-2.5 rounded-full bg-white/40 dark:bg-black/40 border border-[var(--kiosk-border)] shadow-sm backdrop-blur-md text-[16px] font-medium text-[var(--kiosk-text)] hover:bg-white/60 dark:hover:bg-white/10 transition-colors active:scale-95"
+                            className="px-6 py-4 rounded-full bg-white/40 dark:bg-black/40 border border-[var(--kiosk-border)] shadow-sm backdrop-blur-md text-[19px] font-medium text-[var(--kiosk-text)] hover:bg-white/60 dark:hover:bg-white/10 transition-colors active:scale-95 min-h-[56px]"
                           >
                             {btnLabel}
                           </PopButton>
@@ -1136,9 +1136,9 @@ function KioskViewUI({
               <PopButton
                 onClick={() => setFocusedEvent(null)}
                 aria-label="Close"
-                className="absolute top-4 right-4 z-10 w-11 h-11 bg-black/50 text-white rounded-full flex items-center justify-center"
+                className="absolute top-4 right-4 z-10 w-14 h-14 bg-black/50 text-white rounded-full flex items-center justify-center"
               >
-                <span className="material-symbols-outlined text-[22px]">
+                <span className="material-symbols-outlined text-[28px]">
                   close
                 </span>
               </PopButton>
@@ -1186,7 +1186,7 @@ function KioskViewUI({
               {hasTranscript && (
                 <div className="absolute top-4 right-20 flex flex-col items-end z-40 pointer-events-none">
                   <div className="bg-black/60 backdrop-blur-md text-white px-5 py-4 rounded-3xl text-left max-w-sm shadow-xl border border-white/10">
-                    <div className="font-semibold text-[15px] leading-relaxed">
+                    <div className="font-semibold text-[20px] leading-relaxed">
                       {talkCaption.text.includes("\n") || talkCaption.text.includes(", then ") ? (
                         <ul className="list-disc pl-5 space-y-1">
                           {talkCaption.text.split(/(?:\.\n|, then )/).map((step: string, i: number) => {
@@ -1225,12 +1225,12 @@ function KioskViewUI({
                   aria-label="Close"
                   className={ICON_BTN}
                 >
-                  <span className="material-symbols-outlined text-[22px]">
+                  <span className="material-symbols-outlined text-[28px]">
                     close
                   </span>
                 </PopButton>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-28 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-28 [-webkit-overflow-scrolling:touch] scroll-smooth [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {categoryEventPosts.length === 0 ? (
                   <div className="h-full min-h-[200px] flex flex-col items-center justify-center gap-2 opacity-50">
                     <span className="material-symbols-outlined text-4xl">
@@ -1249,7 +1249,7 @@ function KioskViewUI({
                             key={post.id}
                           type="button"
                           onClick={() => handlePosterTap(post)}
-                          className="text-left rounded-2xl overflow-hidden border border-[var(--kiosk-border)] bg-[var(--kiosk-surface-muted)] flex flex-col min-h-[200px] h-full"
+                          className="text-left rounded-2xl overflow-hidden border border-[var(--kiosk-border)] bg-[var(--kiosk-surface-muted)] flex flex-col min-h-[220px] h-full"
                           >
                           <div className="relative w-full aspect-[4/3] shrink-0 overflow-hidden bg-[var(--kiosk-border)]">
                                 <img
@@ -1261,18 +1261,18 @@ function KioskViewUI({
                               </div>
                           <div className="flex-1 p-3 min-w-0 flex flex-col">
                                   {post.extracted_date && (
-                              <p className="text-[11px] font-semibold text-[var(--kiosk-muted)] mb-1 line-clamp-1">
+                              <p className="text-[14px] font-semibold text-[var(--kiosk-muted)] mb-1 line-clamp-1">
                                 {post.extracted_date}
                                 {post.extracted_location
                                   ? ` · ${post.extracted_location}`
                                   : ""}
                               </p>
                             )}
-                            <p className="text-[15px] font-semibold text-[var(--kiosk-text)] leading-tight line-clamp-2">
+                            <p className="text-[18px] font-semibold text-[var(--kiosk-text)] leading-tight line-clamp-2">
                                   {post.message}
                                 </p>
                                 {post.description && (
-                              <p className="text-[12px] text-[var(--kiosk-muted)] mt-1 line-clamp-2">
+                              <p className="text-[14px] text-[var(--kiosk-muted)] mt-1 line-clamp-2">
                                     {post.description}
                                   </p>
                                 )}
@@ -1296,7 +1296,7 @@ function KioskViewUI({
                   aria-label="Close"
                   className={ICON_BTN}
                 >
-                  <span className="material-symbols-outlined text-[22px]">
+                  <span className="material-symbols-outlined text-[28px]">
                     close
                         </span>
                 </PopButton>

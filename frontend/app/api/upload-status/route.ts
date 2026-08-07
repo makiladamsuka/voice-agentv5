@@ -19,6 +19,7 @@ export async function GET() {
 
     const extractedEventsPath = path.join(
       backendDir,
+      "voice",
       "event_db",
       "extracted_events.json",
     );

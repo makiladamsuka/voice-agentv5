@@ -27,27 +27,12 @@ def _clients() -> list[tuple[OpenAI, str]]:
     options: list[tuple[OpenAI, str]] = []
     
     if os.getenv("OPENROUTER_API_KEY"):
-        # Most reliable OpenRouter free vision models
         options.append((
             OpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=os.getenv("OPENROUTER_API_KEY"),
             ),
-            "google/gemini-2.0-flash-exp:free",
-        ))
-        options.append((
-            OpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=os.getenv("OPENROUTER_API_KEY"),
-            ),
-            "qwen/qwen-2.5-vl-72b-instruct:free",
-        ))
-        options.append((
-            OpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=os.getenv("OPENROUTER_API_KEY"),
-            ),
-            "meta-llama/llama-3.2-11b-vision-instruct:free",
+            "nvidia/nemotron-nano-12b-v2-vl:free",
         ))
         
     return options

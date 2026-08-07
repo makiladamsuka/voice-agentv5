@@ -52,16 +52,19 @@ _wayfinder = None  # Wayfinder, injected from start_robot.py (or lazy-loaded)
 _nlu_ready: bool = False
 
 
+_nlu_lock = threading.Lock()
+
 def _get_runtime():
     """Load or return the NLU runtime (SentenceTransformer weights pre-warmed)."""
     global _runtime, _nlu_ready
-    if _runtime is None:
-        from voice.offline_voice.runtime import OfflineVoiceRuntime
-        log.info("Loading NLU runtime (NumPy fast-path matcher + SentenceTransformer weights)...")
-        _runtime = OfflineVoiceRuntime(_bb)
-        _nlu_ready = True
-        log.info("NLU runtime ready.")
-    return _runtime
+    with _nlu_lock:
+        if _runtime is None:
+            from voice.offline_voice.runtime import OfflineVoiceRuntime
+            log.info("Loading NLU runtime (NumPy fast-path matcher + SentenceTransformer weights)...")
+            _runtime = OfflineVoiceRuntime(_bb)
+            _nlu_ready = True
+            log.info("NLU runtime ready.")
+        return _runtime
 
 def prewarm_nlu_runtime():
     """Warm up the NLU runtime safely at server startup."""
@@ -161,6 +164,8 @@ async def _voice_ws_endpoint(websocket) -> None:
                 continue
 
             if msg_type == "speculative_transcript":
+                if not _nlu_ready:
+                    continue  # Ignore interim transcripts while weights are still loading
                 user_text = msg.get("text", "").strip()
                 if user_text:
                     if pending_ambiguity_category:
@@ -202,7 +207,12 @@ async def _voice_ws_endpoint(websocket) -> None:
                             }))
                 continue
 
-            if msg_type == "transcript":
+            elif msg_type == "transcript":
+                # Wait asynchronously if the server is still loading weights in the background
+                while not _nlu_ready:
+                    await websocket.send_text(json.dumps({"type": "state", "conv_state": "connecting"}))
+                    await asyncio.sleep(0.5)
+
                 original_text = msg.get("text", "").strip()
                 if not original_text:
                     continue
@@ -950,16 +960,10 @@ def run_nlu_server(
         print("[NluServer] ERROR: uvicorn not installed. Run: pip install uvicorn[standard]")
         return
 
-    # ── Pre-warm NLU + SentenceTransformer BEFORE opening the port ──────────────
-    # This ensures weights are fully in RAM before the frontend can connect
-    # and the user clicks the mic button (eliminates first-query latency spike).
-    print("[NluServer] Pre-loading NLU runtime before port open...")
-    try:
-        _get_runtime()
-        print("[NluServer] NLU runtime ready (SentenceTransformer loaded).")
-    except Exception as exc:
-        log.warning(f"[NluServer] NLU pre-warm failed, will retry on first request: {exc}")
-
+    # ── Start server IMMEDIATELY, load weights in background ──────────────
+    # This ensures the port opens instantly so the frontend doesn't timeout
+    # when clicking the mic button. If they speak before it's ready, it waits.
+    
     app = _build_app()
     log.info(f"[NluServer] Starting on ws://{host}:{port}/ws/voice")
     print(f"[NluServer] WebSocket server starting on port {port}...")
@@ -991,12 +995,23 @@ def run_nlu_server(
         except Exception as exc:
             log.warning(f"Sidecar pre-build failed: {exc}")
 
+    def _prewarm_nlu():
+        """Load NLU models into RAM safely in a background thread."""
+        print("[NluServer] Pre-loading NLU runtime in background...")
+        try:
+            _get_runtime()
+            print("[NluServer] NLU runtime ready (SentenceTransformer loaded).")
+        except Exception as exc:
+            log.warning(f"[NluServer] NLU pre-warm failed: {exc}")
+
     async def _run():
         serve_task = asyncio.create_task(server.serve())
-        # Give the server a moment to bind, then pre-warm sidecars in background
+        # Give the server a moment to bind, then pre-warm in background
         await asyncio.sleep(0.3)
         print(f"[NluServer] Port {port} open — building audio sidecars in background...")
+        asyncio.get_running_loop().run_in_executor(None, _prewarm_nlu)
         asyncio.get_running_loop().run_in_executor(None, _prewarm_sidecars)
+        
         # Poll the Blackboard running flag so we shut down cleanly on Ctrl+C
         while bb.read("running")["running"] and not serve_task.done():
             await asyncio.sleep(0.5)

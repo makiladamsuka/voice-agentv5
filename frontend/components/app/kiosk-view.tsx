@@ -688,8 +688,6 @@ function KioskViewUI({
         alert(
           "Microphone access blocked! Use http://localhost (not an IP) or HTTPS.",
         );
-      } else {
-        alert(`Voice start failed: ${msg}`);
       }
       setIsConnecting(false);
     }

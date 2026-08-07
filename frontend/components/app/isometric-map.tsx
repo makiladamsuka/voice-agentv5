@@ -153,6 +153,7 @@ const getRoomTheme = (label: string) => {
   if (lower.includes("washroom")) return { color: "#6BCFE3", icon: "🚻" };
   if (lower.includes("evaluator")) return { color: "#9DA8B3", icon: "💁" };
   if (lower.includes("desk")) return { color: "#9CA7B1", icon: "💁" };
+  if (lower.includes("study")) return { color: "#4F4F4F", icon: "📚" };
   if (lower.includes("exit")) return { color: "#E53935", icon: "🚪" };
   if (lower.includes("stair")) return { color: "#6E6E6E", icon: "🪜" };
   if (lower.includes("unit") || lower.includes("room") || lower.includes("division") || lower.includes("devision") || lower.includes("board") || lower.includes("office") || lower.includes("microcontroller")) return { color: "#A3E0D8", icon: "🏢" };

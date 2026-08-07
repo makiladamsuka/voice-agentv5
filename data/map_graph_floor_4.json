@@ -767,7 +767,7 @@
         12,
         14
       ],
-      "color": "#FFFFFF",
+      "color": "#242424",
       "name": "Building 1",
       "removed_cells": [
         "0_4",
@@ -815,7 +815,7 @@
         18,
         14
       ],
-      "color": "#FFFFFF",
+      "color": "#242424",
       "name": "Building 2",
       "removed_cells": [
         "1_5",

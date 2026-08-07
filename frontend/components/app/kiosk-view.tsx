@@ -1024,7 +1024,7 @@ function KioskViewUI({
                     className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
                     onClick={() => handleCategoryClick("Lecture Halls", "lecture")}
                   >
-                    <span className="material-symbols-outlined text-[66px] text-[#EA580C]">
+                    <span className="material-symbols-outlined text-[#EA580C]" style={{ fontSize: "66px" }}>
                       school
                     </span>
                     <span className="text-center leading-tight">Lecture Halls</span>
@@ -1034,7 +1034,7 @@ function KioskViewUI({
                     className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
                     onClick={() => handleCategoryClick("Laboratory", "lab")}
                   >
-                    <span className="material-symbols-outlined text-[66px] text-[#8B5CF6]">
+                    <span className="material-symbols-outlined text-[#8B5CF6]" style={{ fontSize: "66px" }}>
                       science
                     </span>
                     <span className="text-center leading-tight">Laboratory</span>
@@ -1044,7 +1044,7 @@ function KioskViewUI({
                     className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
                     onClick={() => handleCategoryClick("Offices & More", "office")}
                   >
-                    <span className="material-symbols-outlined text-[66px] text-[#14B8A6]">
+                    <span className="material-symbols-outlined text-[#14B8A6]" style={{ fontSize: "66px" }}>
                       apartment
                     </span>
                     <span className="text-center leading-tight">Offices &amp; More</span>
@@ -1310,55 +1310,39 @@ function KioskViewUI({
               <p className="text-[16px] text-[var(--kiosk-muted)] mb-6">
                 Pick a category, then open a poster.
               </p>
-              <div className="flex flex-col gap-3 mt-auto pb-24">
-                <PopButton
-                  type="button"
-                  className={CAT_BTN}
-                  onClick={() => setEventCategory("competitions")}
-                >
-                  <span
-                    className={`w-3 h-3 rounded-full ${EVENT_CATEGORY_META.competitions.accent}`}
-                  />
-                  <span className="material-symbols-outlined text-[28px]">
-                    emoji_events
-                  </span>
-                  Competitions
-                  <span className="ml-auto text-[15px] font-semibold opacity-50">
-                    {eventCategoryCounts.competitions}
-                  </span>
-                </PopButton>
-                <PopButton
-                  type="button"
-                  className={CAT_BTN}
-                  onClick={() => setEventCategory("events")}
-                >
-                  <span
-                    className={`w-3 h-3 rounded-full ${EVENT_CATEGORY_META.events.accent}`}
-                  />
-                  <span className="material-symbols-outlined text-[28px]">
-                    celebration
-                  </span>
-                  Campus Events
-                  <span className="ml-auto text-[15px] font-semibold opacity-50">
-                    {eventCategoryCounts.events}
-                  </span>
-                </PopButton>
-                <PopButton
-                  type="button"
-                  className={CAT_BTN}
-                  onClick={() => setEventCategory("posts")}
-                >
-                  <span
-                    className={`w-3 h-3 rounded-full ${EVENT_CATEGORY_META.posts.accent}`}
-                  />
-                  <span className="material-symbols-outlined text-[28px]">
-                    campaign
-                  </span>
-                  Announcements
-                  <span className="ml-auto text-[15px] font-semibold opacity-50">
-                    {eventCategoryCounts.posts}
-                  </span>
-                </PopButton>
+              <div className="flex flex-col gap-6 mt-auto pb-12 w-full">
+                {/* Horizontal Category Carousel */}
+                <div className="flex justify-center gap-4 overflow-x-auto snap-x snap-mandatory pb-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden w-full">
+                  <PopButton
+                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
+                    onClick={() => setEventCategory("competitions")}
+                  >
+                    <span className="material-symbols-outlined text-[#F97316]" style={{ fontSize: "66px" }}>
+                      emoji_events
+                    </span>
+                    <span className="text-center leading-tight">Competitions</span>
+                  </PopButton>
+
+                  <PopButton
+                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
+                    onClick={() => setEventCategory("events")}
+                  >
+                    <span className="material-symbols-outlined text-[#7C3AED]" style={{ fontSize: "66px" }}>
+                      celebration
+                    </span>
+                    <span className="text-center leading-tight">Campus Events</span>
+                  </PopButton>
+
+                  <PopButton
+                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
+                    onClick={() => setEventCategory("posts")}
+                  >
+                    <span className="material-symbols-outlined text-[#14B8A6]" style={{ fontSize: "66px" }}>
+                      campaign
+                    </span>
+                    <span className="text-center leading-tight">Announcements</span>
+                  </PopButton>
+                </div>
               </div>
             </div>
           ) : (

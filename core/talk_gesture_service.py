@@ -214,8 +214,12 @@ class TalkGestureService:
 
             # Check speaking flag every tick (in-memory)
             if check_speaking:
-                bb_state = self.bb.read("agent_speaking")
-                if not bb_state.get("agent_speaking", False):
+                bb_state = self.bb.read("agent_speaking", "conv_state")
+                still_speaking = (
+                    bb_state.get("agent_speaking", False)
+                    and bb_state.get("conv_state") == "speaking"
+                )
+                if not still_speaking:
                     _not_speaking_streak += 1
                     if _not_speaking_streak >= _NOT_SPEAKING_ABORT_TICKS:
                         break
@@ -277,7 +281,7 @@ class TalkGestureService:
             
             # Read speaking state and conversation state together
             bb_state = self.bb.read("agent_speaking", "conv_state")
-            is_speaking = bb_state.get("agent_speaking", False)
+            is_speaking = bb_state.get("agent_speaking", False) and bb_state.get("conv_state") == "speaking"
             conv_state = bb_state.get("conv_state", "idle")
 
             # Freeze arms during listening and thinking — user is talking or
@@ -288,7 +292,6 @@ class TalkGestureService:
                 print(f"[TalkGesture] Pausing arms ({conv_state})")
                 self._return_to_home()
                 self.bb.write(talk_gesture_active=False)
-                last_speaking = False  # reset so speaking re-entry is clean
             last_paused = is_paused
 
             if is_paused:

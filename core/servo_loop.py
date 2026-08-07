@@ -364,6 +364,95 @@ class ServoLoop:
         self._forward_return_active = False
         self._last_tune_seq = 0
 
+        # ── Speaking head drift ───────────────────────────────────────────────
+        # While agent_speaking, freeze tracking and slowly drift pan ±5° from
+        # the center position — like a person naturally shifting gaze while talking.
+        self._speaking_drift_active = False
+        self._speaking_drift_pan_start: float = self.pan_center   # pan when speaking began
+        self._speaking_drift_pan_target: float = self.pan_center  # current pan drift goal
+        self._speaking_drift_tilt_target: float = self.tilt_center  # current tilt drift goal
+        self._speaking_drift_hold_until: float = 0.0               # hold current target until
+        # Config (can expose to yaml later)
+        self._speaking_drift_pan_amp_deg: float = 5.0      # max pan offset from center
+        self._speaking_drift_tilt_down_deg: float = 4.0    # max tilt downward from center
+        self._speaking_drift_hold_min: float = 1.2    # min seconds on each target
+        self._speaking_drift_hold_max: float = 3.0    # max seconds on each target
+        self._speaking_drift_smooth_hz: float = 1.2   # how slowly the head glides
+
+    def _tick_speaking_drift(self, now: float, dt: float) -> None:
+        """Slowly drift pan ±5° from center while agent is speaking.
+
+        Gives the head a natural 'thinking aloud' micro-movement instead of
+        freezing stiff. Tilt is held at tilt_center throughout.
+        Called only when conv_state == 'speaking'.
+        """
+        # On first entry, anchor to wherever the head currently is (clamped
+        # within ±drift_amp of center so we don't start from a wild position).
+        if not self._speaking_drift_active:
+            pan_amp = self._speaking_drift_pan_amp_deg
+            self._speaking_drift_pan_start = clamp(
+                self._pan,
+                self.pan_center - pan_amp,
+                self.pan_center + pan_amp,
+            )
+            self._speaking_drift_pan_target = self._speaking_drift_pan_start
+            # Start with a slight downward tilt
+            self._speaking_drift_tilt_target = self.tilt_center + random.uniform(0.5, 2.0)
+            self._speaking_drift_hold_until = now + random.uniform(
+                self._speaking_drift_hold_min, self._speaking_drift_hold_max
+            )
+            self._speaking_drift_active = True
+
+        # Pick a new random target when the hold timer expires
+        if now >= self._speaking_drift_hold_until:
+            pan_amp = self._speaking_drift_pan_amp_deg
+            # Pick a new pan target on the opposite side from current to ensure movement
+            current_pan_offset = self._pan - self.pan_center
+            if current_pan_offset >= 0:
+                new_pan_offset = random.uniform(-pan_amp, -pan_amp * 0.3)
+            else:
+                new_pan_offset = random.uniform(pan_amp * 0.3, pan_amp)
+            self._speaking_drift_pan_target = clamp(
+                self.pan_center + new_pan_offset,
+                self.pan_min,
+                self.pan_max,
+            )
+            
+            # Tilt: vary between center and slightly downward (thinking/introspective look)
+            # 70% chance slight down, 30% chance back to center
+            if random.random() < 0.7:
+                new_tilt_offset = random.uniform(1.0, self._speaking_drift_tilt_down_deg)
+            else:
+                new_tilt_offset = random.uniform(-0.5, 0.5)  # near center
+            self._speaking_drift_tilt_target = clamp(
+                self.tilt_center + new_tilt_offset,
+                self.tilt_min,
+                self.tilt_max,
+            )
+
+            self._speaking_drift_hold_until = now + random.uniform(
+                self._speaking_drift_hold_min, self._speaking_drift_hold_max
+            )
+
+        # Glide slowly toward target
+        self._pan = smooth_toward(
+            self._pan,
+            self._speaking_drift_pan_target,
+            dt,
+            smooth_hz=self._speaking_drift_smooth_hz,
+            lo=self.pan_min,
+            hi=self.pan_max,
+        )
+        # Hold tilt at center while speaking
+        self._tilt = smooth_toward(
+            self._tilt,
+            self._speaking_drift_tilt_target,
+            dt,
+            smooth_hz=self._speaking_drift_smooth_hz * 1.3,
+            lo=self.tilt_min,
+            hi=self.tilt_max,
+        )
+
     def _apply_live_tune_if_changed(self) -> None:
         state = self.bb.read("debug_live_tune", "debug_tune_seq")
         seq = int(state["debug_tune_seq"])
@@ -1144,6 +1233,21 @@ class ServoLoop:
             tracking_face = vision["face_detected"] or vision["body_detected"] or vision["hand_detected"]
             base_world = vision.get("base_world_yaw_deg", 0.0)
             camera_world_yaw = base_world + self._pan_mech_offset()
+
+            # ── Speaking drift: freeze tracking, drift head naturally while talking ──
+            agent_speaking = self.bb.read("conv_state")["conv_state"] == "speaking"
+            if agent_speaking:
+                self._tick_speaking_drift(now, dt)
+                self.bb.write(
+                    servo_pan=self._pan,
+                    servo_tilt=self._tilt,
+                    servo_mode=self._mode,
+                )
+                self._loop_sleep()
+                continue
+            else:
+                # Reset drift state so next speaking session starts fresh
+                self._speaking_drift_active = False
 
             self._update_off_forward_timer(now, camera_world_yaw, tracking_face=tracking_face)
             self._maybe_start_forward_return(now, camera_world_yaw, tracking_face=tracking_face)

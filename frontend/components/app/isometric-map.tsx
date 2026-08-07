@@ -675,10 +675,10 @@ export default function NavigationMap({
                         }}
                       >
                         {isYouAreHere ? (
-                          <Html center position={[0, size[1] / 2 - 0.5, 0]}>
-                            <svg viewBox="0 0 24 24" width="60" height="60" style={{ filter: "drop-shadow(0px 10px 5px rgba(0,0,0,0.5))", transform: "translateY(-50%)" }}>
-                              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#E53935" />
-                              <circle cx="12" cy="9" r="3.5" fill="#000000" />
+                          <Html center position={[0, size[1] / 2 - 0.5, 0.6]}>
+                            <svg viewBox="0 0 24 24" width="60" height="60" style={{ transform: "translateY(-50%)" }}>
+                              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#2563EB" />
+                              <circle cx="12" cy="9" r="3.5" fill="#20242B" />
                             </svg>
                           </Html>
                         ) : isStaircase ? (

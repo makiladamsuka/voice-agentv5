@@ -1024,7 +1024,7 @@ function KioskViewUI({
                     className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
                     onClick={() => handleCategoryClick("Lecture Halls", "lecture")}
                   >
-                    <span className="material-symbols-outlined text-[44px] text-[#EA580C]">
+                    <span className="material-symbols-outlined text-[66px] text-[#EA580C]">
                       school
                     </span>
                     <span className="text-center leading-tight">Lecture Halls</span>
@@ -1034,7 +1034,7 @@ function KioskViewUI({
                     className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
                     onClick={() => handleCategoryClick("Laboratory", "lab")}
                   >
-                    <span className="material-symbols-outlined text-[44px] text-[#8B5CF6]">
+                    <span className="material-symbols-outlined text-[66px] text-[#8B5CF6]">
                       science
                     </span>
                     <span className="text-center leading-tight">Laboratory</span>
@@ -1044,7 +1044,7 @@ function KioskViewUI({
                     className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
                     onClick={() => handleCategoryClick("Offices & More", "office")}
                   >
-                    <span className="material-symbols-outlined text-[44px] text-[#14B8A6]">
+                    <span className="material-symbols-outlined text-[66px] text-[#14B8A6]">
                       apartment
                     </span>
                     <span className="text-center leading-tight">Offices &amp; More</span>

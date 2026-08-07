@@ -441,7 +441,7 @@ export default function NavigationMap({
       {/* Floor Switcher — even pills matching kiosk chrome */}
       {!hideFloorSwitcher && (
         <div
-          className="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-20 w-[108px] max-h-[70vh] overflow-y-auto pointer-events-none [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+          className="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-20 w-[108px] max-h-[70vh] overflow-y-auto pointer-events-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         >
           <div className="text-[11px] font-bold text-center uppercase tracking-wider text-white/70 py-1">
             Floors
@@ -463,9 +463,30 @@ export default function NavigationMap({
             const isButtonActive = highlightedFloor ? highlightedFloor === f : active;
 
             return (
-              <div
+              <button
                 key={`${f}-${idx}`}
-                className={`w-full min-h-[52px] px-3 py-2.5 rounded-3xl font-bold flex flex-col items-center justify-center border transition-all duration-300 shadow-lg backdrop-blur-md overflow-hidden ${isButtonActive
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (currentFloor === f) return;
+                  if (isTransitioningRef.current) return;
+                  
+                  isTransitioningRef.current = true;
+                  setIsTransitioning(true);
+                  setIndicatorFloor(f as string);
+                  cancelAnim();
+
+                  if (indicatorTimerRef.current) clearTimeout(indicatorTimerRef.current);
+                  indicatorTimerRef.current = setTimeout(() => setIndicatorFloor(null), 1000);
+
+                  setTimeout(() => {
+                    setCurrentFloor(f as string);
+                    setIsTransitioning(false);
+                    setTimeout(() => {
+                      isTransitioningRef.current = false;
+                    }, 150);
+                  }, 150);
+                }}
+                className={`w-full min-h-[52px] px-3 py-2.5 rounded-3xl font-bold flex flex-col items-center justify-center border transition-all duration-300 shadow-lg backdrop-blur-md overflow-hidden cursor-pointer ${isButtonActive
                   ? "bg-blue-500/80 text-white border-blue-400/30"
                   : "bg-black/60 text-white border-white/10"
                   }`}
@@ -481,7 +502,7 @@ export default function NavigationMap({
                     {badge}
                   </span>
                 ) : null}
-              </div>
+              </button>
             );
           })}
         </div>
@@ -738,8 +759,8 @@ export default function NavigationMap({
               </AnimatedFloorGroup>
 
               <OrbitControls
-                enableZoom={false}
-                enablePan={false}
+                enableZoom={true}
+                enablePan={true}
                 enableRotate={false}
                 minPolarAngle={40 * (Math.PI / 180)}
                 maxPolarAngle={40 * (Math.PI / 180)}

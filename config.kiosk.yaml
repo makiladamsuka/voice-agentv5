@@ -107,13 +107,13 @@ imu:
   roll_offset_deg: -7.34
   pitch_offset_deg: 12.84
   horizon_tilt_gain: 0.85
-  horizon_tilt_sign: -1.0   # keep camera horizontal; flip if tilt runs wrong way
+  horizon_tilt_sign: 1.0   # keep camera horizontal; flip if tilt runs wrong way
   horizon_pitch_bias_deg: 0.0
   horizon_pitch_smooth_hz: 3.5
   horizon_max_bias_deg: 6.0
   horizon_max_pitch_deg: 18.0
   horizon_gyro_max_dps: 45.0       # ignore horizon when spinning/moving
-  horizon_max_up_from_center_deg: 2.0
+  horizon_max_up_from_center_deg: 1.0
   horizon_max_down_from_center_deg: 4.0
   horizon_relevel_after_sec: 0.0   # unused — IMU horizon applies continuously when idle
   yaw_sign: -1.0             # flip if IMU yaw integral opposes encoder/base
@@ -231,8 +231,8 @@ servo:
   tilt_track_sign: -1.0           # flip to 1.0 if face below center but head tilts up
   tilt_track_alpha: 0.39 # vertical bearing filter during track (faster than face_alpha_y)
   pan_max_step_deg: 0.75 # hard cap per loop tick (prevents overshoot on fast moves)
-  tilt_max_step_deg: 1.8 # max tilt command change per track tick
-  tilt_track_slew_dps: 28.0       # max tilt speed (cmd deg/s) at full PID correction
+  tilt_max_step_deg: 0.8 # max tilt command change per track tick
+  tilt_track_slew_dps: 18.0       # max tilt speed (cmd deg/s) at full PID correction
   tilt_track_range: 35.0
   pan_error_full_scale: 0.42
   pan_track_min_gain: 0.32
@@ -260,7 +260,7 @@ servo:
   predict_edge_norm: 0.55
   predict_gain: 0.72
   lost_search_hold_sec: 0.6
-  lost_search_velocity_gain: 0.30
+  lost_search_velocity_gain: 0.20
   lost_search_min_norm_x: 0.22
   lost_search_base_step_deg: 2.0
   lost_search_base_cooldown_sec: 2.0
@@ -273,8 +273,8 @@ servo:
   wander_step_max_deg: 18 
   wander_jump_chance: 0.0     # no sudden jumps
   wander_arrival_deg: 1.2
-  wander_tilt_step_max_deg: 10.0
-  wander_tilt_max_up_deg: 10.0
+  wander_tilt_step_max_deg: 5.0
+  wander_tilt_max_up_deg: 4.0
   wander_tilt_max_down_deg: 16.0
   wander_hold_min_sec: 1.0
   wander_hold_max_sec: 3.0

@@ -501,9 +501,8 @@
 }
 
 /* Kiosk touchscreen: hide cursor, faster taps, lighter GPU load on Pi */
-html.kiosk-mode,
-html.kiosk-mode * {
-  /* cursor: none !important; */
+html, body, * {
+  cursor: none !important;
 }
 
 .kiosk-mode {
@@ -549,8 +548,12 @@ button, a, select, input, [role="button"], .interactive-element {
 }
 
 /* Momentum Touch Scrolling for all lists and panels */
-.scrollable-list, .scroll-container, [data-radix-scroll-area-viewport] {
+html, body, .scrollable-list, .scroll-container, [data-radix-scroll-area-viewport] {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   scroll-behavior: smooth;
+}
+
+::-webkit-scrollbar {
+  display: none;
 }

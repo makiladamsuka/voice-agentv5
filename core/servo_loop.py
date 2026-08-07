@@ -954,15 +954,21 @@ class ServoLoop:
 
         state = self.bb.read(
             "face_detected", "body_detected", "last_seen_world_yaw",
-            "prox_investigate_active",
+            "prox_investigate_active", "hand_detected",
         )
-        if state["face_detected"] or state["body_detected"]:
+        if state["face_detected"] or state["body_detected"] or state["hand_detected"]:
             if state["face_detected"]:
                 self._last_face_ts = now
                 self._no_face_since = None
             if state["body_detected"]:
                 self._last_body_ts = now
                 self._no_face_since = None
+            # Hand alone entering track: update face timestamp so no_face_home_sec
+            # keeps the servo in track mode for its full duration before dropping back.
+            if state["hand_detected"] and not state["face_detected"] and not state["body_detected"]:
+                self._last_face_ts = now
+                self._no_face_since = None
+
             self._lss_active = False
             self._forward_return_active = False
             self.bb.write(prox_search_active=False, prox_investigate_active=False)
@@ -1134,8 +1140,8 @@ class ServoLoop:
             self._apply_base_compensation()
             effective_tilt_center = self._effective_tilt_center(dt)
 
-            vision = self.bb.read("face_detected", "body_detected", "base_world_yaw_deg")
-            tracking_face = vision["face_detected"] or vision["body_detected"]
+            vision = self.bb.read("face_detected", "body_detected", "hand_detected", "base_world_yaw_deg")
+            tracking_face = vision["face_detected"] or vision["body_detected"] or vision["hand_detected"]
             base_world = vision.get("base_world_yaw_deg", 0.0)
             camera_world_yaw = base_world + self._pan_mech_offset()
 
@@ -1147,7 +1153,8 @@ class ServoLoop:
                 next_mode = self._tick_track(now, dt, effective_tilt_center)
                 face_gone = (now - self._last_face_ts) > self.no_face_home_sec
                 body_gone = (now - self._last_body_ts) > self.no_face_home_sec
-                if face_gone and body_gone:
+                hand_active = vision["hand_detected"]
+                if face_gone and body_gone and not hand_active:
                     next_mode = "wander"
             elif old_mode == "last_seen":
                 next_mode = self._tick_last_seen(now, dt, effective_tilt_center)

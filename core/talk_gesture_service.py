@@ -260,6 +260,7 @@ class TalkGestureService:
             return
         
         last_speaking = False
+        last_paused = False
         self.bb.write(talk_gesture_active=False)
         
         while self.bb.read("running")["running"]:
@@ -274,9 +275,26 @@ class TalkGestureService:
                 time.sleep(self.poll_interval)
                 continue
             
-            # Read current agent_speaking state instantly from memory
-            bb_state = self.bb.read("agent_speaking")
+            # Read speaking state and conversation state together
+            bb_state = self.bb.read("agent_speaking", "conv_state")
             is_speaking = bb_state.get("agent_speaking", False)
+            conv_state = bb_state.get("conv_state", "idle")
+
+            # Freeze arms during listening and thinking — user is talking or
+            # agent is processing; any arm movement looks distracting/wrong.
+            is_paused = conv_state in ("listening", "thinking")
+
+            if is_paused and not last_paused:
+                print(f"[TalkGesture] Pausing arms ({conv_state})")
+                self._return_to_home()
+                self.bb.write(talk_gesture_active=False)
+                last_speaking = False  # reset so speaking re-entry is clean
+            last_paused = is_paused
+
+            if is_paused:
+                time.sleep(self.poll_interval)
+                continue
+
             
             # Log state changes and track when speaking stopped
             if is_speaking and not last_speaking:

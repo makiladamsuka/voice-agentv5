@@ -364,8 +364,22 @@ class FaceGreetingArmService:
     def _trigger_greeting(self) -> str:
         pose_name = random.choice(self.hi_poses)
         seq = self.bb.read("arm_greeting_seq").get("arm_greeting_seq", 0)
-        self.bb.write(arm_greeting_seq=seq + 1, arm_greeting_pose=pose_name)
-        print(f"[FaceGreetingArm] Hi! → {pose_name}")
+        
+        try:
+            from voice.greetings import generate_random_face_greeting
+            text = generate_random_face_greeting()
+            f_seq = self.bb.read("face_greeting_seq").get("face_greeting_seq", 0)
+            self.bb.write(
+                arm_greeting_seq=seq + 1,
+                arm_greeting_pose=pose_name,
+                face_greeting_seq=f_seq + 1,
+                face_greeting_text=text,
+            )
+            print(f"[FaceGreetingArm] Hi! → {pose_name} | Spoken greeting queued: '{text}'")
+        except Exception as e:
+            self.bb.write(arm_greeting_seq=seq + 1, arm_greeting_pose=pose_name)
+            print(f"[FaceGreetingArm] Hi! → {pose_name} (Voice trigger error: {e})")
+
         return pose_name
 
     # ── Main loop ─────────────────────────────────────────────────────────────

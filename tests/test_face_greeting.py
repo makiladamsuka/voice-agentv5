@@ -49,20 +49,11 @@ def test_face_greeting_waits_for_voice_session():
     assert person_visible
     assert not state["voice_session_active"]
 
-    # Same logic as run loop — should not queue without an active voice session.
+    # Should queue when person is visible and agent/user are not speaking
     should_queue = (
-        state.get("voice_session_active", False)
-        and not monitor._greeted_this_visit
+        not monitor._greeted_this_visit
         and (time.time() - monitor._face_since) >= monitor.hold_sec
-    )
-    assert not should_queue
-
-    bb.write(voice_session_active=True)
-    state = bb.read("voice_session_active")
-    assert state["voice_session_active"]
-    should_queue = (
-        state.get("voice_session_active", False)
-        and not monitor._greeted_this_visit
-        and (time.time() - monitor._face_since) >= monitor.hold_sec
+        and not state["agent_speaking"]
+        and not state["user_speaking"]
     )
     assert should_queue

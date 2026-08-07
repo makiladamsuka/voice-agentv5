@@ -793,13 +793,29 @@ class FaceTracker:
                             # Disable hi/bye gestures when fallback tracking is active
                             hand_gesture = ""
                             hand_gesture_side = ""
+                        else:
+                            self._was_hand_tracking = False
+                            self._hand_offset_x = 0.0
+                            self._hand_offset_y = 0.0
                             
                         # Always publish hand coordinates so they can be drawn on stream HUD
                         hand_detected = True
-                        hand_norm_x = raw_hand_norm_x
-                        hand_norm_y = raw_hand_norm_y
+                        if track_kind == "hand":
+                            hand_norm_x = raw_hand_norm_x - self._hand_offset_x
+                            hand_norm_y = raw_hand_norm_y - self._hand_offset_y
+                        else:
+                            hand_norm_x = raw_hand_norm_x
+                            hand_norm_y = raw_hand_norm_y
                             
                         hand_physical_side = best_hand.physical_side
+                    else:
+                        self._was_hand_tracking = False
+                        self._hand_offset_x = 0.0
+                        self._hand_offset_y = 0.0
+                else:
+                    self._was_hand_tracking = False
+                    self._hand_offset_x = 0.0
+                    self._hand_offset_y = 0.0
 
                 # ── Skin blob fallback (when neither face nor hand) ────────
                 # if not face_detected and not hand_detected:

@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNluVoice, type NluResponse } from "@/hooks/useNluVoice";
+import { useFaceGreeting } from "@/hooks/useFaceGreeting";
 
 // ── Types mirroring LiveKit shape ─────────────────────────────────────────────
 
@@ -163,6 +164,12 @@ export function useNluAdapter(): NluAdapter {
         setMaxVolume(0.1 + vol * 0.9);
       }
     }
+  });
+
+  useFaceGreeting({
+    nluServerUrl: process.env.NEXT_PUBLIC_NLU_SERVER_URL ?? "ws://localhost:8765",
+    enabled: true,
+    isBusy: () => agentState === "speaking" || agentState === "thinking",
   });
 
   // Mirror the NLU transcript into the transcriptions array so the

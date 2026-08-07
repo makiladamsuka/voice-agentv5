@@ -529,6 +529,11 @@ async def _greet_ws_endpoint(websocket):
                     if _bb is not None:
                         _bb.write(conv_state="speaking", agent_speaking=True)
                     
+                    # Play audio on hardware speaker if available
+                    if audio_path and Path(audio_path).exists():
+                        from voice.offline_voice.runtime import play_audio
+                        await loop.run_in_executor(None, play_audio, Path(audio_path))
+
                     await websocket.send_text(json.dumps({
                         "type": "greeting",
                         "text": text,
@@ -545,6 +550,46 @@ async def _greet_ws_endpoint(websocket):
     except Exception as e:
         if "disconnect" not in type(e).__name__.lower():
             log.error(f"[NLU] Greeting WS error: {e}")
+
+
+async def _monitor_face_greetings_loop() -> None:
+    """Background task in NLU server to process face greetings and play speech locally."""
+    if _bb is None:
+        return
+    last_seq = _bb.read("face_greeting_seq").get("face_greeting_seq", 0)
+    from voice.offline_voice.runtime import play_audio
+
+    while _bb.read("running").get("running", True):
+        await asyncio.sleep(0.3)
+        try:
+            state = _bb.read("face_greeting_seq", "face_greeting_text", "agent_speaking", "user_speaking")
+            seq = state.get("face_greeting_seq", 0)
+            if seq > last_seq:
+                last_seq = seq
+                text = str(state.get("face_greeting_text") or "").strip()
+                if text and not state.get("agent_speaking") and not state.get("user_speaking"):
+                    print(f"[NLU] Playing proactive face greeting audio on speaker: '{text}'")
+                    loop = asyncio.get_running_loop()
+                    audio_file = await loop.run_in_executor(None, _generate_dynamic_tts, text)
+                    if audio_file:
+                        audio_path = APP_DIR / "assets" / "audio_cache" / audio_file
+                        sync = get_speech_sync_service()
+                        if sync is not None:
+                            sync.arm_utterance(reply_text=text, audio_path=str(audio_path))
+
+                        if _bb is not None:
+                            _bb.write(conv_state="speaking", agent_speaking=True)
+
+                        await loop.run_in_executor(None, play_audio, audio_path)
+
+                        word_count = len(text.split())
+                        clear_delay = max(1.8, word_count * 0.12 + 0.6)
+                        await asyncio.sleep(clear_delay)
+                        if _bb is not None:
+                            _bb.write(conv_state="waiting", agent_speaking=False)
+        except Exception as exc:
+            log.warning(f"[NLU] Background face greeting loop error: {exc}")
+            await asyncio.sleep(1.0)
 
 def _build_app():
     """Build and return the Starlette ASGI app."""
@@ -1074,6 +1119,7 @@ def run_nlu_server(
 
     async def _run():
         serve_task = asyncio.create_task(server.serve())
+        greet_task = asyncio.create_task(_monitor_face_greetings_loop())
         # Give the server a moment to bind, then pre-warm in background
         await asyncio.sleep(0.3)
         print(f"[NluServer] Port {port} open — building audio sidecars in background...")
@@ -1084,6 +1130,7 @@ def run_nlu_server(
         while bb.read("running")["running"] and not serve_task.done():
             await asyncio.sleep(0.5)
         server.should_exit = True
+        greet_task.cancel()
         await asyncio.wait_for(serve_task, timeout=5.0)
 
     try:

@@ -242,6 +242,10 @@ servo:
   tilt_sign: -1.0
   deadzone_x: 0.05
   deadzone_y: 0.06
+  hand_deadzone_x: 0.12
+  hand_pan_track_alpha: 0.12   # slower EMA than face (pan_track_alpha: 0.28) — suppresses MediaPipe landmark jitter
+  hand_vel_boost_threshold: 5.0  # face boosts alpha at vel>2.0; hand needs higher bar to avoid jitter triggering boost
+  hand_center_norm_x: 0.18     # wider center hold band for hand (face uses pan_center_norm_x: 0.05)
   pan_center_norm_x: 0.05       # |norm_x| below this → face centered, hold pan
   tilt_center_norm_y: 0.08
   loop_hz: 35.0

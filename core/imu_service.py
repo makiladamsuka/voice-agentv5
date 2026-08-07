@@ -182,7 +182,24 @@ class ImuService:
             pitch = sample.accel_pitch_deg if sample.accel_trusted else sample.pitch_deg
             pitch -= self._horizon_pitch_bias
 
-            if gyro_ok and self._horizon is not None:
+            # Freeze horizon stabilisation while face/body/hand tracking is active.
+            # The servo_loop tilt PID owns the tilt command during tracking — IMU
+            # bias shifting the tilt center at the same time fights the controller
+            # and prevents the head from moving vertically to follow the face.
+            tracking_state = self.bb.read("face_detected", "body_detected", "hand_detected")
+            tracking_active = (
+                tracking_state["face_detected"]
+                or tracking_state["body_detected"]
+                or tracking_state["hand_detected"]
+            )
+
+            if tracking_active:
+                # Reset horizon accumulator to tilt_center so it doesn't drift
+                # further while frozen, and snap back cleanly when tracking ends.
+                if self._horizon is not None:
+                    self._horizon.reset()
+                self._held_tilt_center = self._tilt_center
+            elif gyro_ok and self._horizon is not None:
                 self._held_tilt_center = self._horizon.effective_center(
                     self._tilt_center,
                     pitch,
@@ -198,7 +215,7 @@ class ImuService:
                 imu_yaw_raw_deg=raw_yaw,
                 imu_yaw_integral_deg=raw_yaw,
                 imu_accel_trusted=sample.accel_trusted,
-                imu_horizon_ok=gyro_ok,
+                imu_horizon_ok=gyro_ok and not tracking_active,
                 imu_effective_tilt_center=self._held_tilt_center,
             )
             elapsed = time.time() - t0

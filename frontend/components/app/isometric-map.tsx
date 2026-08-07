@@ -575,7 +575,7 @@ export default function NavigationMap({
             frameloop="demand"
             shadows={isStandalone}
             orthographic
-            camera={{ position: [20, 20, 20], zoom: isStandalone ? 35 : 28 }}
+            camera={{ position: [20, 20, 20], zoom: isStandalone ? 23 : 20 }}
           >
             <React.Suspense fallback={null}>
               <ambientLight intensity={0.6} />

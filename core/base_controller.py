@@ -456,8 +456,12 @@ class BaseController:
     # ── Per-mode planning ──────────────────────────────────────────────────────
 
     def _plan_track_step(self, now: float, state: dict) -> tuple[Optional[float], str, float]:
+        # Do not rotate physical base wheels during hand tracking / gestures
+        if state.get("track_kind") == "hand" or state.get("hand_detected", False):
+            return None, "", 0.0
+
         pan = state["servo_pan"]
-        norm_x = state["face_norm_x"]
+        norm_x = state.get("face_norm_x", 0.0)
         pan_mech = self._pan_mech(pan)
         stuck = self._pan_needs_base_help(pan, pan_mech)
 
@@ -512,7 +516,7 @@ class BaseController:
             return None, "", 0.0
         if not state["body_detected"] or state["track_kind"] != "body":
             return None, "", 0.0
-        if state["face_detected"]:
+        if state["face_detected"] or state.get("hand_detected", False):
             return None, "", 0.0
 
         norm_x = state["face_norm_x"]
@@ -603,6 +607,8 @@ class BaseController:
     def _plan_sustained_follow(self, now: float, state: dict) -> tuple[Optional[float], str, float]:
         """After sustained neck offset, rotate base and counter-rotate neck to lock gaze."""
         if not self.sustained_follow_enabled:
+            return None, "", 0.0
+        if state.get("track_kind") == "hand" or state.get("hand_detected", False):
             return None, "", 0.0
         if self._sustained_since is None:
             return None, "", 0.0
@@ -829,6 +835,8 @@ class BaseController:
             state = self.bb.read(
                 "face_detected", "face_norm_x", "face_area_ratio",
                 "body_detected", "track_kind",
+                "hand_detected", "hand_norm_x",
+                "arm_greeting_active", "bye_wave_active",
                 "servo_pan", "servo_mode",
                 "wander_moving", "wander_last_step_deg",
                 "base_encoder_deg", "base_world_yaw_deg", "base_motion_busy",
@@ -846,6 +854,18 @@ class BaseController:
 
             pan_offset = self._head_pan_offset(state["servo_pan"])
             self._yaw_state.update(state["base_encoder_deg"], pan_offset)
+
+            # Do not accumulate sustained hold while hand tracking or arm greetings are active
+            hand_or_arm_active = (
+                state.get("track_kind") == "hand"
+                or state.get("hand_detected", False)
+                or state.get("arm_greeting_active", False)
+                or state.get("bye_wave_active", False)
+            )
+            if hand_or_arm_active:
+                self._sustained_since = None
+                self._sustained_sign = 0.0
+
             self._update_sustained_hold(now, pan_offset)
             elapsed = 0.0 if self._sustained_since is None else (now - self._sustained_since)
             self.bb.write(
@@ -877,7 +897,8 @@ class BaseController:
                 time.sleep(loop_delay)
                 continue
 
-            if voice_active and self.freeze_base_during_voice:
+            arm_gesture_running = state.get("arm_greeting_active", False) or state.get("bye_wave_active", False)
+            if arm_gesture_running or (voice_active and self.freeze_base_during_voice):
                 if self.bb.read("base_step_ready")["base_step_ready"]:
                     self.bb.write(base_step_ready=False, base_comp_pan_deg=0.0)
                 time.sleep(loop_delay)
@@ -888,7 +909,11 @@ class BaseController:
             source = ""
             comp_pan = 0.0
 
-            if mode == "track" and state["face_detected"]:
+            tracking_active = state["face_detected"] or (
+                state.get("hand_detected", False) and state.get("track_kind") == "hand"
+            )
+
+            if mode == "track" and tracking_active:
                 step, source, comp_pan = self._plan_track_step(now, state)
             elif mode == "track":
                 step, source, comp_pan = self._plan_body_step(now, state)

@@ -241,6 +241,10 @@ class ServoLoop:
         # ── Hand / blob fallback constants ────────────────────────────────────
         self.hand_alpha_x = float(s.get("hand_alpha_x", 0.25))
         self.hand_alpha_y = float(s.get("hand_alpha_y", 0.08))
+        self.hand_deadzone_x = float(s.get("hand_deadzone_x", 0.12))
+        self.hand_pan_track_alpha = float(s.get("hand_pan_track_alpha", 0.12))     # slower EMA than face (0.25) — suppresses landmark jitter
+        self.hand_vel_boost_threshold = float(s.get("hand_vel_boost_threshold", 5.0))  # face uses 2.0 — hand needs higher bar
+        self.hand_center_norm_x = float(s.get("hand_center_norm_x", 0.14))         # wider center hold band than face (pan_center_norm_x)
         self.blob_alpha_x = float(s.get("blob_alpha_x", 0.30))
         self.blob_alpha_y = float(s.get("blob_alpha_y", 0.10))
         self.hand_smooth_hz = float(s.get("hand_smooth_hz", 3.5))
@@ -363,6 +367,7 @@ class ServoLoop:
         self._off_forward_since: Optional[float] = None
         self._forward_return_active = False
         self._last_tune_seq = 0
+        self._was_hand_track = False
 
         # ── Speaking head drift ───────────────────────────────────────────────
         # While agent_speaking, freeze tracking and slowly drift pan ±5° from
@@ -815,8 +820,22 @@ class ServoLoop:
         if track_kind == "hand":
             alpha_x = self.hand_alpha_x
             alpha_y = self.hand_alpha_y
-            smooth_hz = self.hand_smooth_hz
-        elif track_kind == "close_up":
+            smooth_hz = self.pan_track_smooth_hz
+            # Seed norms + reset PID on first hand frame to avoid stale face state lurch
+            if not self._was_hand_track:
+                self._pan_track_norm = norm_x
+                self._tilt_track_norm = norm_y
+                self._filtered_norm_x = norm_x
+                self._filtered_norm_y = norm_y
+                self._prev_face_raw_x = norm_x
+                self._prev_face_raw_y = norm_y
+                self._pan_pid.reset()
+                self._tilt_pid.reset()
+                self._prev_pan_err_x = 0.0
+            self._was_hand_track = True
+        else:
+            self._was_hand_track = False
+        if track_kind == "close_up":
             alpha_x = self.blob_alpha_x
             alpha_y = self.blob_alpha_y
             smooth_hz = self.blob_smooth_hz
@@ -833,17 +852,41 @@ class ServoLoop:
 
         # Pan error: lightly filtered bearing reduces bbox jitter; follow faster when face moves quickly.
         vel_x = abs(self._face_vel_x)
-        pan_alpha = self.pan_track_alpha
-        if vel_x > 2.0:
-            pan_alpha = min(0.58, pan_alpha + (vel_x - 2.0) * 0.05)
-            self._pan_pid.soften(0.55)
+        if track_kind == "hand":
+            # Hand: use a slower, fixed pan_track_alpha — MediaPipe landmark velocity is
+            # far noisier than face bbox velocity, so the adaptive alpha boost used for
+            # faces causes over-reaction to micro-tremors. Cap alpha boost threshold higher
+            # and use a hand-specific base alpha to keep _pan_track_norm stable.
+            pan_alpha = self.hand_pan_track_alpha
+            if vel_x > self.hand_vel_boost_threshold:
+                # Only boost on clearly intentional fast sweeps, not landmark jitter
+                pan_alpha = min(0.40, pan_alpha + (vel_x - self.hand_vel_boost_threshold) * 0.03)
+                self._pan_pid.soften(0.65)  # softer than face (0.55) — avoid integral spike
+        else:
+            pan_alpha = self.pan_track_alpha
+            if vel_x > 2.0:
+                pan_alpha = min(0.58, pan_alpha + (vel_x - 2.0) * 0.05)
+                self._pan_pid.soften(0.55)
+
         self._pan_track_norm += (norm_x - self._pan_track_norm) * pan_alpha
         self._tilt_track_norm += (norm_y - self._tilt_track_norm) * self.tilt_track_alpha * glide_y_scale
-        pan_err_x = _apply_deadzone(self._pan_track_norm, self.deadzone_x)
+        # Hand gets a wider x deadzone — palm position is noisier than a face bbox centroid
+        active_deadzone_x = self.hand_deadzone_x if track_kind == "hand" else self.deadzone_x
+        pan_err_x = _apply_deadzone(self._pan_track_norm, active_deadzone_x)
 
-        if self._prev_pan_err_x * pan_err_x < 0.0 and abs(pan_err_x) < 0.30:
+        # Zero-crossing soften: for hand use a wider hysteresis band to prevent
+        # rapid integral reset/fire cycling caused by palm tremor near center
+        zc_band = 0.45 if track_kind == "hand" else 0.30
+        if self._prev_pan_err_x * pan_err_x < 0.0 and abs(pan_err_x) < zc_band:
             self._pan_pid.soften(0.15)
         self._prev_pan_err_x = pan_err_x
+
+        # Center band: hand uses wider band + extra hysteresis (pan_center_norm_x already
+        # widened by hand_deadzone_x, but the band check uses its own threshold).
+        # Temporarily widen pan_center_norm_x for the hand center-band check.
+        if track_kind == "hand":
+            _saved_center_norm = self.pan_center_norm_x
+            self.pan_center_norm_x = self.hand_center_norm_x
 
         if self._pan_center_band_active(self._pan_track_norm):
             # Face near frame center — hold pan (do not snap to pan_center).
@@ -865,6 +908,10 @@ class ServoLoop:
                 self.pan_min,
                 self.pan_max,
             )
+
+        # Restore pan_center_norm_x if we temporarily widened it for hand
+        if track_kind == "hand":
+            self.pan_center_norm_x = _saved_center_norm
 
         pan_max_step = min(self.pan_max_step_deg, self.pan_track_slew_dps * max(dt, 0.001))
         self._pan = _smooth_toward_stepped(

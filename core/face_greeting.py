@@ -83,8 +83,7 @@ class FaceGreetingMonitor:
                 if self._face_since is None:
                     self._face_since = now
                 elif (
-                    not state.get("voice_session_active", False)
-                    and not self._greeted_this_visit
+                    not self._greeted_this_visit
                     and (now - self._face_since) >= self.hold_sec
                     and (now - self._last_greet_ts) >= self.cooldown_sec
                     and not state["agent_speaking"]

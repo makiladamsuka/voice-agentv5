@@ -12,7 +12,7 @@ from collections import deque
 FLOOR_CHANGE_COST = 50.0   # penalty to discourage unnecessary floor changes
 
 class Wayfinder:
-    ROBOT_LOCATION = "Front desk"
+    ROBOT_LOCATION = "You are here"
 
     def __init__(self, data_dir: str = None):
         if data_dir is None:

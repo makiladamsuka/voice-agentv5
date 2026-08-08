@@ -240,7 +240,7 @@ class ServoLoop:
         
         # ── Hand / blob fallback constants ────────────────────────────────────
         self.hand_alpha_x = float(s.get("hand_alpha_x", 0.25))
-        self.hand_alpha_y = float(s.get("hand_alpha_y", 0.08))
+        self.hand_alpha_y = float(s.get("hand_alpha_y", 0.20))
         self.hand_deadzone_x = float(s.get("hand_deadzone_x", 0.12))
         self.hand_pan_track_alpha = float(s.get("hand_pan_track_alpha", 0.12))     # slower EMA than face (0.25) — suppresses landmark jitter
         self.hand_vel_boost_threshold = float(s.get("hand_vel_boost_threshold", 5.0))  # face uses 2.0 — hand needs higher bar
@@ -824,14 +824,14 @@ class ServoLoop:
             smooth_hz = self.pan_track_smooth_hz
             # Seed norms + reset PID on first hand frame to avoid stale face state lurch
             if not self._was_hand_track:
-                self._pan_track_norm = norm_x
-                self._tilt_track_norm = norm_y
-                self._filtered_norm_x = norm_x
-                self._filtered_norm_y = norm_y
+                self._pan_track_norm = self._pan_track_norm * 0.5 + norm_x * 0.5
+                self._tilt_track_norm = self._tilt_track_norm * 0.5 + norm_y * 0.5
+                self._filtered_norm_x = self._filtered_norm_x * 0.5 + norm_x * 0.5
+                self._filtered_norm_y = self._filtered_norm_y * 0.5 + norm_y * 0.5
                 self._prev_face_raw_x = norm_x
                 self._prev_face_raw_y = norm_y
-                self._pan_pid.reset()
-                self._tilt_pid.reset()
+                self._pan_pid.soften(0.3)
+                self._tilt_pid.soften(0.3)
                 self._prev_pan_err_x = 0.0
             self._was_hand_track = True
         else:

@@ -225,8 +225,8 @@ servo:
   tilt_track_sign: -1.0           # flip to 1.0 if face below center but head tilts up
   tilt_track_alpha: 0.39 # vertical bearing filter during track (faster than face_alpha_y)
   pan_max_step_deg: 0.75 # hard cap per loop tick (prevents overshoot on fast moves)
-  tilt_max_step_deg: 1.8 # max tilt command change per track tick
-  tilt_track_slew_dps: 28.0       # max tilt speed (cmd deg/s) at full PID correction
+  tilt_max_step_deg: 2.5 # max tilt command change per track tick
+  tilt_track_slew_dps: 40.0       # max tilt speed (cmd deg/s) at full PID correction
   tilt_track_range: 35.0
   pan_error_full_scale: 0.42
   pan_track_min_gain: 0.32
@@ -235,9 +235,9 @@ servo:
   pan_sign: -1.0
   tilt_sign: -1.0
   deadzone_x: 0.05
-  deadzone_y: 0.06
+  deadzone_y: 0.03
   pan_center_norm_x: 0.05       # |norm_x| below this → face centered, hold pan
-  tilt_center_norm_y: 0.08
+  tilt_center_norm_y: 0.04
   loop_hz: 80.0
   no_face_home_sec: 1.2
   debug_hz: 2.0
@@ -298,7 +298,7 @@ servo:
   servo_send_hz: 50.0
   servo_angle_quantum_deg: 0.05
   pan_send_smooth_hz: 6.0    # softer final serial smoothing for pan
-  tilt_send_smooth_hz: 5.0
+  tilt_send_smooth_hz: 8.0
   home_smooth_sec: 0.9
   home_smooth_hz: 30.0
 

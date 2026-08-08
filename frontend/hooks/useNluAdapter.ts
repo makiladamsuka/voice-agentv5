@@ -166,10 +166,15 @@ export function useNluAdapter(): NluAdapter {
     }
   });
 
+  const isBusy = useCallback(
+    () => agentState === "speaking" || agentState === "thinking",
+    [agentState]
+  );
+
   useFaceGreeting({
     nluServerUrl: process.env.NEXT_PUBLIC_NLU_SERVER_URL ?? "ws://localhost:8765",
     enabled: true,
-    isBusy: () => agentState === "speaking" || agentState === "thinking",
+    isBusy,
   });
 
   // Mirror the NLU transcript into the transcriptions array so the

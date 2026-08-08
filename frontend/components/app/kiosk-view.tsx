@@ -637,7 +637,7 @@ function KioskViewUI({
   // Auto-disconnect after 5 minutes of inactivity while talking
   const wasConnectedRef = useRef(isConnected);
   useEffect(() => {
-    if (!isConnected) {
+    if (!isConnected && !isConnecting) {
       if (wasConnectedRef.current) {
         setFocusedEvent(null);
         pendingEventRef.current = null;

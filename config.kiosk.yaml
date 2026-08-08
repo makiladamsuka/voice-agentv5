@@ -6,7 +6,7 @@
 camera:
   face_model_path: face_detection_yunet_2023mar.onnx
   main_res: [1920, 1080]     # max camera sensor resolution
-  detect_res: [640, 360]     # optimized detection resolution for kiosk CPU
+  detect_res: [1280, 720]     # optimized detection resolution for kiosk CPU
   full_sensor_fov: false     # use full sensor FOV for higher res
   confidence_threshold: 0.6
   nms_threshold: 0.3
@@ -113,7 +113,7 @@ imu:
   horizon_max_bias_deg: 6.0
   horizon_max_pitch_deg: 18.0
   horizon_gyro_max_dps: 45.0       # ignore horizon when spinning/moving
-  horizon_max_up_from_center_deg: 1.0
+  horizon_max_up_from_center_deg: 2.0
   horizon_max_down_from_center_deg: 4.0
   horizon_relevel_after_sec: 0.0   # unused — IMU horizon applies continuously when idle
   yaw_sign: -1.0             # flip if IMU yaw integral opposes encoder/base

@@ -685,12 +685,13 @@ class ServoLoop:
         state = self.bb.read(
             "face_detected",
             "body_detected",
+            "hand_detected",
             "imu_available",
             "imu_horizon_ok",
             "imu_effective_tilt_center",
         )
 
-        if state["face_detected"] or state["body_detected"]:
+        if state["face_detected"] or state["body_detected"] or state["hand_detected"]:
             return self.tilt_center
 
         if not state["imu_available"]:

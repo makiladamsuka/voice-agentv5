@@ -579,7 +579,10 @@ export function useNluVoice({
       "front desk",
       "nema",
       "fit24",
-      "idealize uom"
+      "idealize uom",
+      "auditorium",
+      "auditorium 1",
+      "auditorium 2"
     ];
 
     const rawDomainKeywords = [
@@ -895,6 +898,22 @@ export function useNluVoice({
     sentUtteranceRef.current = false;
 
     try {
+      // 1) Fetch dynamic event titles for Deepgram keyterm vocabulary boosting
+      try {
+        const backendHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
+        const res = await fetch(`http://${backendHost}:8080/api/upload-status`);
+        if (res.ok) {
+          const data = await res.json();
+          const titles = (data.allFiles || [])
+            .map((f: any) => f.extracted?.title)
+            .filter((t: any) => typeof t === "string" && t.trim().length > 0);
+          eventKeywordsRef.current = titles;
+          console.log("[NluVoice] Loaded dynamic event keywords for STT:", titles);
+        }
+      } catch (e) {
+        console.warn("[NluVoice] Failed to load dynamic event keywords:", e);
+      }
+
       await connectNluServer();
       await openDeepgramStream();
       await startMicCapture();

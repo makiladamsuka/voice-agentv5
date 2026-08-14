@@ -27,12 +27,14 @@ def _clients() -> list[tuple[OpenAI, str]]:
     options: list[tuple[OpenAI, str]] = []
     
     if os.getenv("OPENROUTER_API_KEY"):
+        # Use vision-capable free model on OpenRouter
+        model = os.getenv("OPENROUTER_VISION_MODEL") or "meta-llama/llama-3.2-11b-vision-instruct:free"
         options.append((
             OpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=os.getenv("OPENROUTER_API_KEY"),
             ),
-            "nvidia/nemotron-nano-12b-v2-vl:free",
+            model,
         ))
         
     return options
@@ -71,7 +73,7 @@ def _extract_poster(file_path: Path, clients: list[tuple[OpenAI, str]]) -> dict 
             if not content:
                 continue
             data = json.loads(content)
-            if data:
+            if data and data.get("title"):
                 return data
         except Exception as exc:
             err_str = str(exc)
@@ -89,7 +91,7 @@ def index_posters(assets_dir: Path) -> list[dict]:
     """Scan events/competitions/posts posters and extract structured metadata."""
     clients = _clients()
     if not clients:
-        print("No OPENROUTER_API_KEY or GROQ_API_KEY — using fallback metadata from filenames.")
+        print("No OPENROUTER_API_KEY — using fallback metadata from filenames.")
 
     extracted: list[dict] = []
     print(f"Scanning posters in {assets_dir} ({', '.join(POSTER_CATEGORIES)})...")
@@ -107,16 +109,15 @@ def index_posters(assets_dir: Path) -> list[dict]:
                 stem = file_path.stem
                 parts = stem.split("_")
                 readable = [p for p in parts if not p.isdigit()]
-                if readable:
+                if readable and len(readable) > 0 and "".join(readable).lower() not in ("competition", "post", "event"):
                     derived_title = " ".join(readable).replace("-", " ").strip().title()
                 else:
                     cat_map = {
                         "events": "Campus Event",
-                        "competitions": "Competition",
+                        "competitions": "Campus Competition",
                         "posts": "Campus Post",
                     }
-                    base_name = cat_map.get(category, "Campus Highlight")
-                    derived_title = f"{base_name} ({parts[-1][-4:] if parts else stem[-4:]})"
+                    derived_title = cat_map.get(category, "Campus Highlight")
                 data = {
                     "title": derived_title,
                     "date": None,

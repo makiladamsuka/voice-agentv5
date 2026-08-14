@@ -107,7 +107,7 @@ const playStartChime = () => {
   gain1.connect(ctx.destination);
   osc1.frequency.setValueAtTime(523.25, now);
   gain1.gain.setValueAtTime(0.0, now);
-  gain1.gain.linearRampToValueAtTime(0.05, now + 0.02);
+  gain1.gain.linearRampToValueAtTime(0.25, now + 0.02);
   gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
   osc1.start(now);
   osc1.stop(now + 0.16);
@@ -120,7 +120,7 @@ const playStartChime = () => {
   gain2.connect(ctx.destination);
   osc2.frequency.setValueAtTime(659.25, now + 0.08);
   gain2.gain.setValueAtTime(0.0, now + 0.08);
-  gain2.gain.linearRampToValueAtTime(0.05, now + 0.10);
+  gain2.gain.linearRampToValueAtTime(0.25, now + 0.10);
   gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
   osc2.start(now + 0.08);
   osc2.stop(now + 0.30);
@@ -149,7 +149,7 @@ const playStopChime = () => {
   osc.frequency.setValueAtTime(440, now); // A4
   osc.frequency.exponentialRampToValueAtTime(330, now + 0.16); // E4
   gain.gain.setValueAtTime(0.0, now);
-  gain.gain.linearRampToValueAtTime(0.04, now + 0.02);
+  gain.gain.linearRampToValueAtTime(0.20, now + 0.02);
   gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
   
   osc.start(now);
@@ -887,6 +887,21 @@ export function useNluVoice({
       console.error("[NluVoice]", err.message);
       setVoiceState("error");
       throw err;
+    }
+
+    // Unlock Web Audio context immediately on user click gesture so audio chimes play reliably
+    if (typeof window !== "undefined") {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContextClass) {
+        let ctx = (window as any)._globalAudioCtx;
+        if (!ctx) {
+          ctx = new AudioContextClass({ sampleRate: 48000 });
+          (window as any)._globalAudioCtx = ctx;
+        }
+        if (ctx.state === "suspended") {
+          ctx.resume();
+        }
+      }
     }
 
     isActiveRef.current = true;

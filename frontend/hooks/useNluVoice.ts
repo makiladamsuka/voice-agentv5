@@ -185,7 +185,6 @@ export function useNluVoice({
   /** Avoid double-sending the same utterance. */
   const sentUtteranceRef = useRef(false);
   const resumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dgKeepAliveIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startMicCaptureRef = useRef<() => Promise<void>>(null as any);
   const eventKeywordsRef = useRef<string[]>([]);
   /** Timestamp when speaking ends — used to reject Deepgram echo transcripts */
@@ -215,20 +214,6 @@ export function useNluVoice({
         mediaStreamRef.current.getAudioTracks().forEach(t => {
           t.enabled = !shouldMute;
         });
-      }
-
-      if (recorderRef.current) {
-        try {
-          if (shouldMute && recorderRef.current.state === "recording") {
-            recorderRef.current.pause();
-            console.log("[NluVoice] Mic recorder PAUSED (robot busy)");
-          } else if (!shouldMute && recorderRef.current.state === "paused") {
-            recorderRef.current.resume();
-            console.log("[NluVoice] Mic recorder RESUMED (listening)");
-          }
-        } catch (e) {
-          console.warn("[NluVoice] Mic pause/resume error:", e);
-        }
       }
 
       // Play synthesized audio chimes on state transitions (Alexa/Pepper pattern)
@@ -579,6 +564,7 @@ export function useNluVoice({
       vad_events: "true",
       endpointing: "1000", // 1000ms silence → Deepgram won't cut off mid-sentence
       utterance_end_ms: "1000", // 1 second silence threshold (Deepgram API requires >= 1000)
+      keepalive: "true", // Tell Deepgram to not aggressively timeout
     });
 
     const cleanKw = (text: string) => 
@@ -627,15 +613,6 @@ export function useNluVoice({
         settled = true;
         clearTimeout(timer);
         console.log("[NluVoice] Deepgram connected.");
-
-        // Start KeepAlive heartbeat (every 4s) to prevent Deepgram from dropping idle connections
-        if (dgKeepAliveIntervalRef.current) clearInterval(dgKeepAliveIntervalRef.current);
-        dgKeepAliveIntervalRef.current = setInterval(() => {
-          if (dgWs.current?.readyState === WebSocket.OPEN) {
-            dgWs.current.send(JSON.stringify({ type: "KeepAlive" }));
-          }
-        }, 4000);
-
         resolve();
       };
 
@@ -647,10 +624,6 @@ export function useNluVoice({
 
       dg.onerror = (e) => {
         console.error("[Deepgram STT] WebSocket error:", e);
-        if (dgKeepAliveIntervalRef.current) {
-          clearInterval(dgKeepAliveIntervalRef.current);
-          dgKeepAliveIntervalRef.current = null;
-        }
         if (!settled) {
           settled = true;
           clearTimeout(timer);
@@ -660,10 +633,6 @@ export function useNluVoice({
 
       dg.onclose = () => {
         console.log("[NluVoice] Deepgram disconnected.");
-        if (dgKeepAliveIntervalRef.current) {
-          clearInterval(dgKeepAliveIntervalRef.current);
-          dgKeepAliveIntervalRef.current = null;
-        }
         if (isActiveRef.current) {
           console.log("[NluVoice] Reconnecting Deepgram stream...");
           setTimeout(async () => {
@@ -711,6 +680,8 @@ export function useNluVoice({
       : new MediaRecorder(stream!);
     recorderRef.current = recorder;
 
+    let lastKeepAlive = Date.now();
+
     recorder.ondataavailable = (event) => {
       // STRICT HARD LOCK: Only stream mic bytes to Deepgram while actively listening
       const isListening = stateRef.current === "listening";
@@ -726,8 +697,21 @@ export function useNluVoice({
             stateRef.current === "listening"
           ) {
             dgWs.current.send(buf);
+            lastKeepAlive = Date.now();
           }
         });
+      } else if (
+        !isListening && 
+        dgWs.current?.readyState === WebSocket.OPEN && 
+        isActiveRef.current
+      ) {
+        // Send KeepAlive JSON natively every ~4 seconds on the hardware audio thread.
+        // This entirely bypasses browser setInterval throttling when the tab is asleep/backgrounded.
+        const now = Date.now();
+        if (now - lastKeepAlive > 4000) {
+          dgWs.current.send(JSON.stringify({ type: "KeepAlive" }));
+          lastKeepAlive = now;
+        }
       }
     };
 

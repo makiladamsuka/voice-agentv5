@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { RoomAudioRenderer } from "@livekit/components-react";
-import { KioskAudioBoost } from "@/components/app/kiosk-audio-boost";
+import { useEffect } from "react";
 
-/** Silence any stray <audio> tags (LiveKit) when Pi plays TTS on backend speakers. */
+/** Mutes any stray <audio> tags injected by third-party libs. Pi backend plays TTS on speakers. */
 function BrowserAudioSilencer() {
   useEffect(() => {
     const mute = () => {
@@ -25,42 +23,7 @@ function BrowserAudioSilencer() {
   return null;
 }
 
-/**
- * Runtime check of /api/voice-config — works without rebuilding frontend when
- * NEXT_PUBLIC_LOCAL_SPEAKER was not set at build time.
- */
+/** NLU kiosk: backend handles TTS audio — browser audio is always silenced. */
 export function VoiceAudioOutput() {
-  const [localSpeaker, setLocalSpeaker] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    const envLocal =
-      process.env.NEXT_PUBLIC_LOCAL_SPEAKER === "1" ||
-      process.env.NEXT_PUBLIC_LOCAL_SPEAKER === "true";
-
-    fetch("/api/voice-config", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data && typeof data.localSpeaker === "boolean") {
-          setLocalSpeaker(data.localSpeaker);
-        } else {
-          setLocalSpeaker(envLocal);
-        }
-      })
-      .catch(() => setLocalSpeaker(envLocal));
-  }, []);
-
-  if (localSpeaker === null) {
-    return null;
-  }
-
-  if (localSpeaker) {
-    return <BrowserAudioSilencer />;
-  }
-
-  return (
-    <>
-      <RoomAudioRenderer />
-      <KioskAudioBoost />
-    </>
-  );
+  return <BrowserAudioSilencer />;
 }

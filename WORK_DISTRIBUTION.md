@@ -41,8 +41,6 @@ Makila bridges the physical and digital interface of the robot, ensuring it look
 *   **Face Tracking Pi Camera (Computer Vision / AI / Hardware):** Implementing the vision pipeline to detect and continuously track human faces using the primary Pi Camera.
 *   **Emotion with TFT Displays (User Interface / Embedded Systems):** Programming the TFT screens to render dynamic, responsive robotic facial expressions (eyes/emotions) based on system state.
 *   **Web Design (User Interface / Backend):** Designing and developing the interactive web kiosk (frontend and backend endpoints) for user interaction.
-*   **Event Poster & Knowledge Base Management (Web UI):** Developed the React-based admin upload portal for dynamically injecting event posters and custom Q&A factual knowledge into the robot's brain.
-*   **Proactive Face Greeting:** Implemented the background polling and logic for the robot to automatically initiate greetings when a user's face is detected.
 
 **Components & Technologies Used:**
 *   **Hardware/Sensors:** Raspberry Pi Camera Module, TFT SPI/I2C Displays, 3D Printed Chassis (PLA/PETG).
@@ -56,7 +54,7 @@ Ruwan focuses on the spatial awareness of the robot and how it interprets physic
 
 **Assigned Tasks & Subsystems:**
 *   **PCB Design (PCB Design):** Designing the custom printed circuit boards required to interface the Raspberry Pi with the various sensors and motors securely.
-*   **Hand Control "Hi, Bye" & Hand Gestures (Computer Vision / AI Modules):** Training and implementing the machine learning models (`ByeWaveService`, `ArmSafetyEnvelope`) required to detect and interpret specific human hand gestures safely.
+*   **Hand Control "Hi, Bye" & Hand Gestures (Computer Vision / AI Modules):** Training and implementing the machine learning models required to detect and interpret specific human hand gestures.
 *   **IMU Implementation (Sensors / Navigation):** Integrating the Inertial Measurement Unit to track the robot's physical orientation, tilt, and acceleration for smooth movement and balance.
 
 **Components & Technologies Used:**
@@ -71,7 +69,6 @@ Vihanga is responsible for the robot's internal nervous system (custom circuitry
 
 **Assigned Tasks & Subsystems:**
 *   **Map Design (Navigation / User Interface):** Architecting the internal spatial map (2D/3D graphs) and the logic for the robot to understand where it is and where it can go.
-*   **Isometric 3D Map (React Three Fiber):** Built the interactive `NavigationMap` UI allowing users to visually explore floors and rooms on the kiosk screen.
 *   **ToF Sensor Setup (Sensors / Embedded Systems):** Integrating Time-of-Flight sensors for accurate distance measurement and obstacle avoidance.
 *   **Proxy Meter Setup (Sensors):** Configuring proximity sensors for close-range environmental awareness and safety.
 
@@ -87,7 +84,6 @@ Devinda turns the software commands into physical movement and ensures the hardw
 
 **Assigned Tasks & Subsystems:**
 *   **Encoder Motor Use (Motor Control / Embedded Systems):** Writing the closed-loop PID control software to drive the motors precisely using encoder feedback, ensuring accurate locomotion.
-*   **Conversational Arm Gestures (`TalkGestureService`):** Implemented dynamic robotic arm kinematics that synchronize physically with the robot's speaking state.
 *   **Assembling PCB & Hardware (Hardware / System Integration):** Physically soldering the PCBs, wiring the harnesses, integrating the power systems, and assembling the final physical robot.
 
 **Components & Technologies Used:**
@@ -103,8 +99,6 @@ Methoo handles the entire conversational pipeline, giving the robot its ability 
 **Assigned Tasks & Subsystems:**
 *   **Voice Detection (Voice Processing):** Implementing local wake-word detection and silence-trimming logic.
 *   **Deepgram & Natural Language Processing (AI Modules / Backend):** Integrating the Deepgram API for blazing-fast speech-to-text, and handling the NLP pipeline to determine user intent.
-*   **Offline NLU & Intent Compiler (`NluServer`):** Built the `SentenceTransformer` / Numpy vector database pipeline to securely process offline user intents and serve instant pre-synthesized audio.
-*   **Audio Sync & Echo Suppression:** Implemented the `SpeechSyncService` and rolling-window echo cancellation to ensure the robot doesn't hear itself over the speakers.
 *   **USB Microphone with Pi Zero (Hardware / Embedded Systems):** Setting up a satellite Pi Zero dedicated entirely to high-fidelity audio capture via a USB microphone array, ensuring the main Pi is not bottlenecked.
 
 **Components & Technologies Used:**

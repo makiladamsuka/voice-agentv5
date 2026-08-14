@@ -1,29 +1,8 @@
 import * as React from "react";
-import { LogLevel, setLogLevel } from "livekit-client";
-import { useRoomContext } from "@livekit/components-react";
 
+/** No-op in NLU mode — LiveKit room context no longer exists. */
 export const useDebugMode = (
-  options: { logLevel?: LogLevel; enabled?: boolean } = {},
+  _options: { logLevel?: string; enabled?: boolean } = {},
 ) => {
-  const room = useRoomContext();
-  const logLevel = options.logLevel ?? "debug";
-  const enabled = options.enabled ?? true;
-
-  React.useEffect(() => {
-    if (!enabled) {
-      setLogLevel("silent");
-      return;
-    }
-
-    setLogLevel(logLevel ?? "debug");
-
-    // @ts-expect-error this is a global variable
-    window.__lk_room = room;
-
-    return () => {
-      // @ts-expect-error this is a global variable
-      window.__lk_room = undefined;
-      setLogLevel("silent");
-    };
-  }, [room, enabled, logLevel]);
+  // No LiveKit room to expose. Console logging is handled natively.
 };

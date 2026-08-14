@@ -1,22 +1,6 @@
 "use client";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @next/next/no-img-element */
-
-// ── NLU mode gate ─────────────────────────────────────────────────────────────
-// When NEXT_PUBLIC_NLU_MODE=true the kiosk uses Browser VAD + Deepgram + the
-// local NLU WebSocket server instead of LiveKit.
-const NLU_MODE = process.env.NEXT_PUBLIC_NLU_MODE === "true";
-
-import {
-  useSessionContext,
-  useSessionMessages,
-  useTranscriptions,
-  useTracks,
-  useTrackVolume,
-  useVoiceAssistant,
-  useRoomContext,
-} from "@livekit/components-react";
-import { Track } from "livekit-client";
 import React, {
   useState,
   useEffect,
@@ -32,11 +16,6 @@ import { UploadCloud, X, Settings } from "lucide-react";
 import dynamic from "next/dynamic";
 import { GeminiMorphButton } from "@/components/ui/GeminiMorphButton";
 import { PopButton } from "@/components/ui/PopButton";
-import { ImageDisplay } from "@/components/app/image-display";
-import {
-  sessionStartOptions,
-  useVoiceConfig,
-} from "@/hooks/use-voice-config";
 import { useNluAdapter } from "@/hooks/useNluAdapter";
 import type { NluAction } from "@/hooks/useNluVoice";
 
@@ -54,12 +33,12 @@ const DOCK_BTN_ACTIVE =
 const DOCK_BTN_IDLE =
   "bg-transparent text-[var(--kiosk-text)]";
 const CAT_BTN =
-  "min-h-[72px] w-full rounded-2xl text-[20px] font-bold flex items-center justify-center gap-3 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)]";
+  "min-h-[96px] w-full rounded-2xl text-[24px] font-bold flex items-center justify-center gap-3 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)]";
 const PANEL =
   "rounded-[28px] bg-[var(--kiosk-surface)] border border-[var(--kiosk-border)]";
 const PAGE_PAD = "p-4";
 const ICON_BTN =
-  "w-14 h-14 rounded-full border border-[var(--kiosk-border)] flex items-center justify-center text-[var(--kiosk-muted)]";
+  "w-20 h-20 rounded-full border border-[var(--kiosk-border)] flex items-center justify-center text-[var(--kiosk-muted)]";
 
 const EVENT_CATEGORY_META: Record<
   string,
@@ -93,10 +72,7 @@ function eventCategoryMeta(category?: string) {
 }
 
 export function KioskView() {
-  if (NLU_MODE) {
-    return <KioskViewNlu />;
-  }
-  return <KioskViewLiveKit />;
+  return <KioskViewNlu />;
 }
 
 function KioskViewNlu() {
@@ -131,50 +107,13 @@ function KioskViewNlu() {
       transcriptions={nluAdapter.transcriptions}
       agentState={nluAdapter.agentState}
       maxVolume={nluAdapter.maxVolume}
-      room={null}
       lastAction={nluAdapter.lastAction}
       sendSimulatedVoice={nluAdapter.sendSimulatedVoice}
     />
   );
 }
 
-function KioskViewLiveKit() {
-  const session = useSessionContext();
-  const voiceConfig = useVoiceConfig();
-  const { messages } = useSessionMessages(session);
-  const room = useRoomContext();
-  const { audioTrack: agentTrack, state: agentState } = useVoiceAssistant();
-  const agentVolume = useTrackVolume(agentTrack);
-  const micTracks = useTracks([Track.Source.Microphone]);
-  const localMicTrack = micTracks.find((t) => t.participant.isLocal);
-  const micVolume = useTrackVolume(localMicTrack);
-  const transcriptions = useTranscriptions();
 
-  const isConnected = session.isConnected;
-  const maxVolume = isConnected
-    ? Math.max(agentVolume || 0, micVolume || 0)
-    : 0;
-
-  const startSession = useCallback(
-    () => session.start(sessionStartOptions(voiceConfig?.localMic)),
-    [session, voiceConfig?.localMic],
-  );
-
-  return (
-    <KioskViewUI
-      isConnected={isConnected}
-      startSession={startSession}
-      end={session.end}
-      messages={messages}
-      transcriptions={transcriptions as any}
-      agentState={(agentState as string) ?? "disconnected"}
-      maxVolume={maxVolume}
-      room={room}
-      lastAction={null}
-      sendSimulatedVoice={() => { }}
-    />
-  );
-}
 
 type KioskViewUIProps = {
   isConnected: boolean;
@@ -184,7 +123,6 @@ type KioskViewUIProps = {
   transcriptions: any[];
   agentState: string;
   maxVolume: number;
-  room: any;
   lastAction: any | null;
   sendSimulatedVoice: (text: string) => void;
 };
@@ -197,7 +135,6 @@ function KioskViewUI({
   transcriptions,
   agentState,
   maxVolume,
-  room,
   lastAction,
   sendSimulatedVoice,
 }: KioskViewUIProps) {
@@ -313,46 +250,19 @@ function KioskViewUI({
       } catch (e) {
         console.error("Failed to set eye color:", e);
       }
-      if (room) {
-        try {
-          room.localParticipant.publishData(
-            new TextEncoder().encode(
-              JSON.stringify({
-                type: "change_eye_color",
-                color: colorName,
-              }),
-            ),
-            { reliable: true },
-          );
-        } catch (e) {
-          console.error("Failed to publish color data:", e);
-        }
-      }
     },
-    [room],
+    [],
   );
 
   const sendEventFocus = useCallback(
     (event: any) => {
-      if (NLU_MODE) {
-        const text =
-          event.message || `Tell me about ${event.title || "this event"}`;
-        window.dispatchEvent(
-          new CustomEvent("nlu:inject_transcript", { detail: { text } }),
-        );
-        return;
-      }
-      if (!room) return;
-      try {
-        const payload = JSON.stringify({ type: "event_focus", event });
-        room.localParticipant.publishData(new TextEncoder().encode(payload), {
-          reliable: true,
-        });
-      } catch (e) {
-        console.error("Failed to publish event data:", e);
-      }
+      const text =
+        event.message || `Tell me about ${event.title || "this event"}`;
+      window.dispatchEvent(
+        new CustomEvent("nlu:inject_transcript", { detail: { text } }),
+      );
     },
-    [room],
+    [],
   );
 
   useEffect(() => {
@@ -366,74 +276,49 @@ function KioskViewUI({
   // Navigation from NLU / LiveKit → open Maps overlay
   // Also handles: event poster routing and map→chat fallback routing
   useEffect(() => {
-    if (NLU_MODE) {
-      if (!lastAction) return;
-      if (lastAction === processedActionRef.current) return;
+    if (!lastAction) return;
+    if (lastAction === processedActionRef.current) return;
 
-      // ── 1. Navigate action → open map ───────────────────────────────────
-      if (lastAction.action === "navigate" && lastAction.destination) {
-        processedActionRef.current = lastAction;
-        setNavData({
-          ...lastAction,
-          path: lastAction.path ?? lastAction.path_coords,
-          path_coords: lastAction.path_coords ?? lastAction.path,
-          path_ids: lastAction.path_ids ?? [],
-        });
-        setMode("maps");
-        setShowExploreMap(false);
-        return;
-      }
-
-      // ── 2. Event poster action → switch to event detail view ─────────────
-      const POSTER_ACTIONS = ["show_event_poster", "show_competition_poster", "show_campus_post"];
-      if (POSTER_ACTIONS.includes(lastAction.action) && lastAction.target) {
-        processedActionRef.current = lastAction;
-        const targetFilename = lastAction.target as string;
-        // Find the post whose image URL ends with the target filename
-        const matched = fbPosts.find((p: any) => {
-          const url: string = p.full_picture || p.image || p.filename || "";
-          return url.includes(targetFilename);
-        });
-        if (matched) {
-          handlePosterTapRef.current(matched);
-        }
-        return;
-      }
-
-      // ── 3. Non-navigate response while map is open → return to chat ──────
-      if (mode === "maps" && lastAction.action !== "navigate") {
-        processedActionRef.current = lastAction;
-        // Close the map and go to talk mode so the transcript is visible
-        setNavData(null);
-        setShowExploreMap(false);
-        setMode("talk");
-        return;
-      }
-
+    // ── 1. Navigate action → open map ───────────────────────────────────
+    if (lastAction.action === "navigate" && lastAction.destination) {
+      processedActionRef.current = lastAction;
+      setNavData({
+        ...lastAction,
+        path: lastAction.path ?? lastAction.path_coords,
+        path_coords: lastAction.path_coords ?? lastAction.path,
+        path_ids: lastAction.path_ids ?? [],
+      });
+      setMode("maps");
+      setShowExploreMap(false);
       return;
     }
-    if (!room) return;
-    const handleDataReceived = (payload: Uint8Array) => {
-      try {
-        const data = JSON.parse(new TextDecoder().decode(payload));
-        if (data.type === "navigation") {
-          setNavData({
-            ...data,
-            path: data.path_coords || data.path,
-            path_ids: data.path_ids || [],
-          });
-          setMode("maps");
-          setShowExploreMap(false);
-        }
-      } catch {
-        /* ignore */
+
+    // ── 2. Event poster action → switch to event detail view ─────────────
+    const POSTER_ACTIONS = ["show_event_poster", "show_competition_poster", "show_campus_post"];
+    if (POSTER_ACTIONS.includes(lastAction.action) && lastAction.target) {
+      processedActionRef.current = lastAction;
+      const targetFilename = lastAction.target as string;
+      // Find the post whose image URL ends with the target filename
+      const matched = fbPosts.find((p: any) => {
+        const url: string = p.full_picture || p.image || p.filename || "";
+        return url.includes(targetFilename);
+      });
+      if (matched) {
+        handlePosterTapRef.current(matched);
       }
-    };
-    room.on("dataReceived", handleDataReceived);
-    return () => {
-      room.off("dataReceived", handleDataReceived);
-    };
-  }, [room, lastAction, fbPosts, mode]);
+      return;
+    }
+
+    // ── 3. Non-navigate response while map is open → return to chat ──────
+    if (mode === "maps" && lastAction.action !== "navigate") {
+      processedActionRef.current = lastAction;
+      // Close the map and go to talk mode so the transcript is visible
+      setNavData(null);
+      setShowExploreMap(false);
+      setMode("talk");
+      return;
+    }
+  }, [lastAction, fbPosts, mode]);
 
   // Pause timers when tab/screen hidden (CPU)
   useEffect(() => {
@@ -907,7 +792,7 @@ function KioskViewUI({
                   {hasTranscript && (
                     <div className="absolute top-4 right-20 flex flex-col items-end z-40 pointer-events-none">
                       <div className="bg-black/60 backdrop-blur-md text-white px-5 py-4 rounded-3xl text-left max-w-sm shadow-xl border border-white/10">
-                        <div className="font-semibold text-[20px] leading-relaxed">
+                        <div className="font-semibold text-[24px] leading-relaxed">
                           {talkCaption.text.includes("\n") || talkCaption.text.includes(", then ") ? (
                             <ul className="list-disc pl-5 space-y-1">
                               {talkCaption.text.split(/(?:\.\n|, then )/).map((step: string, i: number) => {
@@ -928,7 +813,7 @@ function KioskViewUI({
                     aria-label="Close"
                     className={`absolute top-4 right-4 z-30 ${ICON_BTN} bg-[var(--kiosk-surface)] shadow-sm`}
                   >
-                    <span className="material-symbols-outlined text-[28px]">
+                    <span className="material-symbols-outlined text-[36px]">
                       close
                     </span>
                   </PopButton>
@@ -956,7 +841,7 @@ function KioskViewUI({
                   {hasTranscript && (
                     <div className="absolute top-4 right-20 flex flex-col items-end z-40 pointer-events-none">
                       <div className="bg-black/60 backdrop-blur-md text-white px-5 py-4 rounded-3xl text-left max-w-sm shadow-xl border border-white/10">
-                        <div className="font-semibold text-[20px] leading-relaxed">
+                        <div className="font-semibold text-[24px] leading-relaxed">
                           {talkCaption.text.includes("\n") || talkCaption.text.includes(", then ") ? (
                             <ul className="list-disc pl-5 space-y-1">
                               {talkCaption.text.split(/(?:\.\n|, then )/).map((step: string, i: number) => {
@@ -977,7 +862,7 @@ function KioskViewUI({
                     aria-label="Close map"
                     className={`absolute top-4 right-4 z-30 ${ICON_BTN} bg-[var(--kiosk-surface)] shadow-sm`}
                   >
-                    <span className="material-symbols-outlined text-[28px]">
+                    <span className="material-symbols-outlined text-[36px]">
                       close
                     </span>
                   </PopButton>
@@ -1017,9 +902,9 @@ function KioskViewUI({
                       setNavData(null);
                       void ensureMapsData().then(() => setShowExploreMap(true));
                     }}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-[20px] font-bold transition-colors shadow-md border border-transparent"
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-[24px] font-bold transition-colors shadow-md border border-transparent"
                   >
-                    <span className="material-symbols-outlined text-[28px]">
+                    <span className="material-symbols-outlined text-[36px]">
                       map
                     </span>
                     Explore Map
@@ -1043,7 +928,7 @@ function KioskViewUI({
                 {/* Horizontal Category Carousel */}
                 <div className="flex justify-center gap-4 overflow-x-auto snap-x snap-mandatory pb-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden w-full">
                   <PopButton
-                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
+                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[36px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
                     onClick={() => handleCategoryClick("Lecture Halls", "lecture")}
                   >
                     <span className="material-symbols-outlined text-[#EA580C]" style={{ fontSize: "66px" }}>
@@ -1053,7 +938,7 @@ function KioskViewUI({
                   </PopButton>
 
                   <PopButton
-                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
+                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[36px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
                     onClick={() => handleCategoryClick("Laboratory", "lab")}
                   >
                     <span className="material-symbols-outlined text-[#8B5CF6]" style={{ fontSize: "66px" }}>
@@ -1063,7 +948,7 @@ function KioskViewUI({
                   </PopButton>
 
                   <PopButton
-                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
+                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[36px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
                     onClick={() => handleCategoryClick("Offices & More", "office")}
                   >
                     <span className="material-symbols-outlined text-[#14B8A6]" style={{ fontSize: "66px" }}>
@@ -1098,13 +983,13 @@ function KioskViewUI({
                   aria-label="Close"
                   className={`absolute top-4 right-4 ${ICON_BTN}`}
                 >
-                  <span className="material-symbols-outlined text-[28px]">
+                  <span className="material-symbols-outlined text-[36px]">
                     close
                   </span>
                 </PopButton>
 
                 <div className="flex-1 flex flex-col items-center justify-center gap-6 w-full">
-                  <p className={`text-[30px] font-semibold text-center text-[var(--kiosk-text)] min-h-[3rem] px-4 ${
+                  <p className={`text-[42px] font-semibold text-center text-[var(--kiosk-text)] min-h-[3rem] px-4 ${
                     focusedEvent ? "max-w-sm" : "max-w-lg"
                   }`}>
                     {talkCaption.isUser ? (
@@ -1167,9 +1052,9 @@ function KioskViewUI({
               <PopButton
                 onClick={() => setFocusedEvent(null)}
                 aria-label="Close"
-                className="absolute top-4 right-4 z-10 w-14 h-14 bg-black/50 text-white rounded-full flex items-center justify-center"
+                className="absolute top-4 right-4 z-10 w-20 h-20 bg-black/50 text-white rounded-full flex items-center justify-center"
               >
-                <span className="material-symbols-outlined text-[28px]">
+                <span className="material-symbols-outlined text-[36px]">
                   close
                 </span>
               </PopButton>
@@ -1202,7 +1087,7 @@ function KioskViewUI({
                     </span>
                   )}
                 </div>
-                <p className="font-semibold text-[20px] leading-tight">
+                <p className="font-semibold text-[24px] leading-tight">
                   {focusedEvent.message}
                 </p>
                 {focusedEvent.description && (
@@ -1216,7 +1101,7 @@ function KioskViewUI({
               {hasTranscript && (
                 <div className="absolute top-4 right-20 flex flex-col items-end z-40 pointer-events-none">
                   <div className="bg-black/60 backdrop-blur-md text-white px-5 py-4 rounded-3xl text-left max-w-sm shadow-xl border border-white/10">
-                    <div className="font-semibold text-[20px] leading-relaxed">
+                    <div className="font-semibold text-[24px] leading-relaxed">
                       {talkCaption.text.includes("\n") || talkCaption.text.includes(", then ") ? (
                         <ul className="list-disc pl-5 space-y-1">
                           {talkCaption.text.split(/(?:\.\n|, then )/).map((step: string, i: number) => {
@@ -1254,12 +1139,12 @@ function KioskViewUI({
                   aria-label="Close"
                   className={ICON_BTN}
                 >
-                  <span className="material-symbols-outlined text-[28px]">
+                  <span className="material-symbols-outlined text-[36px]">
                     close
                   </span>
                 </PopButton>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-28 [-webkit-overflow-scrolling:touch] scroll-smooth [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-36 [-webkit-overflow-scrolling:touch] scroll-smooth [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {categoryEventPosts.length === 0 ? (
                   <div className="h-full min-h-[200px] flex flex-col items-center justify-center gap-2 opacity-50">
                     <span className="material-symbols-outlined text-4xl">
@@ -1317,7 +1202,7 @@ function KioskViewUI({
             /* Events hub — same pattern as Maps: pick a category first */
             <div className={`flex-1 min-h-0 ${PANEL} p-6 flex flex-col`}>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-[28px] font-bold text-[var(--kiosk-text)]">
+                <h2 className="text-[36px] font-bold text-[var(--kiosk-text)]">
                   What&apos;s on?
                 </h2>
                 <PopButton
@@ -1325,7 +1210,7 @@ function KioskViewUI({
                   aria-label="Close"
                   className={ICON_BTN}
                 >
-                  <span className="material-symbols-outlined text-[28px]">
+                  <span className="material-symbols-outlined text-[36px]">
                     close
                   </span>
                 </PopButton>
@@ -1337,7 +1222,7 @@ function KioskViewUI({
                 {/* Horizontal Category Carousel */}
                 <div className="flex justify-center gap-4 overflow-x-auto snap-x snap-mandatory pb-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden w-full">
                   <PopButton
-                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
+                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[36px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
                     onClick={() => setEventCategory("competitions")}
                   >
                     <span className="material-symbols-outlined text-[#F97316]" style={{ fontSize: "66px" }}>
@@ -1347,7 +1232,7 @@ function KioskViewUI({
                   </PopButton>
 
                   <PopButton
-                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
+                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[36px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
                     onClick={() => setEventCategory("events")}
                   >
                     <span className="material-symbols-outlined text-[#7C3AED]" style={{ fontSize: "66px" }}>
@@ -1357,7 +1242,7 @@ function KioskViewUI({
                   </PopButton>
 
                   <PopButton
-                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[28px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
+                    className="flex-1 max-w-[400px] aspect-square rounded-[24px] text-[36px] font-bold flex flex-col items-center justify-center gap-2 border border-[var(--kiosk-border)] bg-[var(--kiosk-surface)] text-[var(--kiosk-text)] snap-center shrink-0"
                     onClick={() => setEventCategory("posts")}
                   >
                     <span className="material-symbols-outlined text-[#14B8A6]" style={{ fontSize: "66px" }}>
@@ -1428,7 +1313,7 @@ function KioskViewUI({
                                 </span>
                               )}
                           </div>
-                          <p className="text-[20px] font-bold leading-snug line-clamp-2 drop-shadow-[0_2px_8px_rgba(0,0,0,0.65)]">
+                          <p className="text-[24px] font-bold leading-snug line-clamp-2 drop-shadow-[0_2px_8px_rgba(0,0,0,0.65)]">
                             {post.message}
                           </p>
                         </div>
@@ -1455,7 +1340,7 @@ function KioskViewUI({
                     <span className="material-symbols-outlined text-5xl opacity-40">
                       campaign
                     </span>
-                    <p className="text-[20px] font-semibold">
+                    <p className="text-[24px] font-semibold">
                       Welcome to the Faculty of IT
                     </p>
                     <p className="text-[15px] opacity-70">
@@ -1473,7 +1358,7 @@ function KioskViewUI({
                     What&apos;s New
                   </h2>
                 </div>
-                <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-28 space-y-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-36 space-y-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                   {latestPosts.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center gap-2 text-[var(--kiosk-muted)] py-8 text-center">
                       <span className="material-symbols-outlined text-4xl">
@@ -1654,7 +1539,7 @@ function KioskViewUI({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between">
-                <h3 className="text-[20px] font-bold">Settings</h3>
+                <h3 className="text-[24px] font-bold">Settings</h3>
                 <PopButton
                   onClick={() => setIsSettingsOpen(false)}
                   className="p-2 rounded-full bg-black/5 dark:bg-white/10"
@@ -1662,11 +1547,9 @@ function KioskViewUI({
                   <X className="w-5 h-5" />
                 </PopButton>
               </div>
-              {NLU_MODE && (
-                <p className="text-[12px] font-bold uppercase tracking-wide text-amber-600">
-                  NLU mode
-                </p>
-              )}
+              <p className="text-[12px] font-bold uppercase tracking-wide text-amber-600">
+                NLU mode
+              </p>
               
               <div className="flex items-center justify-between py-2 border-b border-[var(--kiosk-border)]">
                 <div className="flex flex-col">
@@ -1757,7 +1640,6 @@ function KioskViewUI({
         </div>
       )}
 
-      {!NLU_MODE && <ImageDisplay ignoreNavigation={true} />}
     </div>
   );
 }

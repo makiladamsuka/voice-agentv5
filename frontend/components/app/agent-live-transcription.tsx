@@ -1,10 +1,6 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import {
-  useTranscriptions,
-  useVoiceAssistant,
-} from "@livekit/components-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 
@@ -14,26 +10,24 @@ const MotionWord = motion.create("span");
 interface AgentLiveTranscriptionProps {
   className?: string;
   chatOpen?: boolean;
+  /** Latest transcription text from useNluAdapter */
+  text?: string;
+  /** Agent state from useNluAdapter ("speaking" | "listening" | "thinking" | …) */
+  agentState?: string;
 }
 
 export function AgentLiveTranscription({
   className,
   chatOpen = false,
+  text = "",
+  agentState = "disconnected",
 }: AgentLiveTranscriptionProps) {
-  const transcriptions = useTranscriptions();
-  const { state: agentState } = useVoiceAssistant();
   const [previousText, setPreviousText] = useState("");
 
-  // Get the latest transcription
-  const currentTranscription = transcriptions.slice(-1)[0];
-  const text = currentTranscription?.text || "";
-
-  // Detect speaker based on agent state
-  // If agent is speaking, show green dot. Otherwise (listening/thinking), show red dot for user speech
+  // If agent is speaking, show green dot. Otherwise (listening/thinking) show red dot for user speech.
   const isAgentSpeaking = agentState === "speaking";
   const isUser = !isAgentSpeaking && text.length > 0;
 
-  // Split text into words for animation
   const words = text.split(" ").filter(Boolean);
   const previousWords = previousText.split(" ").filter(Boolean);
 

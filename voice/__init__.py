@@ -1,1 +1,1 @@
-"""Voice agent package — LiveKit integration for voice-agentv5."""
+"""Voice agent package — local NLU WebSocket pipeline for voice-agentv5."""

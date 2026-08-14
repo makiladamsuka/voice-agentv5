@@ -1,15 +1,4 @@
-import { useEffect } from "react";
-import { useAgent, useSessionContext } from "@livekit/components-react";
-
+/** No-op in NLU mode — LiveKit session/agent hooks are not used. */
 export function useAgentErrors() {
-  const agent = useAgent();
-  const { isConnected, end } = useSessionContext();
-
-  useEffect(() => {
-    if (isConnected && agent.state === "failed") {
-
-
-      end();
-    }
-  }, [agent, isConnected, end]);
+  // LiveKit agent error monitoring removed. NLU errors are handled in useNluVoice.ts.
 }

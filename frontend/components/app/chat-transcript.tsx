@@ -1,11 +1,10 @@
 "use client";
 
-import { type ReceivedMessage } from "@livekit/components-react";
 import { ChatEntry } from "@/components/livekit/chat-entry";
 
 interface ChatTranscriptProps {
   hidden?: boolean;
-  messages?: ReceivedMessage[];
+  messages?: any[];
   transcriptions?: any[];
   className?: string;
   stagingText?: string;

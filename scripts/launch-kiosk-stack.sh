@@ -13,8 +13,6 @@
 #   KIOSK_URL=http://127.0.0.1:3000/
 #   SKIP_KIOSK=1                    backend + frontend only
 #   PYTHON_BIN=/path/to/python      override python (default: active venv or v4 venv)
-#   LIVEKIT_LOG_LEVEL=DEBUG         LiveKit agent log verbosity (default: DEBUG)
-#   LIVEKIT_DEBUG=0                 set to 0 for INFO-only LiveKit logs
 #
 set -euo pipefail
 
@@ -23,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FRONTEND="$ROOT/frontend"
 ENV_FILE="$ROOT/.env"
 LOCAL_ENV="$FRONTEND/.env.local"
-# Default Pi setup: voice-agentv4 backend venv (has livekit); do not use voice-agentv5/venv.
+# Default Pi setup: use voice-agentv5 venv.
 V4_PYTHON="${HOME}/Documents/voice-agentv4/backend/venv/bin/python"
 CONFIG_PATH="${CONFIG_PATH:-config.kiosk.yaml}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
@@ -34,11 +32,6 @@ FRONTEND_PID=""
 KIOSK_PID=""
 LOG_TAIL_PID=""
 
-if [[ "${LIVEKIT_DEBUG:-1}" == "0" ]]; then
-  export LIVEKIT_LOG_LEVEL="${LIVEKIT_LOG_LEVEL:-INFO}"
-else
-  export LIVEKIT_LOG_LEVEL="${LIVEKIT_LOG_LEVEL:-DEBUG}"
-fi
 export LOG_DIR
 
 # Optimize OpenCV/ONNX thread allocation on Pi 4
@@ -114,7 +107,7 @@ trap _cleanup EXIT INT TERM
 PYTHON="$(_resolve_python)"
 echo "Using Python: ${PYTHON}"
 
-# LiveKit preflight check bypassed — kiosk runs in local NLU mode
+# NLU mode — no LiveKit cloud required
 
 if ! command -v node >/dev/null 2>&1; then
   echo "Node.js 20+ required." >&2
@@ -124,8 +117,6 @@ fi
 if [[ -f "$ENV_FILE" && ! -f "$LOCAL_ENV" ]]; then
   echo "Creating $LOCAL_ENV from $ENV_FILE"
   {
-    grep -E '^(LIVEKIT_URL|LIVEKIT_API_KEY|LIVEKIT_API_SECRET)=' "$ENV_FILE" || true
-    grep -E '^AGENT_NAME=' "$ENV_FILE" || grep -E '^LIVEKIT_AGENT_NAME=' "$ENV_FILE" || echo "AGENT_NAME=campus-greeting-agent"
     echo "KIOSK_API_URL=http://127.0.0.1:${KIOSK_API_PORT}"
     grep -E '^(DEEPGRAM_API_KEY|NEXT_PUBLIC_DEEPGRAM_API_KEY|NEXT_PUBLIC_NLU_MODE|NEXT_PUBLIC_NLU_SERVER_URL|NEXT_PUBLIC_LOCAL_SPEAKER)=' "$ENV_FILE" || true
   } > "$LOCAL_ENV"
@@ -152,18 +143,16 @@ if _port_listening "$KIOSK_API_PORT"; then
   echo "=== Backend already running on :${KIOSK_API_PORT} — skipping ==="
   BACKEND_PID=""
   if [[ -f "$LOG_DIR/backend.log" ]]; then
-    echo "  Tailing existing backend log (LiveKit DEBUG: LIVEKIT_LOG_LEVEL=${LIVEKIT_LOG_LEVEL})"
+    echo "  Tailing existing backend log"
     tail -n 30 -F "$LOG_DIR/backend.log" &
     LOG_TAIL_PID=$!
   fi
 else
   echo "=== Starting backend (config: ${CONFIG_PATH}) ==="
-  echo "  LiveKit log level: ${LIVEKIT_LOG_LEVEL}"
   (
     cd "$ROOT"
     export CONFIG_PATH
     export PYTHONUNBUFFERED=1
-    export LIVEKIT_LOG_LEVEL
     # Phase 1: Pin Python robot process to cores 0-2 (core 3 reserved for Chromium/audio)
     # nice -n -5 gives Python higher scheduling priority than Chromium (default nice=0)
     if command -v taskset > /dev/null 2>&1; then
@@ -175,7 +164,7 @@ else
   BACKEND_PID=$!
   echo "  Backend PID ${BACKEND_PID}  log: ${LOG_DIR}/backend.log"
 
-  # Stream backend (LiveKit + VoiceService) into this terminal.
+  # Stream backend (NLU + VoiceService) into this terminal.
   touch "$LOG_DIR/backend.log"
   tail -n 0 -F "$LOG_DIR/backend.log" &
   LOG_TAIL_PID=$!
@@ -230,7 +219,7 @@ echo "  Backend  : http://127.0.0.1:${KIOSK_API_PORT}  (PID ${BACKEND_PID})"
 echo "  Frontend : http://127.0.0.1:${FRONTEND_PORT}     (PID ${FRONTEND_PID})"
 echo "  Kiosk    : ${KIOSK_URL:-http://127.0.0.1:${FRONTEND_PORT}/}  (PID ${KIOSK_PID})"
 echo "  Logs     : ${LOG_DIR}/"
-echo "  LiveKit  : LIVEKIT_LOG_LEVEL=${LIVEKIT_LOG_LEVEL} (backend tail above)"
+echo "  NLU mode : ChromaDB @ ws://127.0.0.1:8765"
 echo "Press Ctrl+C to stop all."
 echo ""
 

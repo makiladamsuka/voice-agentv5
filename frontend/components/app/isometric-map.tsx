@@ -715,21 +715,25 @@ export default function NavigationMap({
                           </Box>
                         )}
 
-                        {/* Text label painted directly on the top of the item */}
+                        {/* Game-style floating billboard nameplates (always facing camera, crisp HTML text) */}
                         {!isStaircase && !isYouAreHere && (
-                          <Text
-                            position={[0, size[1] / 2 + 0.05, 0]}
-                            rotation={[-Math.PI / 2, 0, 0]}
-                            fontSize={isWashroom ? 0.5 : 0.35}
-                            color="#ffffff"
-                            anchorX="center"
-                            anchorY="middle"
-                            fontWeight="bold"
-                            textAlign="center"
-                            lineHeight={1.1}
-                          >
-                            {isWashroom ? theme.icon : `${theme.icon}\n${node.label.replace(" ", "\n")}`}
-                          </Text>
+                          <Html center position={[0, size[1] / 2 + 1.2, 0]} zIndexRange={[100, 0]}>
+                            <div className="flex flex-col items-center justify-center pointer-events-none drop-shadow-2xl select-none min-w-[120px]">
+                              {!isWashroom && (
+                                <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-full px-2 py-0.5 mb-1 shadow-xl">
+                                  <span className="text-[14px] leading-none">{theme.icon}</span>
+                                </div>
+                              )}
+                              <span 
+                                className="text-[12px] leading-[1.15] font-extrabold text-center text-white uppercase tracking-widest break-words max-w-[120px]"
+                                style={{ 
+                                  textShadow: '0px 2px 8px rgba(0,0,0,0.9), 0px 1px 3px rgba(0,0,0,1), 0px 0px 1px rgba(0,0,0,1)' 
+                                }}
+                              >
+                                {isWashroom ? theme.icon : node.label}
+                              </span>
+                            </div>
+                          </Html>
                         )}
                       </group>
                     );

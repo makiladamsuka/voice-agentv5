@@ -104,6 +104,9 @@ class BlockyEye:
         self.engaged_startle_until = 0.0
         self.noise_t = random.uniform(0, 100)
         self.emotion_pos_bias_x = self.emotion_pos_bias_y = 0.0
+        self.next_saccade_time = time.time() + random.uniform(1.5, 3.5)
+        self.saccade_offset_x = 0.0
+        self.saccade_offset_y = 0.0
 
     def start_blink(self, speed_mult=None, blink_speed_min=2.0, blink_speed_max=3.5):
         if self.blink_state == "IDLE":
@@ -161,6 +164,19 @@ class BlockyEye:
             tl = self.target_top_lid; bl = self.target_bottom_lid; la = self.target_lid_angle
             tx = self.base_x + self.emotion_pos_bias_x
             ty = self.base_y + self.emotion_pos_bias_y
+
+            # Biological micro-saccades (subtle spontaneous gaze darts during idle)
+            if now >= self.next_saccade_time:
+                if self.current_emotion in ("idle", "engaged"):
+                    self.saccade_offset_x = random.uniform(-2.5, 2.5)
+                    self.saccade_offset_y = random.uniform(-1.5, 1.5)
+                else:
+                    self.saccade_offset_x = 0.0
+                    self.saccade_offset_y = 0.0
+                self.next_saccade_time = now + random.uniform(1.8, 3.8)
+
+            tx += self.saccade_offset_x
+            ty += self.saccade_offset_y
 
             is_engaged_startle = self.current_emotion == "engaged" and now < self.engaged_startle_until
             if is_engaged_startle:

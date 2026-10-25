@@ -62,6 +62,15 @@ class Blackboard:
     wander_moving: bool = False    # head is gliding to a wander target (ServoLoop)
     wander_last_step_deg: float = 0.0  # last head wander step size
 
+    # ── Layered Alive Motion (written by MotionMixer) ─────────────────────────
+    motion_alive_enabled: bool = True      # master enable for organic breathing & sway
+    breathing_delta_tilt: float = 0.0      # vertical subtle respiratory oscillation
+    breathing_delta_pan: float = 0.0       # micro-yaw drift
+    breathing_delta_base: float = 0.0      # subtle base chassis posture sway
+    speech_wobble_delta_tilt: float = 0.0  # audio-reactive nodding offset
+    speech_wobble_delta_pan: float = 0.0   # audio-reactive pan offset
+    alive_blend_weight: float = 1.0        # 0.0 (suppressed) .. 1.0 (full alive presence)
+
     # ── Arm targets (written by ArmController, sent by ServoMixer) ───────────
     arm_a0: float = 47.0
     arm_a1: float = 65.0

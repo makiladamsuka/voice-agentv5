@@ -33,6 +33,7 @@ from core.yaw_pose import (
 from lib.head_mech import signed_pan_mech_deg
 from base_safety import BaseMotionGate, BaseMoveWatchdog, BaseSafetyConfig
 from lib.elastic_head_motion import smooth_toward
+from core.motion_mixer import MotionMixer
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = APP_DIR / "config.yaml"
@@ -164,6 +165,19 @@ class ServoMixer:
         self._last_arm_keepalive_ts = 0.0
         keepalive = float(a.get("keepalive_sec", 0.8))
         self._arm_keepalive_sec = max(0.2, keepalive)
+
+        # ── Layered Alive Motion (Reachy-inspired organic breathing & sway) ─
+        alive_cfg = _cfg(cfg, "motion_alive", default={}) or {}
+        self._motion_mixer = MotionMixer(
+            bb,
+            breathing_period_sec=float(alive_cfg.get("breathing_period_sec", 4.2)),
+            breathing_tilt_amp=float(alive_cfg.get("breathing_tilt_amp", 1.2)),
+            breathing_pan_amp=float(alive_cfg.get("breathing_pan_amp", 0.5)),
+            breathing_pan_period_sec=float(alive_cfg.get("breathing_pan_period_sec", 7.8)),
+            base_sway_amp=float(alive_cfg.get("base_sway_amp", 0.35)),
+            base_sway_period_sec=float(alive_cfg.get("base_sway_period_sec", 11.0)),
+            speech_wobble_gain=float(alive_cfg.get("speech_wobble_gain", 2.4)),
+        )
 
     def _read_arms(self) -> tuple[float, float, float, float]:
         state = self.bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
@@ -453,8 +467,17 @@ class ServoMixer:
                 "base_step_ready", "base_step_deg", "base_step_source",
                 "base_motion_busy",
             )
-            pan = self._quantize(state["servo_pan"])
-            tilt = self._quantize(state["servo_tilt"])
+            raw_pan = self._quantize(state["servo_pan"])
+            raw_tilt = self._quantize(state["servo_tilt"])
+
+            if self._motion_mixer is not None:
+                self._motion_mixer.tick(now)
+                blended_pan, blended_tilt = self._motion_mixer.get_blended_pose(raw_pan, raw_tilt)
+                pan = self._quantize(max(self.pan_min, min(self.pan_max, blended_pan)))
+                tilt = self._quantize(blended_tilt)
+            else:
+                pan = raw_pan
+                tilt = raw_tilt
 
             if state["base_step_ready"] and not state["base_motion_busy"]:
                 step = state["base_step_deg"]

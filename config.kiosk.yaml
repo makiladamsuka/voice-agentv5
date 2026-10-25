@@ -481,3 +481,14 @@ proximity:
     revisit_enabled: true
     revisit_max_age_sec: 5.0
     revisit_aim_tolerance_deg: 15.0
+
+# Layered Alive Motion (Reachy Mini inspired biological respiration, sway, and wobble)
+motion_alive:
+  enabled: true
+  breathing_period_sec: 4.2       # ~14 breaths per minute (biological respiration)
+  breathing_tilt_amp: 1.2         # vertical oscillation amplitude in degrees
+  breathing_pan_amp: 0.5          # subtle yaw sway amplitude in degrees
+  breathing_pan_period_sec: 7.8   # out-of-phase period creating a subtle figure-8 gaze drift
+  base_sway_amp: 0.35             # chassis posture micro-sway in degrees
+  base_sway_period_sec: 11.0      # slow, gentle weight shift period
+  speech_wobble_gain: 2.4         # audio RMS to head nod gain

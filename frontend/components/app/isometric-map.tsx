@@ -139,25 +139,26 @@ interface NavigationMapProps {
   hideFloorSwitcher?: boolean; // Hide floor switcher UI
 }
 
-// Updated to cohesive, elegant dark-theme colors
+// Updated to Light City Map theme colors matching reference
 const getRoomTheme = (label: string) => {
-  if (!label) return { color: "#334155", icon: "📍" };
+  if (!label) return { color: "#CBD5E1", icon: "📍" }; // light gray base
   const lower = label.toLowerCase();
-  if (lower.includes("director") || lower.includes("undergraduate")) return { color: "#6A329F", icon: "🏢" };
-  if (lower.includes("department")) return { color: "#3F51B5", icon: "🏢" };
-  if (lower.includes("lecture")) return { color: "#FFB74D", icon: "🎓" };
-  if (lower.includes("auditorium")) return { color: "#BE81CC", icon: "🏛️" };
-  if (lower.includes("laboratory") || lower.includes("lab")) return { color: "#A9DCAE", icon: "🔬" };
-  if (lower.includes("female washroom")) return { color: "#6BCFE3", icon: "🚺" };
-  if (lower.includes("male washroom")) return { color: "#6BCFE3", icon: "🚹" };
-  if (lower.includes("washroom")) return { color: "#6BCFE3", icon: "🚻" };
-  if (lower.includes("evaluator")) return { color: "#9DA8B3", icon: "💁" };
-  if (lower.includes("desk")) return { color: "#9CA7B1", icon: "💁" };
-  if (lower.includes("study")) return { color: "#4F4F4F", icon: "📚" };
-  if (lower.includes("exit")) return { color: "#E53935", icon: "🚪" };
-  if (lower.includes("stair")) return { color: "#6E6E6E", icon: "🪜" };
-  if (lower.includes("unit") || lower.includes("room") || lower.includes("division") || lower.includes("devision") || lower.includes("board") || lower.includes("office") || lower.includes("microcontroller")) return { color: "#A3E0D8", icon: "🏢" };
-  return { color: "#334155", icon: "📍" };
+  
+  // Landmarks (Yellow)
+  if (lower.includes("director") || lower.includes("undergraduate") || lower.includes("department") || lower.includes("auditorium")) {
+    return { color: "#FACC15", icon: "🏢" }; // bright yellow
+  }
+  if (lower.includes("lecture")) return { color: "#FACC15", icon: "🎓" };
+  if (lower.includes("laboratory") || lower.includes("lab")) return { color: "#FACC15", icon: "🔬" };
+
+  // Generic Buildings (Light Gray / Pastel Blue)
+  if (lower.includes("washroom")) return { color: "#E2E8F0", icon: "🚻" };
+  if (lower.includes("evaluator") || lower.includes("desk")) return { color: "#E2E8F0", icon: "💁" };
+  if (lower.includes("study")) return { color: "#E2E8F0", icon: "📚" };
+  if (lower.includes("stair")) return { color: "#94A3B8", icon: "🪜" };
+  if (lower.includes("exit")) return { color: "#F87171", icon: "🚪" };
+  
+  return { color: "#CBD5E1", icon: "📍" };
 };
 
 // Realistic Foundation Staircase Component
@@ -237,6 +238,7 @@ export default function NavigationMap({
   const [webglSupported, setWebglSupported] = useState<boolean>(true);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [indicatorFloor, setIndicatorFloor] = useState<string | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const isTransitioningRef = useRef(false);
   const indicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -578,7 +580,7 @@ export default function NavigationMap({
             camera={{ position: [20, 20, 20], zoom: isStandalone ? 23 : 20 }}
           >
             <React.Suspense fallback={null}>
-              <ambientLight intensity={0.6} />
+              <ambientLight intensity={1.1} />
               <directionalLight
                 position={[10, 20, 10]}
                 intensity={1}
@@ -586,8 +588,8 @@ export default function NavigationMap({
               />
               <pointLight
                 position={[0, 5, 0]}
-                intensity={0.35}
-                color="#93C5FD"
+                intensity={0.4}
+                color="#FFFFFF"
                 distance={15}
               />
 
@@ -630,7 +632,7 @@ export default function NavigationMap({
                                   receiveShadow
                                 >
                                   <boxGeometry args={[1, 1, 1]} />
-                                  <meshStandardMaterial color={b.color} />
+                                  <meshStandardMaterial color="#F1F5F9" />
                                 </mesh>
                               );
                             },
@@ -665,8 +667,8 @@ export default function NavigationMap({
                     const isStair = node.label?.toLowerCase().includes("stair");
                     const boxColor = isDestination ? "#2563EB" : theme.color;
 
-                    // Elevate ALL labels and alternate heights to prevent crossing
-                    const staggerHeight = 1.0 + (index % 2) * 0.8;
+                    // Elevate labels using a high-variance stagger to completely eliminate horizontal overlapping
+                    const staggerHeight = 1.2 + (index % 4) * 1.5;
                     const textY = size[1] / 2 + staggerHeight;
 
                     const isStaircase = node.label?.toLowerCase().includes("stair");
@@ -705,35 +707,46 @@ export default function NavigationMap({
                           </Html>
                         ) : isStaircase ? (
                           <RealisticStaircase size={size} isDestination={isDestination} boxColor={boxColor} />
-                        ) : (
-                          <Box args={size} castShadow>
-                            <meshStandardMaterial
-                              color={boxColor}
-                              emissive={isDestination ? "#2563EB" : "#000000"}
-                              emissiveIntensity={isDestination ? 0.4 : 0}
-                            />
-                          </Box>
-                        )}
+                        ) : (() => {
+                          return (
+                            <group>
+                              <Box args={size} castShadow receiveShadow>
+                                <meshStandardMaterial color={boxColor} emissive={isDestination ? "#FACC15" : "#000000"} emissiveIntensity={isDestination ? 0.4 : 0} />
+                              </Box>
+                              {/* Dark Roof to match reference image */}
+                              <Box position={[0, size[1]/2 + 0.05, 0]} args={[size[0] * 0.95, 0.1, size[2] * 0.95]} castShadow receiveShadow>
+                                <meshStandardMaterial color="#475569" />
+                              </Box>
+                            </group>
+                          );
+                        })()}
 
-                        {/* Game-style floating billboard nameplates (always facing camera, crisp HTML text) */}
+                        {/* Floating HTML Billboard replacing flat Text */}
                         {!isStaircase && !isYouAreHere && (
-                          <Html center position={[0, size[1] / 2 + 1.2, 0]} zIndexRange={[100, 0]}>
-                            <div className="flex flex-col items-center justify-center pointer-events-none drop-shadow-2xl select-none min-w-[120px]">
-                              {!isWashroom && (
-                                <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-full px-2 py-0.5 mb-1 shadow-xl">
-                                  <span className="text-[14px] leading-none">{theme.icon}</span>
-                                </div>
-                              )}
-                              <span 
-                                className="text-[12px] leading-[1.15] font-extrabold text-center text-white uppercase tracking-widest break-words max-w-[120px]"
-                                style={{ 
-                                  textShadow: '0px 2px 8px rgba(0,0,0,0.9), 0px 1px 3px rgba(0,0,0,1), 0px 0px 1px rgba(0,0,0,1)' 
-                                }}
-                              >
-                                {isWashroom ? theme.icon : node.label}
-                              </span>
-                            </div>
-                          </Html>
+                          <group>
+                            {/* Stem (Line connecting building to label) */}
+                            <Line 
+                              points={[
+                                [0, size[1] / 2, 0], 
+                                [0, textY, 0]
+                              ]} 
+                              color="#000000" 
+                              transparent 
+                              opacity={0.6} 
+                              lineWidth={isDestination ? 3 : 2} 
+                            />
+                            
+                            <Html
+                              position={[0, textY, 0]}
+                              center
+                              zIndexRange={[100, 0]}
+                              transform={false}
+                            >
+                              <div className={`flex items-center justify-center bg-yellow-400 px-3 py-1.5 border-2 border-black shadow-lg whitespace-nowrap pointer-events-none text-black transition-all ${isDestination ? 'scale-110 drop-shadow-[0_0_15px_rgba(250,204,21,0.6)]' : ''}`}>
+                                <span className="text-[11px] font-extrabold tracking-wider uppercase leading-none">{node.label}</span>
+                              </div>
+                            </Html>
+                          </group>
                         )}
                       </group>
                     );

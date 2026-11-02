@@ -5,6 +5,8 @@ import json
 import os
 import re
 import urllib.request
+import threading
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -99,12 +101,25 @@ _KNOWLEDGE_RE = re.compile(
 )
 
 
+_EVENTS_RE = re.compile(
+    r"\b("
+    r"events?|happening|going on|what's on|whats on"
+    r"|competitions?|hackathons?|workshops?|posters?"
+    r"|campus news|announcements?|upcoming"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
 def route_domain(text: str) -> str:
     """Route a transcript to: 'tool_time', 'knowledge', 'navigate', 'smalltalk', or 'events'."""
     if _TIME_RE.search(text):
         return "tool_time"
     if _NAVIGATE_RE.search(text):
         return "navigate"
+    # Explicit event words win over generic "what are / tell me about" knowledge phrasing.
+    if _EVENTS_RE.search(text):
+        return "events"
     if _KNOWLEDGE_RE.search(text):
         return "knowledge"
     if _SMALLTALK_RE.search(text):
@@ -167,6 +182,14 @@ class IntentMatcher:
         self._np_embeddings: np.ndarray | None = None   # shape (N, D)
         self._np_meta: list[dict] = []                  # [{intent_id, domain}, ...]
         self._embed_model = None                        # lazy SentenceTransformer
+
+        # Phase-1 latency optimisations: per-domain slices + query-vector cache
+        self._embed_lock = threading.Lock()
+        self._embed_cache: "OrderedDict[str, np.ndarray]" = OrderedDict()
+        self._embed_cache_max = 128
+        self._domain_src: np.ndarray | None = None      # identity of array indexed
+        self._domain_idx: dict[str, np.ndarray] = {}    # domain -> row indices
+        self._domain_embs: dict[str, np.ndarray] = {}   # domain -> (K, D) matrix
 
 
 
@@ -307,7 +330,46 @@ class IntentMatcher:
             from sentence_transformers import SentenceTransformer
             self._embed_model = SentenceTransformer("all-MiniLM-L6-v2")
             print("  [Matcher] SentenceTransformer model loaded (all-MiniLM-L6-v2)")
+            # Warm-up encode so the first real query avoids lazy-init cost.
+            try:
+                self._embed_model.encode("hello", show_progress_bar=False)
+            except Exception:
+                pass
         return self._embed_model
+
+    def embed(self, text: str) -> np.ndarray:
+        """Encode a query once; repeated calls for the same text hit an LRU cache."""
+        key = " ".join(text.lower().split())
+        with self._embed_lock:
+            cached = self._embed_cache.get(key)
+            if cached is not None:
+                self._embed_cache.move_to_end(key)
+                return cached
+        model = self._get_embed_model()
+        _t0 = time.perf_counter()
+        vec = np.array(
+            model.encode(text, normalize_embeddings=False, show_progress_bar=False),
+            dtype=np.float32,
+        )
+        print(f"  [Matcher][timing] encode={(time.perf_counter() - _t0) * 1000:.0f}ms")
+        with self._embed_lock:
+            self._embed_cache[key] = vec
+            while len(self._embed_cache) > self._embed_cache_max:
+                self._embed_cache.popitem(last=False)
+        return vec
+
+    def _ensure_domain_index(self) -> None:
+        """Build per-domain row indices/matrices once per loaded embedding array."""
+        if self._domain_src is self._np_embeddings:
+            return
+        idx: dict[str, list[int]] = {}
+        for i, m in enumerate(self._np_meta):
+            idx.setdefault(m["domain"], []).append(i)
+        self._domain_idx = {d: np.array(v, dtype=np.int64) for d, v in idx.items()}
+        self._domain_embs = {
+            d: self._np_embeddings[ix] for d, ix in self._domain_idx.items()
+        }
+        self._domain_src = self._np_embeddings
 
     def load_cache(self, compiled_json_path: Path):
         pairs = self._load_intent_lists(compiled_json_path)
@@ -352,30 +414,32 @@ class IntentMatcher:
         """
         assert self._np_embeddings is not None
 
-        # Filter rows belonging to this domain
-        domain_indices = [i for i, m in enumerate(self._np_meta) if m["domain"] == domain]
-        if not domain_indices:
+        # Per-domain slices are precomputed once (no per-call Python filtering)
+        self._ensure_domain_index()
+        domain_indices = self._domain_idx.get(domain)
+        if domain_indices is None or len(domain_indices) == 0:
             return None
 
-        domain_embs = self._np_embeddings[domain_indices]  # (K, D)
+        domain_embs = self._domain_embs[domain]  # (K, D)
 
-        # Embed query with the same model as indexing (all-MiniLM-L6-v2)
-        model = self._get_embed_model()
-        q = model.encode(text, normalize_embeddings=False, show_progress_bar=False)
-        q = np.array(q, dtype=np.float32)
+        # Query is embedded once per turn and cached across domain attempts
+        q = self.embed(text)
 
         # L2 squared distances (consistent with ChromaDB default metric)
         diff = domain_embs - q          # (K, D)
         dists = np.einsum("ij,ij->i", diff, diff)  # (K,) — faster than np.sum
 
         if len(dists) == 1:
-            idx0 = domain_indices[0]
+            idx0 = int(domain_indices[0])
             return float(dists[0]), float(dists[0]) + 1.0, self._np_meta[idx0]["intent_id"], ""
 
-        top2_local = np.argpartition(dists, 2)[:2]
-        top2_local = top2_local[np.argsort(dists[top2_local])]
-        idx0 = domain_indices[int(top2_local[0])]
-        idx1 = domain_indices[int(top2_local[1])]
+        if len(dists) == 2:
+            top2_local = np.argsort(dists)
+        else:
+            top2_local = np.argpartition(dists, 2)[:2]
+            top2_local = top2_local[np.argsort(dists[top2_local])]
+        idx0 = int(domain_indices[int(top2_local[0])])
+        idx1 = int(domain_indices[int(top2_local[1])])
         return (
             float(dists[top2_local[0]]),
             float(dists[top2_local[1]]),

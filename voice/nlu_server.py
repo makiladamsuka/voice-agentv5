@@ -683,6 +683,7 @@ def _match_intent(runtime, user_text: str) -> dict:
     Synchronous NLU matching (runs in a thread via run_in_executor).
     Returns a dict with reply_text, audio_url, and action.
     """
+    _t0 = time.perf_counter()
     try:
         return _match_intent_internal(runtime, user_text)
     except Exception as exc:
@@ -694,6 +695,8 @@ def _match_intent(runtime, user_text: str) -> dict:
             "action": {},
             "is_fallback": True,
         }
+    finally:
+        print(f"[NLU][timing] _match_intent total={(time.perf_counter() - _t0) * 1000:.0f}ms")
 
 def _match_intent_internal(runtime, user_text: str) -> dict:
     from voice.offline_voice.runtime import route_domain, get_time_reply

@@ -186,6 +186,7 @@ export function useNluVoice({
   const sentUtteranceRef = useRef(false);
   const resumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startMicCaptureRef = useRef<() => Promise<void>>(null as any);
+  const dgKeepAliveIntervalRef = useRef<any>(null);
   const eventKeywordsRef = useRef<string[]>([]);
   /** Timestamp when speaking ends — used to reject Deepgram echo transcripts */
   const speakingEndedAtRef = useRef<number>(0);

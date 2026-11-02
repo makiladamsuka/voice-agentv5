@@ -75,6 +75,58 @@ export function KioskView() {
   return <KioskViewNlu />;
 }
 
+/**
+ * Self-contained clock. Its state lives here so a tick only re-renders this
+ * tiny span, not the whole kiosk UI. Updates once per minute, aligned to the
+ * minute boundary, and pauses while the page is hidden.
+ */
+const Clock = React.memo(function Clock() {
+  const [time, setTime] = useState("");
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const update = () => {
+      setTime(
+        new Date().toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        }),
+      );
+    };
+
+    const schedule = () => {
+      const now = new Date();
+      const msToNextMinute =
+        60_000 - (now.getSeconds() * 1000 + now.getMilliseconds());
+      timer = setTimeout(() => {
+        update();
+        schedule();
+      }, msToNextMinute + 50);
+    };
+
+    const onVis = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (document.visibilityState === "visible") {
+        update();
+        schedule();
+      }
+    };
+
+    update();
+    if (document.visibilityState === "visible") schedule();
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
+
+  return <>{time || "—"}</>;
+});
+
 function KioskViewNlu() {
   const nluAdapter = useNluAdapter();
   const startRef = useRef(nluAdapter.start);
@@ -176,7 +228,6 @@ function KioskViewUI({
 
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [qrUrl, setQrUrl] = useState("");
-  const [time, setTime] = useState("");
   const [pageVisible, setPageVisible] = useState(true);
 
   // Maps — loaded lazily on first Maps enter
@@ -221,6 +272,8 @@ function KioskViewUI({
   }, [fbPosts]);
   const [currentSlide, setCurrentSlide] = useState(0);
   const lastKnownUploadRef = useRef(0);
+  // Signature of the last poster list applied, so unchanged polls don't re-render.
+  const localPostsSigRef = useRef("");
 
   const isThinking = agentState === "thinking";
   const agentReady =
@@ -327,23 +380,6 @@ function KioskViewUI({
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
-  // Clock
-  useEffect(() => {
-    const updateTime = () => {
-      const now = new Date();
-      setTime(
-        now.toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "2-digit",
-          hour12: true,
-        }),
-      );
-    };
-    updateTime();
-    if (!pageVisible) return;
-    const timer = setInterval(updateTime, 1000);
-    return () => clearInterval(timer);
-  }, [pageVisible]);
 
   // QR / upload IP (best-effort — route may be missing)
   useEffect(() => {
@@ -379,7 +415,11 @@ function KioskViewUI({
           setIsUploadModalOpen(false);
           setCurrentSlide(0);
         }
-        if (data.allFiles) {
+        if (
+          data.allFiles &&
+          JSON.stringify(data.allFiles) !== localPostsSigRef.current
+        ) {
+          localPostsSigRef.current = JSON.stringify(data.allFiles);
           setLocalPosts(
             data.allFiles.map((file: any) => {
               const categoryMap: Record<string, string> = {
@@ -761,7 +801,7 @@ function KioskViewUI({
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[16px] font-semibold tabular-nums text-[var(--kiosk-muted)] mr-1">
-              {time || "—"}
+              <Clock />
             </span>
             <PopButton
               onClick={() => setIsUploadModalOpen(true)}

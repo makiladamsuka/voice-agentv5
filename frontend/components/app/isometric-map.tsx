@@ -1,9 +1,32 @@
 "use client";
 
-import React, { useRef, useMemo, useState, useEffect, useCallback } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import React, {
+  useRef,
+  useMemo,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+} from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Line, Box, Grid, Text, Html } from "@react-three/drei";
 import * as THREE from "three";
+
+/**
+ * Lite 3D mode (default ON): tuned for the Raspberry Pi 4 kiosk.
+ * - no shadow maps, dpr capped at 1, no MSAA
+ * Set NEXT_PUBLIC_MAP_LITE=false to restore the full-quality renderer (e.g. on a laptop).
+ */
+const LITE_3D = process.env.NEXT_PUBLIC_MAP_LITE !== "false";
+
+// Shared resources for the thin label "stems" — one geometry/material for all rooms
+// instead of a fat Line (own geometry + material + shader) per room.
+const STEM_GEOMETRY = new THREE.BoxGeometry(1, 1, 1);
+const STEM_MATERIAL = new THREE.MeshBasicMaterial({
+  color: "#000000",
+  transparent: true,
+  opacity: 0.6,
+});
 
 // Animated glowing path that flows toward the destination
 const GlowingPath = ({ points }: { points: [number, number, number][] }) => {
@@ -188,11 +211,11 @@ const RealisticStaircase = ({ size, isDestination, boxColor }: { size: [number, 
               -foundationDepth + currentHeight / 2, // Base is at y=-1
               totalDepth / 2 - stepDepth / 2 - i * stepDepth // i=0 is front, i=steps-1 is back
             ]}
-            castShadow
-            receiveShadow
+            castShadow={!LITE_3D}
+            receiveShadow={!LITE_3D}
           >
             <boxGeometry args={[width, currentHeight, stepDepth]} />
-            <meshStandardMaterial
+            <meshLambertMaterial
               color="#3d3d3dff"
               emissive={isDestination ? "#2563EB" : "#000000"}
               emissiveIntensity={isDestination ? 0.4 : 0}
@@ -216,6 +239,186 @@ const AnimatedFloorGroup = ({
 }) => {
   return <group>{children}</group>;
 };
+
+/**
+ * Floor cells of one building rendered as a SINGLE instanced mesh (one draw call,
+ * one geometry, one material) instead of one mesh per cell. Skips removed cells and
+ * cells under stair nodes, exactly like the previous per-cell implementation.
+ */
+const FloorCells = React.memo(function FloorCells({
+  b,
+  stairNodes,
+}: {
+  b: any;
+  stairNodes: any[];
+}) {
+  const invalidate = useThree((s) => s.invalidate);
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+
+  const cells = useMemo(() => {
+    const out: [number, number][] = [];
+    const cols = Math.round(b.size[0] || 1);
+    const rows = Math.round(b.size[1] || 1);
+    for (let c = 0; c < cols; c++) {
+      for (let r = 0; r < rows; r++) {
+        const cellId = `${c}_${r}`;
+        if (b.removed_cells?.includes(cellId)) continue;
+        const cx = c - b.size[0] / 2 + 0.5;
+        const cz = r - b.size[1] / 2 + 0.5;
+
+        // Calculate world coordinates for the cell
+        const cellWorldX = (b.position?.[0] || 0) + cx;
+        const cellWorldZ = (b.position?.[2] || 0) + cz;
+
+        // Skip rendering this cell if a stair node sits on it
+        const isUnderStair = stairNodes.some((n) => {
+          const sx = n.world[0];
+          const sz = n.world[2];
+          const w = n.size?.[0] || 1;
+          const d = n.size?.[2] || 1;
+          return Math.abs(cellWorldX - sx) < w / 2 && Math.abs(cellWorldZ - sz) < d / 2;
+        });
+        if (isUnderStair) continue;
+
+        out.push([cx, cz]);
+      }
+    }
+    return out;
+  }, [b, stairNodes]);
+
+  useLayoutEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    const m = new THREE.Matrix4();
+    cells.forEach(([cx, cz], i) => {
+      m.setPosition(cx, -0.5, cz);
+      mesh.setMatrixAt(i, m);
+    });
+    mesh.count = cells.length;
+    mesh.instanceMatrix.needsUpdate = true;
+    // frameloop="demand": imperative matrix writes need an explicit redraw
+    invalidate();
+  }, [cells, invalidate]);
+
+  if (cells.length === 0) return null;
+
+  return (
+    <instancedMesh
+      // Instance count is fixed at creation; remount if it changes
+      key={cells.length}
+      ref={meshRef}
+      args={[undefined, undefined, cells.length]}
+      receiveShadow={!LITE_3D}
+      frustumCulled={false}
+    >
+      <boxGeometry args={[1, 1, 1]} />
+      <meshLambertMaterial color="#F1F5F9" />
+    </instancedMesh>
+  );
+});
+
+/**
+ * One room block + its floating label. Memoized so unrelated parent state changes
+ * (floor highlight timers, transition flags, hover, etc.) no longer rebuild every
+ * room and re-render every drei <Html> portal.
+ */
+const RoomBlock = React.memo(function RoomBlock({
+  node,
+  index,
+  isDestination,
+  hasClick,
+  onNodeClickRef,
+}: {
+  node: any;
+  index: number;
+  isDestination: boolean;
+  hasClick: boolean;
+  onNodeClickRef: React.MutableRefObject<((label: string) => void) | undefined>;
+}) {
+  const size = node.size || [1, 1, 1];
+  const theme = getRoomTheme(node.label);
+  // Use a vibrant indigo for the destination instead of green
+  // If it's a staircase, always force the theme color to ignore server overrides
+  const boxColor = isDestination ? "#2563EB" : theme.color;
+
+  // Elevate labels using a high-variance stagger to completely eliminate horizontal overlapping
+  const staggerHeight = 1.2 + (index % 4) * 1.5;
+  const textY = size[1] / 2 + staggerHeight;
+
+  const isStaircase = node.label?.toLowerCase().includes("stair");
+  const isYouAreHere = node.label?.toLowerCase() === "you are here";
+
+  // Pointer handlers are only attached when something consumes them. Handlers make
+  // R3F raycast against the group on every pointer move (costly while panning on a Pi).
+  const clickHandlers = hasClick
+    ? {
+        onClick: (e: any) => {
+          e.stopPropagation();
+          onNodeClickRef.current?.(node.label);
+        },
+        onPointerOver: (e: any) => {
+          e.stopPropagation();
+          document.body.style.cursor = "pointer";
+        },
+        onPointerOut: (e: any) => {
+          e.stopPropagation();
+          document.body.style.cursor = "auto";
+        },
+      }
+    : {};
+
+  return (
+    <group
+      position={[node.world[0], size[1] / 2, node.world[2]]}
+      {...clickHandlers}
+    >
+      {isYouAreHere ? (
+        <Html center position={[0, size[1] / 2 - 0.5, 0.6]}>
+          <svg viewBox="0 0 24 24" width="60" height="60" style={{ transform: "translateY(-50%)" }}>
+            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#2563EB" />
+            <circle cx="12" cy="9" r="3.5" fill="#20242B" />
+          </svg>
+        </Html>
+      ) : isStaircase ? (
+        <RealisticStaircase size={size} isDestination={isDestination} boxColor={boxColor} />
+      ) : (
+        <group>
+          <Box args={size} castShadow={!LITE_3D} receiveShadow={!LITE_3D}>
+            <meshLambertMaterial color={boxColor} emissive={isDestination ? "#FACC15" : "#000000"} emissiveIntensity={isDestination ? 0.4 : 0} />
+          </Box>
+          {/* Dark Roof to match reference image */}
+          <Box position={[0, size[1]/2 + 0.05, 0]} args={[size[0] * 0.95, 0.1, size[2] * 0.95]} castShadow={!LITE_3D} receiveShadow={!LITE_3D}>
+            <meshLambertMaterial color="#475569" />
+          </Box>
+        </group>
+      )}
+
+      {/* Floating HTML Billboard replacing flat Text */}
+      {!isStaircase && !isYouAreHere && (
+        <group>
+          {/* Stem (thin shared-geometry bar connecting building to label) */}
+          <mesh
+            geometry={STEM_GEOMETRY}
+            material={STEM_MATERIAL}
+            position={[0, (size[1] / 2 + textY) / 2, 0]}
+            scale={[isDestination ? 0.15 : 0.1, textY - size[1] / 2, isDestination ? 0.15 : 0.1]}
+          />
+
+          <Html
+            position={[0, textY, 0]}
+            center
+            zIndexRange={[100, 0]}
+            transform={false}
+          >
+            <div className={`flex items-center justify-center bg-yellow-400 px-3 py-1.5 border-2 border-black shadow-lg whitespace-nowrap pointer-events-none text-black transition-all ${isDestination ? 'scale-110 drop-shadow-[0_0_15px_rgba(250,204,21,0.6)]' : ''}`}>
+              <span className="text-[11px] font-extrabold tracking-wider uppercase leading-none">{node.label}</span>
+            </div>
+          </Html>
+        </group>
+      )}
+    </group>
+  );
+});
 
 export default function NavigationMap({
   path = [],
@@ -242,6 +445,11 @@ export default function NavigationMap({
   const isTransitioningRef = useRef(false);
   const indicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Latest click handler without making every RoomBlock re-render when the parent
+  // passes a fresh function each render.
+  const onNodeClickRef = useRef(onNodeClick);
+  onNodeClickRef.current = onNodeClick;
+
   useEffect(() => {
     return () => {
       if (indicatorTimerRef.current) clearTimeout(indicatorTimerRef.current);
@@ -256,7 +464,13 @@ export default function NavigationMap({
         canvas.getContext("webgl2", opts) ||
         canvas.getContext("webgl", opts) ||
         canvas.getContext("experimental-webgl", opts);
-      if (!gl) setWebglSupported(false);
+      if (!gl) {
+        setWebglSupported(false);
+      } else {
+        // Release the throwaway probe context immediately (creating it is expensive on
+        // the Pi, and browsers cap the number of live WebGL contexts).
+        (gl as WebGLRenderingContext).getExtension("WEBGL_lose_context")?.loseContext();
+      }
     } catch {
       setWebglSupported(false);
     }
@@ -409,12 +623,21 @@ export default function NavigationMap({
     );
   }, [nodes, currentFloor]);
 
+  // Stair nodes on this floor cut holes in the foundation (computed once per floor,
+  // not once per building per render).
+  const stairNodes = useMemo(
+    () => floorNodes.filter((n) => n.label?.toLowerCase().includes("stair")),
+    [floorNodes],
+  );
+
+  const hasNodeClick = Boolean(onNodeClick);
+
   return (
     <div
       className={
         isStandalone || isManualExpanded
           ? `w-full h-full bg-transparent flex flex-col items-center justify-center transition-all duration-500 overflow-hidden ${visible ? "opacity-100 scale-100" : "opacity-0 scale-95"}`
-          : `absolute inset-0 z-50 bg-surface/90 backdrop-blur-md rounded-[32px] overflow-hidden shadow-2xl flex flex-col items-center justify-center transition-all duration-500 ${visible ? "opacity-100 scale-100" : "opacity-0 scale-95"}`
+          : `absolute inset-0 z-50 bg-surface/95 rounded-[32px] overflow-hidden shadow-2xl flex flex-col items-center justify-center transition-all duration-500 ${visible ? "opacity-100 scale-100" : "opacity-0 scale-95"}`
       }
       onClick={isStandalone || isManualExpanded ? undefined : handleClose}
     >
@@ -488,7 +711,7 @@ export default function NavigationMap({
                     }, 150);
                   }, 150);
                 }}
-                className={`w-full min-h-[52px] px-3 py-2.5 rounded-3xl font-bold flex flex-col items-center justify-center border transition-all duration-300 shadow-lg backdrop-blur-md overflow-hidden cursor-pointer ${isButtonActive
+                className={`w-full min-h-[52px] px-3 py-2.5 rounded-3xl font-bold flex flex-col items-center justify-center border transition-all duration-300 shadow-lg overflow-hidden cursor-pointer ${isButtonActive
                   ? "bg-blue-500/80 text-white border-blue-400/30"
                   : "bg-black/60 text-white border-white/10"
                   }`}
@@ -512,7 +735,7 @@ export default function NavigationMap({
 
       {/* Floor Indicator Micro-interaction */}
       <div
-        className={`absolute top-24 left-1/2 -translate-x-1/2 px-8 py-3 rounded-full bg-black/40 backdrop-blur-xl border border-white/20 shadow-2xl transition-all duration-300 pointer-events-none z-50 flex items-center gap-3 ${indicatorFloor ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-4 scale-95'
+        className={`absolute top-24 left-1/2 -translate-x-1/2 px-8 py-3 rounded-full bg-black/60 border border-white/20 shadow-2xl transition-all duration-300 pointer-events-none z-50 flex items-center gap-3 ${indicatorFloor ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-4 scale-95'
           }`}
       >
         <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
@@ -523,7 +746,7 @@ export default function NavigationMap({
 
       {/* 3D Canvas */}
       <div
-        className={`w-full h-full transition-all duration-150 ease-in-out motion-reduce:transition-opacity motion-reduce:transform-none ${isTransitioning ? 'opacity-0 translate-y-[10px] blur-[2px]' : 'opacity-100 translate-y-0 blur-0'
+        className={`w-full h-full transition-all duration-150 ease-in-out motion-reduce:transition-opacity motion-reduce:transform-none ${isTransitioning ? 'opacity-0 translate-y-[10px]' : 'opacity-100 translate-y-0'
           }`}
         onClick={(e) => e.stopPropagation()}
         onWheel={(e) => {
@@ -575,7 +798,9 @@ export default function NavigationMap({
         ) : (
           <Canvas
             frameloop="demand"
-            shadows={isStandalone}
+            shadows={isStandalone && !LITE_3D}
+            dpr={LITE_3D ? 1 : [1, 2]}
+            gl={{ antialias: !LITE_3D, powerPreference: "high-performance" }}
             orthographic
             camera={{ position: [20, 20, 20], zoom: isStandalone ? 23 : 20 }}
           >
@@ -584,7 +809,7 @@ export default function NavigationMap({
               <directionalLight
                 position={[10, 20, 10]}
                 intensity={1}
-                castShadow
+                castShadow={!LITE_3D}
               />
               <pointLight
                 position={[0, 5, 0]}
@@ -595,51 +820,12 @@ export default function NavigationMap({
 
               <AnimatedFloorGroup currentFloor={currentFloor} destFloor={destFloorKey}>
                 {/* Building Grids */}
-                {buildingEntries.map(([bId, b]) => {
-                  // Find all stair nodes on this floor to cut holes in the foundation
-                  const stairNodes = floorNodes.filter((n) => n.label?.toLowerCase().includes("stair"));
-
-                  return (
-                    <group key={bId} position={b.position}>
-                      {/* Floor Cells (skipping removed cells and stair cutouts) */}
-                      {Array.from({ length: Math.round(b.size[0] || 1) }).map(
-                        (_, c) =>
-                          Array.from({ length: Math.round(b.size[1] || 1) }).map(
-                            (_, r) => {
-                              const cellId = `${c}_${r}`;
-                              if (b.removed_cells?.includes(cellId)) return null;
-                              const cx = c - b.size[0] / 2 + 0.5;
-                              const cz = r - b.size[1] / 2 + 0.5;
-
-                              // Calculate world coordinates for the cell
-                              const cellWorldX = (b.position?.[0] || 0) + cx;
-                              const cellWorldZ = (b.position?.[2] || 0) + cz;
-
-                              // Skip rendering this cell if a stair node sits on it
-                              const isUnderStair = stairNodes.some((n) => {
-                                const sx = n.world[0];
-                                const sz = n.world[2];
-                                const w = n.size?.[0] || 1;
-                                const d = n.size?.[2] || 1;
-                                return Math.abs(cellWorldX - sx) < w / 2 && Math.abs(cellWorldZ - sz) < d / 2;
-                              });
-                              if (isUnderStair) return null;
-
-                              return (
-                                <mesh
-                                  key={cellId}
-                                  position={[cx, -0.5, cz]}
-                                  receiveShadow
-                                >
-                                  <boxGeometry args={[1, 1, 1]} />
-                                  <meshStandardMaterial color="#F1F5F9" />
-                                </mesh>
-                              );
-                            },
-                          ),
-                      )}
-                      {/* Building names hidden by user request */}
-                      {/*
+                {buildingEntries.map(([bId, b]) => (
+                  <group key={bId} position={b.position}>
+                    {/* Floor Cells (skipping removed cells and stair cutouts) — one instanced mesh */}
+                    <FloorCells b={b} stairNodes={stairNodes} />
+                    {/* Building names hidden by user request */}
+                    {/*
                     <Text
                       position={[0, 1, b.size[1] / 2 + 0.5]}
                       rotation={[-Math.PI / 2, 0, 0]}
@@ -651,106 +837,22 @@ export default function NavigationMap({
                       {b.name.replace(" ", "\n")}
                     </Text>
                     */}
-                    </group>
-                  );
-                })}
+                  </group>
+                ))}
 
                 {/* Room Blocks */}
-                {
-                  floorNodes.map((node: any, index: number) => {
-                    const size = node.size || [1, 1, 1];
-                    const isDestination =
-                      node.label?.toLowerCase() === destination.toLowerCase();
-                    const theme = getRoomTheme(node.label);
-                    // Use a vibrant indigo for the destination instead of green
-                    // If it's a staircase, always force the theme color to ignore server overrides
-                    const isStair = node.label?.toLowerCase().includes("stair");
-                    const boxColor = isDestination ? "#2563EB" : theme.color;
-
-                    // Elevate labels using a high-variance stagger to completely eliminate horizontal overlapping
-                    const staggerHeight = 1.2 + (index % 4) * 1.5;
-                    const textY = size[1] / 2 + staggerHeight;
-
-                    const isStaircase = node.label?.toLowerCase().includes("stair");
-                    const isWashroom = node.label?.toLowerCase().includes("washroom");
-                    const isYouAreHere = node.label?.toLowerCase() === "you are here";
-
-                    return (
-                      <group
-                        key={node.id}
-                        position={[node.world[0], size[1] / 2, node.world[2]]}
-                        onClick={(e) => {
-                          if (onNodeClick) {
-                            e.stopPropagation();
-                            onNodeClick(node.label);
-                          }
-                        }}
-                        onPointerOver={(e) => {
-                          if (onNodeClick) {
-                            e.stopPropagation();
-                            document.body.style.cursor = "pointer";
-                          }
-                        }}
-                        onPointerOut={(e) => {
-                          if (onNodeClick) {
-                            e.stopPropagation();
-                            document.body.style.cursor = "auto";
-                          }
-                        }}
-                      >
-                        {isYouAreHere ? (
-                          <Html center position={[0, size[1] / 2 - 0.5, 0.6]}>
-                            <svg viewBox="0 0 24 24" width="60" height="60" style={{ transform: "translateY(-50%)" }}>
-                              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#2563EB" />
-                              <circle cx="12" cy="9" r="3.5" fill="#20242B" />
-                            </svg>
-                          </Html>
-                        ) : isStaircase ? (
-                          <RealisticStaircase size={size} isDestination={isDestination} boxColor={boxColor} />
-                        ) : (() => {
-                          return (
-                            <group>
-                              <Box args={size} castShadow receiveShadow>
-                                <meshStandardMaterial color={boxColor} emissive={isDestination ? "#FACC15" : "#000000"} emissiveIntensity={isDestination ? 0.4 : 0} />
-                              </Box>
-                              {/* Dark Roof to match reference image */}
-                              <Box position={[0, size[1]/2 + 0.05, 0]} args={[size[0] * 0.95, 0.1, size[2] * 0.95]} castShadow receiveShadow>
-                                <meshStandardMaterial color="#475569" />
-                              </Box>
-                            </group>
-                          );
-                        })()}
-
-                        {/* Floating HTML Billboard replacing flat Text */}
-                        {!isStaircase && !isYouAreHere && (
-                          <group>
-                            {/* Stem (Line connecting building to label) */}
-                            <Line 
-                              points={[
-                                [0, size[1] / 2, 0], 
-                                [0, textY, 0]
-                              ]} 
-                              color="#000000" 
-                              transparent 
-                              opacity={0.6} 
-                              lineWidth={isDestination ? 3 : 2} 
-                            />
-                            
-                            <Html
-                              position={[0, textY, 0]}
-                              center
-                              zIndexRange={[100, 0]}
-                              transform={false}
-                            >
-                              <div className={`flex items-center justify-center bg-yellow-400 px-3 py-1.5 border-2 border-black shadow-lg whitespace-nowrap pointer-events-none text-black transition-all ${isDestination ? 'scale-110 drop-shadow-[0_0_15px_rgba(250,204,21,0.6)]' : ''}`}>
-                                <span className="text-[11px] font-extrabold tracking-wider uppercase leading-none">{node.label}</span>
-                              </div>
-                            </Html>
-                          </group>
-                        )}
-                      </group>
-                    );
-                  })}
+                {floorNodes.map((node: any, index: number) => (
+                  <RoomBlock
+                    key={node.id}
+                    node={node}
+                    index={index}
+                    isDestination={
+                      node.label?.toLowerCase() === destination.toLowerCase()
+                    }
+                    hasClick={hasNodeClick}
+                    onNodeClickRef={onNodeClickRef}
+                  />
+                ))}
                 {/* Glowing route — navigation only, never in explore mode */}
                 {
                   !isStandalone && pathPoints.length >= 2 && (

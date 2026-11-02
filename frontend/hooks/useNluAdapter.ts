@@ -91,7 +91,6 @@ export function useNluAdapter(): NluAdapter {
   const [transcriptions, setTranscriptions] = useState<NluTranscription[]>([]);
   const [lastAction, setLastAction] = useState<NluResponse["action"] | null>(null);
   const [maxVolume, setMaxVolume] = useState(0);
-  const speakingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Handle full NLU response
   const handleResponse = useCallback((response: NluResponse) => {
@@ -136,20 +135,10 @@ export function useNluAdapter(): NluAdapter {
       });
     }
 
-    // Animate maxVolume during speaking for the SiriGlow pulse
-    if (mapped === "speaking") {
-      let frame = 0;
-      const animate = () => {
-        const v = 0.3 + 0.5 * Math.abs(Math.sin(frame * 0.3));
-        setMaxVolume(v);
-        frame++;
-        speakingTimerRef.current = setTimeout(animate, 80);
-      };
-      animate();
-    } else {
-      if (speakingTimerRef.current) clearTimeout(speakingTimerRef.current);
-      setMaxVolume(mapped === "listening" ? 0.1 : 0);
-    }
+    // Volume is only consumed while listening (a static level). There is no
+    // per-frame animation here: updating React state every few ms re-rendered
+    // the entire kiosk UI and was costly on the Pi.
+    setMaxVolume(mapped === "listening" ? 0.1 : 0);
   }, []);
 
   const nlu = useNluVoice({
@@ -198,13 +187,6 @@ export function useNluAdapter(): NluAdapter {
       },
     ]);
   }, [nlu.lastTranscript]);
-
-  // Cleanup volume animation on unmount
-  useEffect(() => {
-    return () => {
-      if (speakingTimerRef.current) clearTimeout(speakingTimerRef.current);
-    };
-  }, []);
 
   const start = useCallback(async () => {
     setAgentState("connecting");

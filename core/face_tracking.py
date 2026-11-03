@@ -185,19 +185,18 @@ class FaceTracker:
         self.prox_zone_yaw_deg = float(inv.get("zone_yaw_deg", float(prox.get("turn_step_deg", 35.0))))
         self.prox_revisit_max_age_sec = float(inv.get("revisit_max_age_sec", 5.0))
 
-        # Hand fallback config
+        # Hand gesture detection config (fallback tracking disabled)
         hand_cfg = _cfg(cfg, "hand_fallback", default={}) or {}
-        # self._hand_fallback_enabled = bool(hand_cfg.get("enabled", True))
         self._hand_max_num = int(hand_cfg.get("max_hands", 1))
         self._hi_gesture_enabled = bool(hand_cfg.get("hi_gesture", True))
         self._bye_gesture_from_hand = bool(hand_cfg.get("bye_gesture", True))
         
-        # Waving detection config
-        self._wave_threshold_enabled = bool(hand_cfg.get("wave_threshold", True))
-        self._wave_reversals_min = int(hand_cfg.get("wave_reversals_min", 4))
-        self._wave_amplitude_min = float(hand_cfg.get("wave_amplitude_min", 40.0))
-        self._wave_history_len = int(hand_cfg.get("wave_history_len", 25))
-        self._wave_dead_zone_px = int(hand_cfg.get("wave_dead_zone_px", 10))
+        # # Waving detection config
+        # self._wave_threshold_enabled = bool(hand_cfg.get("wave_threshold", True))
+        # self._wave_reversals_min = int(hand_cfg.get("wave_reversals_min", 4))
+        # self._wave_amplitude_min = float(hand_cfg.get("wave_amplitude_min", 40.0))
+        # self._wave_history_len = int(hand_cfg.get("wave_history_len", 25))
+        # self._wave_dead_zone_px = int(hand_cfg.get("wave_dead_zone_px", 10))
 
 
         # Internals
@@ -720,102 +719,111 @@ class FaceTracker:
                     # Bye gesture: hand near detected face, frontside
                     if (
                         self._bye_gesture_from_hand
-                        and face_detected
                         and best_hand.is_frontside
                         and not hand_gesture
                     ):
-                        face_px_x = int((face_norm_x + 1.0) * 0.5 * dw)
-                        face_px_y = int((face_norm_y + 1.0) * 0.5 * dh)
-                        dist = ((px - face_px_x) ** 2 + (py - face_px_y) ** 2) ** 0.5
-                        if dist < 300:  # Hand near face threshold
-                            hand_gesture = "bye_wave"
-                            hand_gesture_side = best_hand.physical_side
-
-                    # Hi gesture: frontside hand away from face (with 30s cooldown)
-                    hi_cooldown_until = float(self.bb.read("hi_wave_cooldown_until").get("hi_wave_cooldown_until", 0.0))
-                    if (
-                        self._hi_gesture_enabled
-                        and best_hand.is_frontside
-                        and not hand_gesture
-                        and now >= hi_cooldown_until
-                    ):
-                        is_near_face = False
+                        # If face detected, check if hand is near face
+                        # If no face, trigger bye gesture from hand alone
+                        trigger_bye = False
                         if face_detected:
                             face_px_x = int((face_norm_x + 1.0) * 0.5 * dw)
                             face_px_y = int((face_norm_y + 1.0) * 0.5 * dh)
                             dist = ((px - face_px_x) ** 2 + (py - face_px_y) ** 2) ** 0.5
-                            if dist < 300:
-                                is_near_face = True
-                        if not is_near_face:
-                            hand_gesture = "hi_wave"
+                            if dist < 300:  # Hand near face threshold
+                                trigger_bye = True
+                        else:
+                            # No face detected, trigger on hand wave alone
+                            trigger_bye = True
+                        
+                        if trigger_bye:
+                            hand_gesture = "bye_wave"
                             hand_gesture_side = best_hand.physical_side
-                            
-                    # ── Face -> Hand Fallback Logic ──
-                    # Calculate hand bounding box area based on landmarks
-                    if best_hand.pixel_landmarks:
-                        xs = [lm[0] for lm in best_hand.pixel_landmarks]
-                        ys = [lm[1] for lm in best_hand.pixel_landmarks]
-                        hand_w = max(xs) - min(xs)
-                        hand_h = max(ys) - min(ys)
-                        
-                        dw, dh = self.detect_res
-                        hand_area_ratio = (hand_w * hand_h) / (dw * dh)
-                        
-                        # Use palm_center (middle of hand palm) for precise camera centering
-                        palm_px, palm_py = best_hand.palm_center
 
-                        # 70% offset of the hand bounding box half-height
-                        hand_box_offset_y = 0.10 * (hand_h * 0.5)
-                        hand_box_offset_x = 0.10 * (hand_w * 0.5)
+            #         # Hi gesture: frontside hand away from face (with 30s cooldown)
+            #         hi_cooldown_until = float(self.bb.read("hi_wave_cooldown_until").get("hi_wave_cooldown_until", 0.0))
+            #         if (
+            #             self._hi_gesture_enabled
+            #             and best_hand.is_frontside
+            #             and not hand_gesture
+            #             and now >= hi_cooldown_until
+            #         ):
+            #             is_near_face = False
+            #             if face_detected:
+            #                 face_px_x = int((face_norm_x + 1.0) * 0.5 * dw)
+            #                 face_px_y = int((face_norm_y + 1.0) * 0.5 * dh)
+            #                 dist = ((px - face_px_x) ** 2 + (py - face_px_y) ** 2) ** 0.5
+            #                 if dist < 300:
+            #                     is_near_face = True
+            #             if not is_near_face:
+            #                 hand_gesture = "hi_wave"
+            #                 hand_gesture_side = best_hand.physical_side
+                            
+            #         # ── Face -> Hand Fallback Logic ──
+            #         # Calculate hand bounding box area based on landmarks
+            #         if best_hand.pixel_landmarks:
+            #             xs = [lm[0] for lm in best_hand.pixel_landmarks]
+            #             ys = [lm[1] for lm in best_hand.pixel_landmarks]
+            #             hand_w = max(xs) - min(xs)
+            #             hand_h = max(ys) - min(ys)
                         
-                        raw_hand_norm_x = ((palm_px + hand_box_offset_x) / dw) * 2.0 - 1.0
-                        raw_hand_norm_y = ((palm_py + hand_box_offset_y) / dh) * 2.0 - 1.0
+            #             dw, dh = self.detect_res
+            #             hand_area_ratio = (hand_w * hand_h) / (dw * dh)
                         
-                        # Compare against current or last known face area
-                        compare_area = face_area if face_detected else self._last_face_area
+            #             # Use palm_center (middle of hand palm) for precise camera centering
+            #             palm_px, palm_py = best_hand.palm_center
+
+            #             # 70% offset of the hand bounding box half-height
+            #             hand_box_offset_y = 0.10 * (hand_h * 0.5)
+            #             hand_box_offset_x = 0.10 * (hand_w * 0.5)
                         
-                        if hand_area_ratio > 1.3 * compare_area:
-                            if not self._was_hand_tracking:
-                                # First frame of hand tracking: compute offset to prevent jerking
-                                current_aim_x = face_norm_x if face_detected else 0.0
-                                current_aim_y = face_norm_y if face_detected else 0.0
-                                self._hand_offset_x = raw_hand_norm_x - current_aim_x
-                                self._hand_offset_y = raw_hand_norm_y - current_aim_y
-                                self._was_hand_tracking = True
-                            else:
-                                # Smoothly decay the initial offset so camera glides and centralizes directly on palm middle
-                                self._hand_offset_x *= 0.80
-                                self._hand_offset_y *= 0.80
+            #             raw_hand_norm_x = ((palm_px + hand_box_offset_x) / dw) * 2.0 - 1.0
+            #             raw_hand_norm_y = ((palm_py + hand_box_offset_y) / dh) * 2.0 - 1.0
+                        
+            #             # Compare against current or last known face area
+            #             compare_area = face_area if face_detected else self._last_face_area
+                        
+            #             if hand_area_ratio > 1.3 * compare_area:
+            #                 if not self._was_hand_tracking:
+            #                     # First frame of hand tracking: compute offset to prevent jerking
+            #                     current_aim_x = face_norm_x if face_detected else 0.0
+            #                     current_aim_y = face_norm_y if face_detected else 0.0
+            #                     self._hand_offset_x = raw_hand_norm_x - current_aim_x
+            #                     self._hand_offset_y = raw_hand_norm_y - current_aim_y
+            #                     self._was_hand_tracking = True
+            #                 else:
+            #                     # Smoothly decay the initial offset so camera glides and centralizes directly on palm middle
+            #                     self._hand_offset_x *= 0.80
+            #                     self._hand_offset_y *= 0.80X
                                 
-                            track_kind = "hand"
-                            # Override face tracking so servo loop follows hand
-                            face_detected = False
-                            # Disable hi/bye gestures when fallback tracking is active
-                            hand_gesture = ""
-                            hand_gesture_side = ""
-                        else:
-                            self._was_hand_tracking = False
-                            self._hand_offset_x = 0.0
-                            self._hand_offset_y = 0.0
+            #                 track_kind = "hand"
+            #                 # Override face tracking so servo loop follows hand
+            #                 face_detected = False
+            #                 # Disable hi/bye gestures when fallback tracking is active
+            #                 hand_gesture = ""
+            #                 hand_gesture_side = ""
+            #             else:
+            #                 self._was_hand_tracking = False
+            #                 self._hand_offset_x = 0.0
+            #                 self._hand_offset_y = 0.0
                             
-                        # Always publish hand coordinates so they can be drawn on stream HUD
-                        hand_detected = True
-                        if track_kind == "hand":
-                            hand_norm_x = raw_hand_norm_x - self._hand_offset_x
-                            hand_norm_y = raw_hand_norm_y - self._hand_offset_y
-                        else:
-                            hand_norm_x = raw_hand_norm_x
-                            hand_norm_y = raw_hand_norm_y
+            #             # Always publish hand coordinates so they can be drawn on stream HUD
+            #             hand_detected = True
+            #             if track_kind == "hand":
+            #                 hand_norm_x = raw_hand_norm_x - self._hand_offset_x
+            #                 hand_norm_y = raw_hand_norm_y - self._hand_offset_y
+            #             else:
+            #                 hand_norm_x = raw_hand_norm_x
+            #                 hand_norm_y = raw_hand_norm_y
                             
-                        hand_physical_side = best_hand.physical_side
-                    else:
-                        self._was_hand_tracking = False
-                        self._hand_offset_x = 0.0
-                        self._hand_offset_y = 0.0
-                else:
-                    self._was_hand_tracking = False
-                    self._hand_offset_x = 0.0
-                    self._hand_offset_y = 0.0
+            #             hand_physical_side = best_hand.physical_side
+            #         else:
+            #             self._was_hand_tracking = False
+            #             self._hand_offset_x = 0.0
+            #             self._hand_offset_y = 0.0
+            #     else:
+            #         self._was_hand_tracking = False
+            #         self._hand_offset_x = 0.0
+            #         self._hand_offset_y = 0.0
 
                 # ── Skin blob fallback (when neither face nor hand) ────────
                 # if not face_detected and not hand_detected:

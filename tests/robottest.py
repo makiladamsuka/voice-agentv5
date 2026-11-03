@@ -74,23 +74,33 @@ def load_servo_limits() -> tuple[float, float, float, float, float, float]:
     sv = _load_servo_section()
     pan_min = float(sv.get("pan_min", 25.0))
     pan_max = float(sv.get("pan_max", 150.0))
-    tilt_min = float(sv.get("tilt_min", 100.0))
-    tilt_max = float(sv.get("tilt_max", 150.0))
+    # Range 50.0° to 90.0°, center 70.0° (50 = UP, 90 = DOWN)
+    tilt_min = float(sv.get("tilt_min", 50.0))
+    tilt_max = float(sv.get("tilt_max", 90.0))
     pan_center = float(sv.get("pan_center", (pan_min + pan_max) * 0.5))
-    tilt_center = float(sv.get("tilt_center", (tilt_min + tilt_max) * 0.5))
+    tilt_center = float(sv.get("tilt_center", 70.0))
     return pan_min, pan_max, tilt_min, tilt_max, pan_center, tilt_center
+
+
+def load_servo_tilt_sign() -> float:
+    sv = _load_servo_section()
+    return float(sv.get("tilt_sign", -1.0))
 
 
 def clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
-def print_help(head_step: float) -> None:
+def print_help(head_step: float, tilt_sign: float = -1.0) -> None:
+    inv_s = " (W = tilt UP to 50°, S = tilt DOWN to 90°)" if tilt_sign < 0 else " (W = tilt angle +, S = tilt angle -)"
     print(
         "\nrobottest — keyboard control (v4-style base spin)\n"
-        f"  W/S     tilt ±{head_step:.0f}°   A/D     pan ±{head_step:.0f}°\n"
-        "  M       hold = spin base left     N       hold = spin base right\n"
-        "  C       center head    Z  zero base    ?  status    Q  quit\n"
+        f"  W/S     tilt ±{head_step:.1f}°{inv_s}   [Range: 50° - 90°, Center: 70°]\n"
+        f"  A/D     pan ±{head_step:.1f}°    [Range: 25° - 150°, Center: 100°]\n"
+        "  +/-     change step size (0.5°, 1°, 2°, 5°)\n"
+        "  M       hold = spin base left          N       hold = spin base right\n"
+        "  I       toggle tilt invert             C       center head\n"
+        "  Z       zero base                      ?       status    Q  quit\n"
     )
 
 
@@ -183,53 +193,78 @@ def handle_discrete_key(
     tilt_center: float,
     head_step: float,
     spin: int,
-) -> tuple[float, float, int]:
+    tilt_sign: float = -1.0,
+) -> tuple[float, float, int, float, float]:
     key_l = key.lower() if len(key) == 1 else key
 
     if key_l in ("q", "\x03"):
         link.write_base_stop()
         print("\nQuit.")
-        return pan, tilt, -2
+        return pan, tilt, -2, tilt_sign, head_step
 
     if key_l == "?":
         print(format_status(link, pan, tilt, spin))
-        return pan, tilt, spin
+        return pan, tilt, spin, tilt_sign, head_step
+
+    if key in ("+", "="):
+        head_step = min(head_step + 1.0, 15.0)
+        print(f"\nStep size: ±{head_step:.1f}°")
+        return pan, tilt, spin, tilt_sign, head_step
+
+    if key in ("-", "_"):
+        head_step = max(head_step - 1.0, 0.5)
+        print(f"\nStep size: ±{head_step:.1f}°")
+        return pan, tilt, spin, tilt_sign, head_step
+
+    if key_l == "i":
+        tilt_sign = -tilt_sign
+        direction = "inverted (W = tilt angle -, S = tilt angle +)" if tilt_sign < 0 else "normal (W = tilt angle +, S = tilt angle -)"
+        print(f"\nTilt mode switched: {direction}")
+        return pan, tilt, spin, tilt_sign, head_step
 
     if key_l == "c":
         pan = pan_center
         tilt = tilt_center
         link.write_angles(pan, tilt, force=True)
         print(f"Head centered  {format_status(link, pan, tilt, spin)}")
-        return pan, tilt, spin
+        return pan, tilt, spin, tilt_sign, head_step
 
     if key_l == "z":
         link.write_base_stop()
         spin = 0
         link.zero_base()
         print(f"Base zeroed    {format_status(link, pan, tilt, spin)}")
-        return pan, tilt, spin
+        return pan, tilt, spin, tilt_sign, head_step
 
     if key_l == "w":
-        tilt = clamp(tilt + head_step, tilt_min, tilt_max)
+        tilt = clamp(tilt + tilt_sign * head_step, tilt_min, tilt_max)
         link.write_angles(pan, tilt)
-        return pan, tilt, spin
+        direction = "UP" if tilt_sign < 0 else "cmd+"
+        print(f"head P{pan:.1f} T{tilt:.1f} ({direction})")
+        return pan, tilt, spin, tilt_sign, head_step
 
     if key_l == "s":
-        tilt = clamp(tilt - head_step, tilt_min, tilt_max)
+        tilt = clamp(tilt - tilt_sign * head_step, tilt_min, tilt_max)
         link.write_angles(pan, tilt)
-        return pan, tilt, spin
+        direction = "DOWN" if tilt_sign < 0 else "cmd-"
+        print(f"head P{pan:.1f} T{tilt:.1f} ({direction})")
+        return pan, tilt, spin, tilt_sign, head_step
 
     if key_l == "a":
-        pan = clamp(pan - head_step, pan_min, pan_max)
-        link.write_angles(pan, tilt)
-        return pan, tilt, spin
-
-    if key_l == "d":
+        # A = Pan LEFT -> pan angle increases (turns robot left)
         pan = clamp(pan + head_step, pan_min, pan_max)
         link.write_angles(pan, tilt)
-        return pan, tilt, spin
+        print(f"head P{pan:.1f} T{tilt:.1f} (pan LEFT)")
+        return pan, tilt, spin, tilt_sign, head_step
 
-    return pan, tilt, spin
+    if key_l == "d":
+        # D = Pan RIGHT -> pan angle decreases (turns robot right)
+        pan = clamp(pan - head_step, pan_min, pan_max)
+        link.write_angles(pan, tilt)
+        print(f"head P{pan:.1f} T{tilt:.1f} (pan RIGHT)")
+        return pan, tilt, spin, tilt_sign, head_step
+
+    return pan, tilt, spin, tilt_sign, head_step
 
 
 def verify_spin_firmware(link: ArduinoServoLink) -> bool:
@@ -259,14 +294,21 @@ def verify_spin_firmware(link: ArduinoServoLink) -> bool:
     return False
 
 
-def run_interactive(link: ArduinoServoLink, *, head_step: float) -> None:
+def run_interactive(
+    link: ArduinoServoLink,
+    *,
+    head_step: float,
+    tilt_sign_override: float | None = None,
+) -> None:
     pan_min, pan_max, tilt_min, tilt_max, pan_center, tilt_center = load_servo_limits()
+    cfg_tilt_sign = load_servo_tilt_sign()
+    tilt_sign = cfg_tilt_sign if tilt_sign_override is None else tilt_sign_override
     pan = pan_center
     tilt = tilt_center
     link.write_angles(pan, tilt, force=True)
     link.write_base_stop()
 
-    print_help(head_step)
+    print_help(head_step, tilt_sign)
     print(format_status(link, pan, tilt, 0))
 
     last_m = 0.0
@@ -286,7 +328,7 @@ def run_interactive(link: ArduinoServoLink, *, head_step: float) -> None:
                 elif key_l == "n":
                     last_n = now
                 else:
-                    pan, tilt, code = handle_discrete_key(
+                    pan, tilt, code, tilt_sign, head_step = handle_discrete_key(
                         key,
                         link,
                         pan,
@@ -299,6 +341,7 @@ def run_interactive(link: ArduinoServoLink, *, head_step: float) -> None:
                         tilt_center,
                         head_step,
                         active_spin,
+                        tilt_sign,
                     )
                     if code == -2:
                         return
@@ -321,6 +364,16 @@ def main() -> int:
     parser.add_argument("--port", default="", help="Serial port (default auto)")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--head-step", type=float, default=5.0, help="Degrees per WASD step")
+    parser.add_argument(
+        "--invert-tilt",
+        action="store_true",
+        help="Invert W/S tilt direction (W decrements servo angle, for reversed servo mounts)",
+    )
+    parser.add_argument(
+        "--normal-tilt",
+        action="store_true",
+        help="Force normal non-inverted tilt (W increments servo angle)",
+    )
     parser.add_argument(
         "--no-config-cpd",
         action="store_true",
@@ -346,8 +399,19 @@ def main() -> int:
         if not verify_spin_firmware(link):
             return 1
 
-        print("Tip: hold M/N for manual base spin; use Z to zero encoder at current forward.")
-        run_interactive(link, head_step=args.head_step)
+        # Send U command to unlock firmware clamps so 50° is accepted immediately
+        link.send_line("U", drain_after=False)
+        time.sleep(0.05)
+
+        tilt_sign_override = None
+        if args.invert_tilt:
+            tilt_sign_override = -1.0
+        elif args.normal_tilt:
+            tilt_sign_override = 1.0
+
+        print("\n=== Head calibrated: Tilt 50.0° (UP) to 90.0° (DOWN), Center 70.0° ===")
+        print("Tip: hold M/N for manual base spin; use Z to zero encoder; press +/- for step size; press I to toggle invert.")
+        run_interactive(link, head_step=args.head_step, tilt_sign_override=tilt_sign_override)
     except KeyboardInterrupt:
         print("\nInterrupted.")
     finally:

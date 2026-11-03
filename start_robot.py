@@ -171,7 +171,7 @@ def _bootstrap_home_arms(
     home = envelope.clamp_arms(*presets.get(base_pose))
 
     pan = float(servo_cfg.get("pan_center", 100.0))
-    tilt = float(servo_cfg.get("tilt_center", 110.0))
+    tilt = float(servo_cfg.get("tilt_center", 70.0))
     link.write_angles_and_arms(pan, tilt, *home, force=True)
     time.sleep(0.4)
     bb.write(arm_a0=home[0], arm_a1=home[1], arm_a2=home[2], arm_a3=home[3])
@@ -236,7 +236,7 @@ def _shutdown_home_servos(
     from lib.arm_home_motion import smooth_home_arms
 
     pan_center = float(servo_cfg.get("pan_center", 100.0))
-    tilt_center = float(servo_cfg.get("tilt_center", 110.0))
+    tilt_center = float(servo_cfg.get("tilt_center", 70.0))
     link.write_base_stop()
 
     arm_home = _resolve_arm_home_pose(arms_cfg, arm_controller)
@@ -289,7 +289,7 @@ def _shutdown_home_base(
         return
 
     pan_center = float(servo_cfg.get("pan_center", 100.0))
-    tilt_center = float(servo_cfg.get("tilt_center", 110.0))
+    tilt_center = float(servo_cfg.get("tilt_center", 70.0))
     tol = float(base_cfg.get("home_success_tolerance_deg", 2.5))
 
     state = bb.read("from_home_imu_deg", "from_home_enc_deg")

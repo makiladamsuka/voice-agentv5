@@ -223,16 +223,16 @@ def main() -> int:
                 tilt = tilt_center
                 moved = True
             elif action == "pan_left":
-                pan -= step
-                moved = True
-            elif action == "pan_right":
                 pan += step
                 moved = True
+            elif action == "pan_right":
+                pan -= step
+                moved = True
             elif action == "tilt_up":
-                tilt += step
+                tilt -= step
                 moved = True
             elif action == "tilt_down":
-                tilt -= step
+                tilt += step
                 moved = True
             elif action == "mark_pan_min":
                 marks["pan_min"] = pan

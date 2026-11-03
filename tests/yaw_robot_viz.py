@@ -226,7 +226,7 @@ def _publish_state(
     servo_cfg: dict,
 ) -> None:
     pitch_viz, imu_pitch_from_home = pitch_from_home(imu_pitch_deg, tilt, servo_cfg)
-    pan_cmd_from_home = pan_cmd_from_home(pan)
+    pan_cmd_delta = pan_cmd_from_home(pan)
     tilt_mech = signed_tilt_mech_deg(tilt, servo_cfg)
     if sample is None:
         STATE.update(
@@ -238,7 +238,7 @@ def _publish_state(
             head_tilt=tilt,
             pan_mech_deg=signed_pan_mech_deg(pan, servo_cfg),
             tilt_mech_deg=tilt_mech,
-            pan_cmd_from_home_deg=pan_cmd_from_home,
+            pan_cmd_from_home_deg=pan_cmd_delta,
             imu_pitch_deg=imu_pitch_deg,
             pitch_from_home_deg=pitch_viz,
             imu_pitch_from_home_deg=imu_pitch_from_home,
@@ -257,7 +257,7 @@ def _publish_state(
         from_home_imu_deg=sample.from_home_imu_deg,
         imu_total_from_home_deg=sample.imu_total_from_home_deg,
         pan_from_home_deg=sample.pan_from_home_deg,
-        pan_cmd_from_home_deg=pan_cmd_from_home,
+        pan_cmd_from_home_deg=pan_cmd_delta,
         disagreement_deg=sample.disagreement_deg,
         encoder_deg=sample.encoder_deg,
         encoder_count=sample.encoder_count,
@@ -435,16 +435,16 @@ def _apply_browser_cmd(
         return pan, tilt, 0, status, quit_requested
 
     if cmd == "tilt_up":
-        tilt = clamp(tilt + head_step, tilt_min, tilt_max)
-        link.write_angles(pan, tilt)
-    elif cmd == "tilt_down":
         tilt = clamp(tilt - head_step, tilt_min, tilt_max)
         link.write_angles(pan, tilt)
+    elif cmd == "tilt_down":
+        tilt = clamp(tilt + head_step, tilt_min, tilt_max)
+        link.write_angles(pan, tilt)
     elif cmd == "pan_left":
-        pan = clamp(pan - head_step, pan_min, pan_max)
+        pan = clamp(pan + head_step, pan_min, pan_max)
         link.write_angles(pan, tilt)
     elif cmd == "pan_right":
-        pan = clamp(pan + head_step, pan_min, pan_max)
+        pan = clamp(pan - head_step, pan_min, pan_max)
         link.write_angles(pan, tilt)
 
     return pan, tilt, active_spin, status, quit_requested

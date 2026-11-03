@@ -127,7 +127,7 @@ class Blackboard:
     imu_accel_trusted: bool = True
     imu_horizon_ok: bool = True
     imu_available: bool = False    # False until ImuService confirms hardware
-    imu_effective_tilt_center: float = 114.0
+    imu_effective_tilt_center: float = 70.0
 
     # ── Person Memory (written by FaceTracker) ─────────────────────────────
     person_snapshots: list = None  # list[dict] from PersonMemory.snapshots()

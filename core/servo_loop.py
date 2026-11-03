@@ -572,9 +572,9 @@ class ServoLoop:
         elif cmd == "tilt_down":
             self._tilt = clamp(self._tilt - self.tilt_sign * step, self.tilt_min, self.tilt_max)
         elif cmd == "pan_left":
-            self._pan = clamp(self._pan + self.pan_sign * step, self.pan_min, self.pan_max)
-        elif cmd == "pan_right":
             self._pan = clamp(self._pan - self.pan_sign * step, self.pan_min, self.pan_max)
+        elif cmd == "pan_right":
+            self._pan = clamp(self._pan + self.pan_sign * step, self.pan_min, self.pan_max)
         elif cmd == "center":
             self._pan = self.pan_center
             self._tilt = self.tilt_center

@@ -170,6 +170,7 @@ export function useNluVoice({
 
   const nluWs = useRef<WebSocket | null>(null);
   const dgWs = useRef<WebSocket | null>(null);
+  const dgKeepAliveIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioRef = useRef<any>(null);

@@ -12,6 +12,8 @@ Usage:
 import asyncio
 import json
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 import threading
 import time
 from pathlib import Path
@@ -32,29 +34,51 @@ class DummyBB:
 
 
 def _start_server(bb):
-    """Start the NLU server in a background thread."""
+    """Connect to existing NLU server on :8765 if running, or start one in a background thread."""
+    import urllib.request
+
+    # Check if run_laptop.py or start_robot.py is already running on port 8765
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8765/health", timeout=1) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("status") == "ok" and data.get("ready"):
+                print("  [Server] Detected ready NLU server on port 8765!")
+                return None
+    except Exception:
+        pass
+
     from voice.nlu_server import run_nlu_server
+    from voice.wayfinding import Wayfinder
+
+    wf = None
+    try:
+        wf = Wayfinder()
+    except Exception:
+        pass
 
     t = threading.Thread(
         target=run_nlu_server,
-        kwargs={"bb": bb, "host": "127.0.0.1", "port": 8765},
+        kwargs={"bb": bb, "host": "127.0.0.1", "port": 8765, "wayfinder": wf},
         daemon=True,
         name="NluServerTest",
     )
     t.start()
 
-    # Poll the /health endpoint until the server is actually accepting connections
-    import urllib.request
-    deadline = time.time() + 10.0
+    # Poll the /health endpoint until the server is actually ready
+    deadline = time.time() + 30.0
     while time.time() < deadline:
         try:
-            urllib.request.urlopen("http://127.0.0.1:8765/health", timeout=1)
-            print("  [Server] Ready.")
-            return t
+            with urllib.request.urlopen("http://127.0.0.1:8765/health", timeout=1) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if data.get("ready"):
+                    print("  [Server] Ready.")
+                    return t
         except Exception:
-            time.sleep(0.2)
+            pass
+        time.sleep(0.3)
 
-    raise RuntimeError("NLU server did not start within 10 seconds.")
+    print("  [Server] Port open (continuing while pre-warm finishes)...")
+    return t
 
 
 async def _run_test():

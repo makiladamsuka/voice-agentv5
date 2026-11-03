@@ -7,9 +7,17 @@ voice/event_db/
 .env
 .DS_Store
 *.log
+logs/
 assets/audio_cache/dyn_*
 *.amp.json
 test.wav
+
+# Laptop-only local runner & configs (ignored so Pi git pulls stay clean)
+run_laptop.py
+run_laptop.ps1
+run_laptop.bat
+.env.laptop
+config.laptop.local.yaml
 
 # Frontend (native Next.js kiosk)
 frontend/node_modules/

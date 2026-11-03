@@ -10,8 +10,10 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 ENVELOPE_SAMPLE_HZ = 50
-_CHUNK_MS = 50
+_CHUNK_MS = 20  # 50 Hz = 20ms per frame
 _PCM_SAMPLE_RATE = 24000
 _BYTES_PER_SAMPLE = 2
 _CHUNK_BYTES = int(_PCM_SAMPLE_RATE * _BYTES_PER_SAMPLE * (_CHUNK_MS / 1000))
@@ -60,12 +62,12 @@ def sidecar_path(audio_path: Path) -> Path:
 
 
 def rms_pcm(pcm_bytes: bytes) -> float:
-    """Compute RMS of 16-bit PCM bytes in [0.0, 1.0]."""
+    """Compute RMS of 16-bit PCM bytes in [0.0, 1.0] using fast NumPy vector math."""
     if len(pcm_bytes) < 2:
         return 0.0
-    n = len(pcm_bytes) // 2
-    samples = struct.unpack(f"<{n}h", pcm_bytes[: n * 2])
-    rms = math.sqrt(sum(s * s for s in samples) / n)
+    n_bytes = (len(pcm_bytes) // 2) * 2
+    samples = np.frombuffer(pcm_bytes[:n_bytes], dtype="<i2").astype(np.float32)
+    rms = float(np.sqrt(np.mean(samples * samples)))
     normalised = min(rms / 32768.0, 1.0)
     return min(normalised * 8.0, 1.0)
 
@@ -84,17 +86,38 @@ def _smooth_envelope(raw_values: list[float]) -> tuple[tuple[float, ...], tuple[
 
 
 def envelope_from_pcm(pcm: bytes, *, sample_rate: int = _PCM_SAMPLE_RATE) -> AudioEnvelope:
-    """Build an envelope from mono s16le PCM."""
+    """Build an envelope from mono s16le PCM using vectorized NumPy slicing."""
+    n_bytes = (len(pcm) // 2) * 2
+    if n_bytes < 2:
+        return AudioEnvelope(
+            sample_rate_hz=ENVELOPE_SAMPLE_HZ,
+            duration_ms=0,
+            fast=(0.0,),
+            slow=(0.0,),
+        )
+
+    samples_per_chunk = max(1, int(sample_rate / ENVELOPE_SAMPLE_HZ))
+    all_samples = np.frombuffer(pcm[:n_bytes], dtype="<i2").astype(np.float32)
+    total_samples = len(all_samples)
+
+    # Reshape full chunks for instant vectorized RMS calculation
+    n_full_chunks = total_samples // samples_per_chunk
     raw: list[float] = []
-    step = _CHUNK_BYTES
-    for offset in range(0, len(pcm), step):
-        chunk = pcm[offset : offset + step]
-        raw.append(rms_pcm(chunk))
+    if n_full_chunks > 0:
+        trimmed = all_samples[: n_full_chunks * samples_per_chunk].reshape(n_full_chunks, samples_per_chunk)
+        rms_arr = np.sqrt(np.mean(trimmed * trimmed, axis=1))
+        norm_arr = np.minimum( np.minimum(rms_arr / 32768.0, 1.0) * 8.0, 1.0 )
+        raw.extend(norm_arr.tolist())
+
+    rem = all_samples[n_full_chunks * samples_per_chunk :]
+    if len(rem) > 0:
+        rms_tail = float(np.sqrt(np.mean(rem * rem)))
+        raw.append(min(min(rms_tail / 32768.0, 1.0) * 8.0, 1.0))
 
     if not raw:
         raw = [0.0]
 
-    duration_ms = int(len(pcm) / (_BYTES_PER_SAMPLE * sample_rate) * 1000)
+    duration_ms = int(total_samples / sample_rate * 1000)
     fast, slow = _smooth_envelope(raw)
     return AudioEnvelope(
         sample_rate_hz=ENVELOPE_SAMPLE_HZ,
@@ -198,7 +221,7 @@ def build_envelope_for_audio(
     fallback_text: str = "",
     write_cache: bool = True,
 ) -> AudioEnvelope:
-    """Load sidecar, or decode MP3 and cache envelope next to the file."""
+    """Load sidecar, or decode MP3/WAV and cache envelope next to the file."""
     sc = sidecar_path(audio_path)
     cached = load_sidecar(sc)
     if cached is not None:
@@ -226,16 +249,16 @@ def build_envelope_for_audio(
 
 
 def build_all_sidecars(audio_dir: Path) -> int:
-    """Generate .amp.json sidecars for every MP3 in a directory."""
+    """Generate .amp.json sidecars for every MP3/WAV in a directory."""
     count = 0
-    for mp3 in sorted(audio_dir.glob("*.mp3")):
-        sc = sidecar_path(mp3)
+    for audio_file in sorted(list(audio_dir.glob("*.mp3")) + list(audio_dir.glob("*.wav"))):
+        sc = sidecar_path(audio_file)
         if sc.exists():
             continue
         try:
-            env = build_envelope_for_audio(mp3, write_cache=True)
-            print(f"[AudioEnvelope] {mp3.name} -> {env.duration_ms}ms ({len(env.fast)} frames)")
+            env = build_envelope_for_audio(audio_file, write_cache=True)
+            print(f"[AudioEnvelope] {audio_file.name} -> {env.duration_ms}ms ({len(env.fast)} frames)")
             count += 1
         except Exception as exc:
-            print(f"[AudioEnvelope] SKIP {mp3.name}: {exc}")
+            print(f"[AudioEnvelope] SKIP {audio_file.name}: {exc}")
     return count

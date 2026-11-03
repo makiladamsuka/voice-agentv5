@@ -570,8 +570,10 @@ class FaceTracker:
 
             # ── ROI Crop Detection vs Full-Frame Detection ───────────────────
             pose_st = self.bb.read("servo_pan", "servo_tilt", "base_encoder_deg")
-            cur_pan_mech = signed_pan_mech_deg(float(pose_st.get("servo_pan", self.pan_center)), self._servo_cfg)
-            cur_tilt_mech = signed_tilt_mech_deg(float(pose_st.get("servo_tilt", self.tilt_center)), self._servo_cfg)
+            cur_pan_cmd = float(pose_st.get("servo_pan") if pose_st.get("servo_pan") is not None else self.servo_pan_center)
+            cur_tilt_cmd = float(pose_st.get("servo_tilt") if pose_st.get("servo_tilt") is not None else float(self._servo_cfg.get("tilt_center", 70.0)))
+            cur_pan_mech = signed_pan_mech_deg(cur_pan_cmd, self._servo_cfg)
+            cur_tilt_mech = signed_tilt_mech_deg(cur_tilt_cmd, self._servo_cfg)
             cur_cam_yaw = float(pose_st.get("base_encoder_deg", 0.0) or 0.0) + cur_pan_mech
 
             faces = None

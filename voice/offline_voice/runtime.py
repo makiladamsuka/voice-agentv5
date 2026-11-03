@@ -1,3 +1,9 @@
+from __future__ import annotations
+import os as _early_os
+_early_os.environ.setdefault("USE_TF", "0")
+_early_os.environ.setdefault("USE_TORCH", "1")
+_early_os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+_early_os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 """Ultra-fast local voice runtime for zero-latency interactions."""
 
 import time
@@ -326,15 +332,18 @@ class IntentMatcher:
 
     def _get_embed_model(self):
         """Lazy-load the SentenceTransformer embedding model (same as DefaultEmbeddingFunction)."""
+        if getattr(self, "_embed_failed", False):
+            return None
         if self._embed_model is None:
-            from sentence_transformers import SentenceTransformer
-            self._embed_model = SentenceTransformer("all-MiniLM-L6-v2")
-            print("  [Matcher] SentenceTransformer model loaded (all-MiniLM-L6-v2)")
-            # Warm-up encode so the first real query avoids lazy-init cost.
             try:
+                from sentence_transformers import SentenceTransformer
+                self._embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+                print("  [Matcher] SentenceTransformer model loaded (all-MiniLM-L6-v2)")
                 self._embed_model.encode("hello", show_progress_bar=False)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._embed_failed = True
+                print(f"  [Matcher] SentenceTransformer load skipped ({exc}); using hashmap + Cloud LLM.")
+                return None
         return self._embed_model
 
     def embed(self, text: str) -> np.ndarray:
@@ -401,9 +410,17 @@ class IntentMatcher:
             )
             return
 
-        # Numpy cache missing or stale — rebuild it
-        print("  [Matcher] Building numpy cache directly with SentenceTransformer...")
-        self._build_npy_cache_direct(db_dir, pairs)
+        if os.getenv("NLU_LIGHTWEIGHT", "").strip().lower() in ("1", "true", "yes"):
+            print("  [Matcher] NLU_LIGHTWEIGHT=1: Using exact hashmap + Wayfinder + Cloud LLM (skipping numpy embedding build).")
+            return
+
+        # Numpy cache missing or stale — rebuild it safely
+        try:
+            print("  [Matcher] Building numpy cache directly with SentenceTransformer...")
+            self._build_npy_cache_direct(db_dir, pairs)
+        except Exception as exc:
+            print(f"  [Matcher] WARNING: SentenceTransformer unavailable ({exc}) — falling back to exact hashmap + Cloud LLM.")
+            self._np_embeddings = None
 
     # ── Option 1: numpy fast matching path ───────────────────────────────────
 
@@ -462,9 +479,12 @@ class IntentMatcher:
         if domain == "tool_time":
             # Tools are handled by the caller, not by retrieval.
             return None
+        if os.getenv("NLU_LIGHTWEIGHT", "").strip().lower() in ("1", "true", "yes"):
+            # Lightweight Pi mode: skip local PyTorch embedding and let cloud LLM / exact match handle it
+            return None
 
         # ── Fast numpy path (Option 1) ─────────────────────────────────────────
-        if self._np_embeddings is not None:
+        if self._np_embeddings is not None and self._get_embed_model() is not None:
             np_result = self._match_numpy(text, domain)
             if np_result is None:
                 print(f"  [Matcher] domain={domain}: no candidates.")
@@ -477,7 +497,7 @@ class IntentMatcher:
             distances_0 = [d1, d2]
         else:
             # ── ChromaDB fallback path ─────────────────────────────────────────
-            if self.collection is None:
+            if getattr(self, "collection", None) is None:
                 print(f"  [Matcher] domain={domain}: no numpy cache or ChromaDB available.")
                 return None
             results = self.collection.query(
@@ -723,8 +743,12 @@ class OfflineVoiceRuntime:
         self.db_path = APP_DIR / "voice" / "event_db"
         self.matcher = IntentMatcher(self.db_path)
         self.matcher.load_cache(self.db_path / "compiled_intents.json")
-        # Warm up embedding model in background so first query has zero latency
-        self.matcher._get_embed_model()
+        # On Raspberry Pi or when NLU_LIGHTWEIGHT=1, skip loading PyTorch SentenceTransformer (~700MB RAM)
+        lightweight = os.getenv("NLU_LIGHTWEIGHT", "").strip().lower() in ("1", "true", "yes")
+        if not lightweight:
+            self.matcher._get_embed_model()
+        else:
+            print("  [Matcher] NLU_LIGHTWEIGHT=1: Skipping PyTorch SentenceTransformer load (saves ~700MB RAM).")
             
     def process_text_input(self, text: str):
         """Processes a transcript, matches intent, updates Blackboard, and plays audio."""

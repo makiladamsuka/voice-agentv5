@@ -369,10 +369,10 @@ async def _voice_ws_endpoint(websocket) -> None:
                         result["audio_url"] = f"/assets/audio_cache/{audio_file}"
                         result["audio_path"] = str(APP_DIR / "assets" / "audio_cache" / audio_file)
 
-                # Ensure "thinking" state is visible on screen for at least 400ms before speaking
+                # Minimal 80ms transition so UI registers state change without adding lag
                 elapsed_think = _time.monotonic() - think_start_ts
-                if elapsed_think < 0.4:
-                    await asyncio.sleep(0.4 - elapsed_think)
+                if elapsed_think < 0.08:
+                    await asyncio.sleep(0.08 - elapsed_think)
 
                 write_conv_emotion(
                     _bb,
@@ -385,9 +385,12 @@ async def _voice_ws_endpoint(websocket) -> None:
                 duration_ms = 0
                 sync = get_speech_sync_service()
                 if sync is not None:
-                    utterance_id, duration_ms = sync.arm_utterance(
-                        reply_text=result.get("reply_text", ""),
-                        audio_path=result.get("audio_path"),
+                    utterance_id, duration_ms = await loop.run_in_executor(
+                        None,
+                        lambda: sync.arm_utterance(
+                            reply_text=result.get("reply_text", ""),
+                            audio_path=result.get("audio_path"),
+                        ),
                     )
 
                 # Immediately set Blackboard conv_state="speaking" so robot face switches to talking emotions
@@ -816,6 +819,25 @@ def _match_intent_internal(runtime, user_text: str) -> dict:
             "ambiguity_category": intent.get("ambiguity_category"),
         }, audio_file if audio_url else None)
 
+    # Direct Wayfinder room lookup before falling back (ensures fuzzy navigation works even in NLU_LIGHTWEIGHT=1 mode)
+    if domain == "navigate" or re.search(r"\b(where|navigate|direction|directions|how to go|how do i get|find|take me|locate|floor|room|lab|hall|auditorium|library|canteen|washroom|office)\b", user_text, re.IGNORECASE):
+        wf = _get_wayfinder()
+        if wf is not None:
+            dest_cand = re.sub(
+                r"^(can you |could you |please |where is |where are |where's |how do i get to |how can i go to |how to get to |navigate to |directions to |take me to |take me |find the |find |locate |show me the way to |guide me to )+",
+                "",
+                user_text.strip(),
+                flags=re.IGNORECASE,
+            ).strip(" ?.,!")
+            if dest_cand:
+                try:
+                    room = wf.find_room(dest_cand)
+                    if room and room.get("label"):
+                        log.info(f"  [Wayfinder Direct] Matched destination '{room['label']}' from '{dest_cand}'")
+                        return _navigate_response(dest_cand)
+                except Exception:
+                    pass
+
     # No intent matched — generate dynamic fallback
     fallback_text = _generate_dynamic_fallback(user_text)
     
@@ -826,85 +848,197 @@ def _match_intent_internal(runtime, user_text: str) -> dict:
         "is_fallback": True,
     }, None)
 
+_llm_client: OpenAI | None = None
+_llm_model: str = ""
+_llm_lock = threading.Lock()
+_campus_system_prompt: str | None = None
+
+
+def _get_campus_system_prompt() -> str:
+    """Build and cache the campus system prompt directly from knowledge_base.yaml and extracted_events.json."""
+    global _campus_system_prompt
+    if _campus_system_prompt is not None:
+        return _campus_system_prompt
+
+    parts = [
+        "You are Nema, a friendly campus kiosk guide robot at the University of Moratuwa Faculty of Information Technology (FIT) in Katubedda, Sri Lanka.",
+        "Strict rules:",
+        "1. Reply in 1 to 2 short spoken sentences (maximum 25 words).",
+        "2. Never use markdown, asterisks, bullet points, or emojis.",
+        "3. Never repeat garbled or misheard words from speech recognition.",
+    ]
+
+    kb_path = APP_DIR / "voice" / "knowledge_base.yaml"
+    if kb_path.exists():
+        try:
+            import yaml
+            kb_data = yaml.safe_load(kb_path.read_text(encoding="utf-8")) or []
+            if isinstance(kb_data, list):
+                kb_lines = [
+                    f"- {item.get('topic', '').replace('_', ' ')}: {(item.get('reply') or '').strip().replace(chr(10), ' ')}"
+                    for item in kb_data[:10]
+                    if item.get("topic") and item.get("reply")
+                ]
+                if kb_lines:
+                    parts.append("Campus Knowledge:\n" + "\n".join(kb_lines))
+        except Exception:
+            pass
+
+    extracted_path = APP_DIR / "voice" / "event_db" / "extracted_events.json"
+    if extracted_path.exists():
+        try:
+            events = json.loads(extracted_path.read_text(encoding="utf-8"))
+            if events:
+                ev_lines = [f"- {e.get('title')} ({e.get('date', 'Upcoming')})" for e in events[:5] if e.get("title")]
+                if ev_lines:
+                    parts.append("Upcoming Events:\n" + "\n".join(ev_lines))
+        except Exception:
+            pass
+
+    _campus_system_prompt = "\n".join(parts)
+    return _campus_system_prompt
+
+
+def _get_cloud_llm_client() -> tuple[OpenAI | None, str]:
+    """Return a persistent (OpenAI client, model) for Groq Free Tier or OpenRouter Free/Paid."""
+    global _llm_client, _llm_model
+    with _llm_lock:
+        if _llm_client is not None:
+            return _llm_client, _llm_model
+
+        groq_key = os.getenv("GROQ_API_KEY", "").strip()
+        openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+
+        # Prefer Groq if configured (fastest ~150ms free tier), or OpenRouter if OPENROUTER_API_KEY is set
+        use_openrouter = bool(openrouter_key) and (
+            not groq_key or os.getenv("LLM_PROVIDER", "").strip().lower() == "openrouter"
+        )
+
+        if use_openrouter:
+            _llm_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free").strip()
+            _llm_client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=openrouter_key,
+                timeout=6.0,
+                max_retries=1,
+            )
+            log.info(f"[NLU] Cloud LLM initialized via OpenRouter (model={_llm_model})")
+        elif groq_key:
+            _llm_model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant").strip()
+            _llm_client = OpenAI(
+                base_url="https://api.groq.com/openai/v1",
+                api_key=groq_key,
+                timeout=5.0,
+                max_retries=1,
+            )
+            log.info(f"[NLU] Cloud LLM initialized via Groq (model={_llm_model})")
+        return _llm_client, _llm_model
+
+
 def _generate_dynamic_fallback(transcript: str) -> str:
-    """Generate a clean, friendly fallback when the query doesn't match an intent."""
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
+    """Generate a fast, smart campus reply using Groq Free Tier or OpenRouter Free/Paid."""
+    client, model = _get_cloud_llm_client()
+    if client is None:
         return "I'm not sure about that. I can help you with campus directions or upcoming events!"
-        
+
     try:
-        client = OpenAI(
-            base_url="https://api.groq.com/openai/v1",
-            api_key=api_key,
-        )
+        _t0 = time.perf_counter()
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=model,
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are NEma, a friendly campus guide robot. "
-                        "The user asked something out of domain or misheard by speech recognition. "
-                        "Politely say in max 12 words that you're not sure, and offer help with campus directions or events. "
-                        "NEVER repeat bizarre or misheard words. NEVER claim you lack voice detection."
-                    )
-                },
-                {"role": "user", "content": transcript}
+                {"role": "system", "content": _get_campus_system_prompt()},
+                {"role": "user", "content": transcript},
             ],
-            max_tokens=25,
-            temperature=0.3
+            max_tokens=45,
+            temperature=0.3,
         )
-        return response.choices[0].message.content.strip()
+        reply = (response.choices[0].message.content or "").strip()
+        reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+        reply = re.sub(r"[*_#`]", "", reply).strip()
+        reply = re.sub(r"\s+", " ", reply)
+        print(f"  [CloudLLM][timing] {model}={(time.perf_counter() - _t0) * 1000:.0f}ms")
+        if reply:
+            return reply
     except Exception as e:
-        log.error(f"Dynamic fallback LLM failed: {e}")
-        return "I'm not sure about that. I can help you with campus directions or upcoming events!"
+        log.error(f"Dynamic fallback LLM ({model}) failed: {e}")
+    return "I'm not sure about that. I can help you with campus directions or upcoming events!"
 
 
 _tts_lock = threading.Lock()
 _tts_in_flight = set()
+_tts_http_client = None
+
+
+def _get_tts_http_client():
+    """Persistent HTTP/1.1 keep-alive client so Deepgram TTS skips SSL handshake overhead (~250ms saved)."""
+    global _tts_http_client
+    if _tts_http_client is None:
+        try:
+            import httpx
+            _tts_http_client = httpx.Client(timeout=5.0, http2=False)
+        except ImportError:
+            _tts_http_client = False
+    return _tts_http_client
+
 
 def _generate_dynamic_tts(text: str) -> str | None:
-    """Generate TTS synchronously and cache it as 48kHz WAV for zero-resampling playout."""
+    """Generate TTS synchronously and cache it as 24kHz WAV + pre-built amplitude sidecar."""
     filename = f"dyn_{hashlib.md5(text.encode()).hexdigest()[:10]}.wav"
     audio_base = APP_DIR / "assets" / "audio_cache"
+    audio_base.mkdir(parents=True, exist_ok=True)
     output_path = audio_base / filename
-    
+
     if output_path.exists():
         return filename
-        
+
     with _tts_lock:
         is_first = filename not in _tts_in_flight
         if is_first:
             _tts_in_flight.add(filename)
 
     if not is_first:
-        # Another thread is already generating this exact audio file (speculative concurrency).
-        # We just wait up to 5 seconds for it to finish and then return the cached file!
         for _ in range(50):
             if output_path.exists():
                 return filename
-            if filename not in _tts_in_flight: # The other thread finished or failed
+            if filename not in _tts_in_flight:
                 break
-            time.sleep(0.1)
+            time.sleep(0.05)
         return filename if output_path.exists() else None
-        
+
     api_key = os.getenv("DEEPGRAM_API_KEY") or os.getenv("NEXT_PUBLIC_DEEPGRAM_API_KEY")
     if not api_key:
         log.warning("No Deepgram API key for dynamic TTS")
+        with _tts_lock:
+            _tts_in_flight.discard(filename)
         return None
-        
+
     try:
-        url = "https://api.deepgram.com/v1/speak?model=aura-luna-en&encoding=linear16&container=wav&sample_rate=48000"
+        _t0 = time.perf_counter()
+        # 24000Hz WAV is half the payload size of 48000Hz, matches _PCM_SAMPLE_RATE, and has identical voice clarity
+        url = "https://api.deepgram.com/v1/speak?model=aura-luna-en&encoding=linear16&container=wav&sample_rate=24000"
         headers = {
             "Authorization": f"Token {api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
-        data = json.dumps({"text": text}).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        
-        with urllib.request.urlopen(req, timeout=5.0) as response:
-            output_path.write_bytes(response.read())
-            
+        client = _get_tts_http_client()
+        if client:
+            resp = client.post(url, headers=headers, json={"text": text})
+            resp.raise_for_status()
+            wav_bytes = resp.content
+        else:
+            data = json.dumps({"text": text}).encode("utf-8")
+            req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=5.0) as response:
+                wav_bytes = response.read()
+
+        output_path.write_bytes(wav_bytes)
+        # Pre-compute the lip-sync sidecar immediately in this worker thread
+        try:
+            from voice.audio_envelope import build_envelope_for_audio
+            build_envelope_for_audio(output_path, fallback_text=text, write_cache=True)
+        except Exception:
+            pass
+        print(f"  [TTS][timing] Deepgram 24kHz WAV={(time.perf_counter() - _t0) * 1000:.0f}ms")
         return filename
     except Exception as e:
         log.error(f"Dynamic TTS failed for text '{text}': {e}")

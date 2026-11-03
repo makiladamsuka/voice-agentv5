@@ -153,6 +153,8 @@ class SurroundingsEmotionController:
         """Return mapped emotion when a surroundings change is due, else None."""
         if face_detected:
             self.last_seen_face_time = now
+            if self.current_emotion in ("idle", "sleepy", "sad", "bored"):
+                self.next_emotion_change_time = 0.0
 
         person_present = (now - self.last_seen_face_time) <= self.cfg.no_face_grace_sec
         if wander_mode and not person_present:

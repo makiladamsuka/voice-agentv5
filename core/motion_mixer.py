@@ -49,6 +49,7 @@ class MotionMixer:
         self._current_weight = 1.0
         self._last_tick_ts = time.time()
         self._speech_phase = 0.0
+        self._last_deltas: dict[str, float] | None = None
 
     def compute_deltas(self, now: float | None = None) -> dict[str, float]:
         """Compute current motion deltas without writing to Blackboard."""
@@ -125,13 +126,14 @@ class MotionMixer:
 
         if agent_speaking:
             amp = float(state.get("amplitude_fast", 0.0) or 0.0)
+            effective_amp = max(abs(amp), 0.28)
             # Syllable cadence oscillation (~4.5 Hz conversational pacing)
             self._speech_phase = (self._speech_phase + dt * 4.5 * 2.0 * math.pi) % (2.0 * math.pi)
             
             # Subtly dip tilt on emphasis (human nodding gesture while speaking)
-            wobble_tilt = -abs(amp) * self.speech_wobble_gain * (0.6 + 0.4 * math.sin(self._speech_phase))
+            wobble_tilt = -effective_amp * self.speech_wobble_gain * (0.6 + 0.4 * math.sin(self._speech_phase))
             # Micro-pan accent
-            wobble_pan = math.sin(self._speech_phase * 0.5) * amp * 0.8
+            wobble_pan = math.sin(self._speech_phase * 0.5) * effective_amp * 0.8
 
         return {
             "breathing_delta_tilt": delta_tilt,
@@ -145,12 +147,13 @@ class MotionMixer:
     def tick(self, now: float | None = None) -> dict[str, float]:
         """Compute deltas and commit them atomically to Blackboard."""
         deltas = self.compute_deltas(now)
+        self._last_deltas = deltas
         self.bb.write(**deltas)
         return deltas
 
     def get_blended_pose(self, commanded_pan: float, commanded_tilt: float) -> tuple[float, float]:
         """Add active Layer 0 and Layer 1 offsets to commanded head servo targets."""
-        deltas = self.compute_deltas()
+        deltas = self._last_deltas if self._last_deltas is not None else self.compute_deltas()
         total_delta_pan = deltas["breathing_delta_pan"] + deltas["speech_wobble_delta_pan"]
         total_delta_tilt = deltas["breathing_delta_tilt"] + deltas["speech_wobble_delta_tilt"]
         return commanded_pan + total_delta_pan, commanded_tilt + total_delta_tilt

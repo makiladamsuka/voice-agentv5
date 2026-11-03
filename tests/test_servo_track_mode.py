@@ -664,3 +664,55 @@ def test_face_high_in_frame_uses_full_upward_tilt_travel():
     # Head must continue tilting up past the old 50° clamp toward 30°
     assert loop._tilt < 42.0
     assert loop._tilt >= 30.0
+
+
+def test_face_happy_emotion_triggers_synchronized_upward_head_perk():
+    """When face is detected and eyes transition to happy, head performs a synchronized upward tilt perk."""
+    bb = Blackboard()
+    bb.write(
+        running=True,
+        face_detected=True,
+        body_detected=False,
+        face_norm_x=0.0,
+        face_norm_y=0.0,
+        face_count=1,
+        track_kind="face",
+        face_candidates=[],
+        emotion="idle",
+    )
+    loop = ServoLoop(bb)
+    loop._mode = "track"
+    loop._tilt = loop.tilt_center  # 70.0
+
+    # Tick 1: seed idle state
+    loop._tick_track(now=100.0, dt=0.02, effective_tilt_center=loop.tilt_center)
+    assert abs(loop._tilt - loop.tilt_center) < 0.1
+
+    # Eyes switch to happy -> head must perk UP (decreasing servo angle toward 30° since tilt_sign=-1)
+    bb.write(emotion="happy")
+    for i in range(1, 13):
+        loop._tick_track(now=100.0 + i * 0.02, dt=0.02, effective_tilt_center=loop.tilt_center)
+
+    # At peak (~0.24s), tilt has lifted up by ~4.0-4.5 deg (servo angle ~65.5)
+    assert loop._tilt < loop.tilt_center - 3.5
+
+
+def test_speaking_drift_anchors_to_current_tilt_and_does_expressive_head_nods():
+    """Speaking while looking up at a standing person (tilt=45°) must stay anchored at 45° and nod expressively."""
+    bb = Blackboard()
+    bb.write(running=True, face_detected=True, amplitude_fast=0.6)
+    loop = ServoLoop(bb)
+    loop._pan = 85.0
+    loop._tilt = 45.0  # looking up 25° at standing user
+    loop._speaking_drift_active = False
+
+    tilts = []
+    for i in range(30):
+        loop._tick_speaking_drift(now=200.0 + i * 0.04, dt=0.04)
+        tilts.append(loop._tilt)
+
+    # Must stay anchored near 45° (never dropping back to tilt_center=70°)
+    assert abs(loop._speaking_drift_tilt_start - 45.0) < 0.01
+    assert max(tilts) < 52.0
+    # Must exhibit expressive speaking head motion (range > 1.0 deg)
+    assert (max(tilts) - min(tilts)) > 1.0

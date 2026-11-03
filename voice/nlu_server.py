@@ -547,16 +547,19 @@ async def _monitor_face_greetings_loop() -> None:
                         audio_url = f"/assets/audio_cache/{audio_file}"
                         audio_path = APP_DIR / "assets" / "audio_cache" / audio_file
 
+                        greet_uid = ""
                         duration_ms = 0
                         sync = get_speech_sync_service()
                         if sync is not None:
-                            _, duration_ms = await loop.run_in_executor(
+                            greet_uid, duration_ms = await loop.run_in_executor(
                                 None,
                                 lambda: sync.arm_utterance(reply_text=text, audio_path=str(audio_path)),
                             )
 
                         if _bb is not None:
-                            _bb.write(conv_state="speaking", agent_speaking=True)
+                            _bb.write(conv_state="speaking", agent_speaking=True, conv_emotion="happy")
+                        if sync is not None and greet_uid:
+                            sync.begin_playback(greet_uid)
                         # Let EyeRenderer (24 Mbaud SPI) & FaceTracker pause before audio DMA starts
                         await asyncio.sleep(0.08)
 
@@ -575,6 +578,9 @@ async def _monitor_face_greetings_loop() -> None:
                         clear_delay = max(2.2, (duration_ms / 1000.0) + 0.6 if duration_ms else word_count * 0.35 + 0.8)
                         await asyncio.sleep(clear_delay)
                         if _bb is not None:
+                            if sync is not None:
+                                sync.end_playback()
+                            clear_conv_emotion(_bb)
                             _bb.write(conv_state="waiting", agent_speaking=False)
         except Exception as exc:
             log.warning(f"[NLU] Background face greeting loop error: {exc}")

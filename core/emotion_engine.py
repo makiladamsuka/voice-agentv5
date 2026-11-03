@@ -121,6 +121,7 @@ class EmotionEngine:
             state = self.bb.read(
                 "manual_emotion",
                 "voice_session_active",
+                "agent_speaking",
                 "user_speaking",
                 "conv_state",
                 "conv_emotion",
@@ -151,7 +152,7 @@ class EmotionEngine:
             conv_state = state.get("conv_state", "idle")
             conv_emotion = state.get("conv_emotion")
 
-            if voice_active:
+            if voice_active or state.get("agent_speaking", False):
                 # Priority 1: Server NLU Processing (Thinking)
                 if conv_state == "thinking":
                     self._vad_start_ts = 0.0

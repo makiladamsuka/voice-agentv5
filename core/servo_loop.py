@@ -379,35 +379,143 @@ class ServoLoop:
         self._prev_track_kind: str = "none"
         self._face_switch_soft_until: float = 0.0
 
-        # ── Speaking head drift ───────────────────────────────────────────────
-        # While agent_speaking, freeze tracking and slowly drift pan ±5° from
-        # the center position — like a person naturally shifting gaze while talking.
+        # ── Speaking head drift & Reachy-style cadence ────────────────────────
+        # While agent_speaking, anchor to current user face pose (both pan & tilt)
+        # and layer expressive phrase lifts, conversational nods, and syllable cadence.
         self._speaking_drift_active = False
         self._speaking_audience_idx: int = 0
         self._speaking_drift_pan_start: float = self.pan_center   # pan when speaking began
+        self._speaking_drift_tilt_start: float = self.tilt_center # tilt when speaking began
         self._speaking_drift_pan_target: float = self.pan_center  # current pan drift goal
         self._speaking_drift_tilt_target: float = self.tilt_center  # current tilt drift goal
         self._speaking_drift_hold_until: float = 0.0               # hold current target until
+        self._speaking_cadence_phase: float = 0.0
+        self._speaking_phrase_step: int = 0
         # Config (can expose to yaml later)
-        self._speaking_drift_pan_amp_deg: float = 5.0      # max pan offset from center
-        self._speaking_drift_tilt_down_deg: float = 4.0    # max tilt downward from center
-        self._speaking_drift_hold_min: float = 1.2    # min seconds on each target
-        self._speaking_drift_hold_max: float = 3.0    # max seconds on each target
-        self._speaking_drift_smooth_hz: float = 1.2   # how slowly the head glides
+        self._speaking_drift_pan_amp_deg: float = 4.5      # max pan offset from face anchor
+        self._speaking_drift_tilt_up_deg: float = 3.8      # max upward lift from face anchor
+        self._speaking_drift_tilt_down_deg: float = 2.6    # max downward nod from face anchor
+        self._speaking_drift_hold_min: float = 0.9    # min seconds on each phrase posture
+        self._speaking_drift_hold_max: float = 1.8    # max seconds on each phrase posture
+        self._speaking_drift_smooth_hz: float = 2.6   # responsive organic glide
+
+        # ── Synchronized Expressive Head Perk (Face Lock + Happy/Curious Eyes) ─
+        self._perk_prev_emotion: Optional[str] = None
+        self._perk_prev_face_detected: Optional[bool] = None
+        self._perk_start_ts: float = 0.0
+        self._perk_duration_sec: float = 0.55
+        self._perk_tilt_cmd: float = 0.0
+        self._perk_pan_cmd: float = 0.0
+        self._perk_prev_env: float = 0.0
+        self._perk_last_trigger_ts: float = -10.0
+
+    def _trigger_expressive_perk(
+        self,
+        now: float,
+        *,
+        tilt_up_mech_deg: float,
+        pan_cock_mech_deg: float = 0.0,
+        duration_sec: float = 0.55,
+    ) -> None:
+        """Start a Reachy-style synchronized head tilt-up perk / micro-gesture."""
+        if (now - self._perk_last_trigger_ts) < 1.8:
+            return
+        self._perk_start_ts = now
+        self._perk_duration_sec = max(0.2, float(duration_sec))
+        self._perk_tilt_cmd = self.tilt_sign * float(tilt_up_mech_deg)
+        self._perk_pan_cmd = self.pan_sign * float(pan_cock_mech_deg)
+        self._perk_prev_env = 0.0
+        self._perk_last_trigger_ts = now
+
+    def _step_expressive_perk(
+        self,
+        now: float,
+        face_detected: bool,
+        curr_emotion: str,
+    ) -> tuple[float, float]:
+        """Return incremental (delta_pan_cmd, delta_tilt_cmd) for synchronized eye+head perks."""
+        if self._perk_prev_face_detected is None:
+            self._perk_prev_face_detected = bool(face_detected)
+            self._perk_prev_emotion = str(curr_emotion or "idle")
+        else:
+            prev_face = self._perk_prev_face_detected
+            prev_emo = self._perk_prev_emotion
+            self._perk_prev_face_detected = bool(face_detected)
+            self._perk_prev_emotion = str(curr_emotion or "idle")
+
+            # 1) New face lock OR transition into happy/excited/surprised -> crisp upward head perk
+            if (not prev_face and face_detected) or (
+                curr_emotion != prev_emo
+                and curr_emotion in ("happy", "excited", "cheerful", "warm", "amused", "proud", "surprised")
+            ):
+                self._trigger_expressive_perk(
+                    now,
+                    tilt_up_mech_deg=4.5,
+                    pan_cock_mech_deg=0.0,
+                    duration_sec=0.55,
+                )
+            # 2) Curious emotion -> upward perk + slight inquisitive head cock
+            elif curr_emotion != prev_emo and curr_emotion in ("curious", "curious_intense"):
+                cock_dir = 1.0 if random.random() < 0.5 else -1.0
+                self._trigger_expressive_perk(
+                    now,
+                    tilt_up_mech_deg=3.5,
+                    pan_cock_mech_deg=2.8 * cock_dir,
+                    duration_sec=0.65,
+                )
+            # 3) Thinking / remembering -> upward pondering lift + side glance
+            elif curr_emotion != prev_emo and curr_emotion in ("thinking", "concentrating", "remembering"):
+                glance_dir = 1.0 if random.random() < 0.5 else -1.0
+                self._trigger_expressive_perk(
+                    now,
+                    tilt_up_mech_deg=3.8,
+                    pan_cock_mech_deg=3.8 * glance_dir,
+                    duration_sec=0.80,
+                )
+
+        if self._perk_start_ts <= 0.0:
+            return 0.0, 0.0
+
+        elapsed = now - self._perk_start_ts
+        if elapsed < 0.0 or elapsed > self._perk_duration_sec:
+            self._perk_start_ts = 0.0
+            self._perk_prev_env = 0.0
+            return 0.0, 0.0
+
+        u = clamp(elapsed / self._perk_duration_sec, 0.0, 1.0)
+        if u <= 0.45:
+            # Smooth minimum-jerk rise to peak upward tilt at 45% of gesture
+            r = u / 0.45
+            mj = 10.0 * (r**3) - 15.0 * (r**4) + 6.0 * (r**5)
+            env = mj
+        else:
+            # Settle 65% back toward neutral, leaving a +35% attentive head lift
+            r = (u - 0.45) / 0.55
+            mj = 10.0 * (r**3) - 15.0 * (r**4) + 6.0 * (r**5)
+            env = 1.0 - 0.65 * mj
+
+        delta_env = env - self._perk_prev_env
+        self._perk_prev_env = env
+        return delta_env * self._perk_pan_cmd, delta_env * self._perk_tilt_cmd
 
     def _tick_speaking_drift(self, now: float, dt: float) -> None:
-        """Slowly drift pan while agent is speaking, or sweep gaze across a group.
+        """Reachy-style expressive head motion while speaking.
 
-        When 2+ faces were cached in face_candidates before vision paused for TTS,
-        smoothly alternates gaze across the listeners' 1:1 pan positions (inclusive
-        group eye contact). Otherwise, drifts ±5° around the speaking start pose.
-        Called only when conv_state == 'speaking'.
+        Anchors both pan AND tilt to the current user face pose (never dropping back
+        to horizontal tilt_center when looking up at a standing person), and layers:
+          1. Phrase-level upward head lifts & affirmative nods every 0.9-1.8s.
+          2. Audience gaze sharing when 2+ faces are visible.
+          3. Syllable-synced 4.2 Hz micro-nods driven by amplitude_fast.
         """
-        sp_state = self.bb.read("face_candidates", "face_count")
+        sp_state = self.bb.read(
+            "face_candidates", "face_count", "face_detected",
+            "face_norm_x", "face_norm_y", "amplitude_fast",
+        )
         candidates = sp_state.get("face_candidates") or []
+        amp_fast = float(sp_state.get("amplitude_fast", 0.0) or 0.0)
 
-        # On first entry, anchor to wherever the head currently is (clamped
-        # within ±drift_amp of physical limits so we don't snap to pan_center).
+        # On first entry, anchor both pan AND tilt to wherever the head currently is
+        # (so looking up at a user's face stays aimed at their face while talking!).
         if not self._speaking_drift_active:
             pan_amp = self._speaking_drift_pan_amp_deg
             self._speaking_drift_pan_start = clamp(
@@ -415,35 +523,60 @@ class ServoLoop:
                 self.pan_min + pan_amp,
                 self.pan_max - pan_amp,
             )
-            self._speaking_drift_pan_target = self._speaking_drift_pan_start
-            # Start with a slight downward tilt
-            self._speaking_drift_tilt_target = self.tilt_center + random.uniform(0.5, 2.0)
-            self._speaking_drift_hold_until = now + random.uniform(
-                self._speaking_drift_hold_min, self._speaking_drift_hold_max
+            self._speaking_drift_tilt_start = clamp(
+                self._tilt,
+                self.tilt_min + 4.0,
+                self.tilt_max - 4.0,
             )
+            self._speaking_drift_pan_target = self._speaking_drift_pan_start
+            # Start speech with an expressive upward head perk (+2.8° mechanical up)
+            self._speaking_drift_tilt_target = clamp(
+                self._speaking_drift_tilt_start + self.tilt_sign * 2.8,
+                self.tilt_min,
+                self.tilt_max,
+            )
+            self._speaking_drift_hold_until = now + random.uniform(0.65, 1.15)
             self._speaking_audience_idx = 0
+            self._speaking_phrase_step = 0
+            self._speaking_cadence_phase = 0.0
             self._speaking_drift_active = True
 
-        # Pick a new target when the hold timer expires
+        # If a face is actively visible while speaking, gently keep the anchor aligned with it
+        if sp_state.get("face_detected", False):
+            nx = float(sp_state.get("face_norm_x", 0.0) or 0.0)
+            ny = float(sp_state.get("face_norm_y", 0.0) or 0.0)
+            if abs(nx) > 0.12:
+                self._speaking_drift_pan_start = clamp(
+                    self._speaking_drift_pan_start + nx * 12.0 * self.pan_track_sign * dt,
+                    self.pan_min + 4.0,
+                    self.pan_max - 4.0,
+                )
+            if abs(ny) > 0.12:
+                self._speaking_drift_tilt_start = clamp(
+                    self._speaking_drift_tilt_start + ny * 10.0 * self.tilt_track_sign * dt,
+                    self.tilt_min + 4.0,
+                    self.tilt_max - 4.0,
+                )
+
+        # Pick a new phrase posture when the hold timer expires
         if now >= self._speaking_drift_hold_until:
+            self._speaking_phrase_step += 1
             if len(candidates) >= 2:
                 pool_len = min(len(candidates), 4)
                 self._speaking_audience_idx = (self._speaking_audience_idx + 1) % pool_len
                 cand = candidates[self._speaking_audience_idx]
                 cand_pan_cmd = float(cand.get("pan_cmd", self._speaking_drift_pan_start))
                 cand_norm_x = float(cand.get("norm_x", 0.0))
-                # 1:1 direct pan command degrees (half-HFOV = 31.0 deg, 0.75 natural gaze factor)
                 target_pan = cand_pan_cmd + cand_norm_x * 31.0 * self.pan_track_sign * 0.75
                 self._speaking_drift_pan_target = clamp(target_pan, self.pan_min, self.pan_max)
-                hold_min, hold_max = 1.6, 2.8
+                hold_min, hold_max = 1.2, 2.2
             else:
                 pan_amp = self._speaking_drift_pan_amp_deg
-                # Pick a new pan target on the opposite side from anchor to ensure movement
                 current_pan_offset = self._pan - self._speaking_drift_pan_start
                 if current_pan_offset >= 0:
-                    new_pan_offset = random.uniform(-pan_amp, -pan_amp * 0.3)
+                    new_pan_offset = random.uniform(-pan_amp, -pan_amp * 0.35)
                 else:
-                    new_pan_offset = random.uniform(pan_amp * 0.3, pan_amp)
+                    new_pan_offset = random.uniform(pan_amp * 0.35, pan_amp)
                 self._speaking_drift_pan_target = clamp(
                     self._speaking_drift_pan_start + new_pan_offset,
                     self.pan_min,
@@ -452,35 +585,49 @@ class ServoLoop:
                 hold_min = self._speaking_drift_hold_min
                 hold_max = self._speaking_drift_hold_max
 
-            # Tilt: vary between center and slightly downward (thinking/introspective look)
-            # 70% chance slight down, 30% chance back to center
-            if random.random() < 0.7:
-                new_tilt_offset = random.uniform(1.0, self._speaking_drift_tilt_down_deg)
+            # Tilt phrase gesture around user's face tilt (_speaking_drift_tilt_start):
+            # Alternate between upward expressive lift (+mech up) and warm nod (-mech down)
+            if self._speaking_phrase_step % 2 == 1:
+                mech_tilt_offset = random.uniform(1.6, self._speaking_drift_tilt_up_deg)
             else:
-                new_tilt_offset = random.uniform(-0.5, 0.5)  # near center
+                mech_tilt_offset = -random.uniform(1.0, self._speaking_drift_tilt_down_deg)
             self._speaking_drift_tilt_target = clamp(
-                self.tilt_center + new_tilt_offset,
+                self._speaking_drift_tilt_start + self.tilt_sign * mech_tilt_offset,
                 self.tilt_min,
                 self.tilt_max,
             )
 
             self._speaking_drift_hold_until = now + random.uniform(hold_min, hold_max)
 
-        # Glide slowly toward target
+        # Syllable-synced micro-cadence (4.2 Hz nod + subtle pan accent)
+        effective_amp = max(abs(amp_fast), 0.28)
+        self._speaking_cadence_phase = (
+            self._speaking_cadence_phase + dt * 4.2 * 2.0 * math.pi
+        ) % (2.0 * math.pi)
+        nod_wave = math.sin(self._speaking_cadence_phase) * (2.0 * effective_amp)
+        pan_wave = math.sin(self._speaking_cadence_phase * 0.5) * (0.9 * effective_amp)
+
+        pan_goal = clamp(self._speaking_drift_pan_target + pan_wave, self.pan_min, self.pan_max)
+        tilt_goal = clamp(
+            self._speaking_drift_tilt_target + self.tilt_sign * nod_wave,
+            self.tilt_min,
+            self.tilt_max,
+        )
+
+        # Glide smoothly toward target + syllable cadence
         self._pan = smooth_toward(
             self._pan,
-            self._speaking_drift_pan_target,
+            pan_goal,
             dt,
             smooth_hz=self._speaking_drift_smooth_hz,
             lo=self.pan_min,
             hi=self.pan_max,
         )
-        # Hold tilt at center while speaking
         self._tilt = smooth_toward(
             self._tilt,
-            self._speaking_drift_tilt_target,
+            tilt_goal,
             dt,
-            smooth_hz=self._speaking_drift_smooth_hz * 1.3,
+            smooth_hz=self._speaking_drift_smooth_hz * 1.4,
             lo=self.tilt_min,
             hi=self.tilt_max,
         )
@@ -1070,6 +1217,13 @@ class ServoLoop:
             max_step=tilt_max_step,
         )
 
+        # ── Synchronized Expressive Head Perk (Face Lock + Happy/Curious Eyes) ──
+        perk_dpan, perk_dtilt = self._step_expressive_perk(now, bool(face_detected), str(curr_emotion or "idle"))
+        if abs(perk_dpan) > 1e-4:
+            self._pan = clamp(self._pan + perk_dpan, self.pan_min, self.pan_max)
+        if abs(perk_dtilt) > 1e-4:
+            self._tilt = clamp(self._tilt + perk_dtilt, self.tilt_min, self.tilt_max)
+
         return "track"
 
     def _tick_prox_investigate(self, now: float, dt: float, effective_tilt_center: float) -> bool:
@@ -1394,8 +1548,9 @@ class ServoLoop:
             base_only_yaw = vision.get("base_world_yaw_deg", 0.0) - float(vision.get("head_yaw_on_body_deg", 0.0) or 0.0)
             camera_world_yaw = base_only_yaw + self._pan_mech_offset()
 
-            # ── Speaking drift: freeze tracking, drift head naturally while talking ──
-            agent_speaking = self.bb.read("conv_state")["conv_state"] == "speaking"
+            # ── Speaking drift: expressive head motion while talking (including greetings) ──
+            sp_st = self.bb.read("conv_state", "agent_speaking")
+            agent_speaking = sp_st["conv_state"] == "speaking" or bool(sp_st["agent_speaking"])
             if agent_speaking:
                 self._tick_speaking_drift(now, dt)
                 self.bb.write(

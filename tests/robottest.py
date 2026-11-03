@@ -409,7 +409,7 @@ def main() -> int:
         elif args.normal_tilt:
             tilt_sign_override = 1.0
 
-        print("\n=== Head calibrated: Tilt 50.0° (UP) to 90.0° (DOWN), Center 70.0° ===")
+        print("\n=== Head calibrated: Tilt 30.0° (UP) to 90.0° (DOWN), Center 70.0° ===")
         print("Tip: hold M/N for manual base spin; use Z to zero encoder; press +/- for step size; press I to toggle invert.")
         run_interactive(link, head_step=args.head_step, tilt_sign_override=tilt_sign_override)
     except KeyboardInterrupt:

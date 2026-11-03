@@ -207,14 +207,14 @@ servo:
   baud: 115200
   pan_min: 25.0
   pan_max: 150.0
-  tilt_min: 50.0
+  tilt_min: 30.0
   tilt_max: 90.0
   pan_center: 100.0
   tilt_center: 70.0  # mechanical upright (0°)
   # 1 command unit = 1 physical servo degree (firmware bug fixed)
   tilt_mechanical_scale: 1.0   # mech° = (tilt_cmd - tilt_center) * scale
   tilt_max_mechanical_deg: 20.0
-  tilt_min_mechanical_deg: -20.0
+  tilt_min_mechanical_deg: -40.0
   pan_mech_left_deg: -40.0
   pan_mech_right_deg: 40.0
   pan_track_range: 26.0
@@ -227,7 +227,7 @@ servo:
   pan_max_step_deg: 0.75 # hard cap per loop tick (prevents overshoot on fast moves)
   tilt_max_step_deg: 1.8 # max tilt command change per track tick
   tilt_track_slew_dps: 30.0       # max tilt speed (cmd deg/s) at full PID correction
-  tilt_track_range: 18.0
+  tilt_track_range: 28.0
   pan_error_full_scale: 0.42
   pan_track_min_gain: 0.32
   tilt_error_full_scale: 0.35
@@ -268,7 +268,7 @@ servo:
   wander_jump_chance: 0.0     # no sudden jumps
   wander_arrival_deg: 1.2
   wander_tilt_step_max_deg: 5.0
-  wander_tilt_max_up_deg: 8.0
+  wander_tilt_max_up_deg: 14.0
   wander_tilt_max_down_deg: 12.0
   wander_hold_min_sec: 1.0
   wander_hold_max_sec: 3.0

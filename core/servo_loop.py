@@ -375,11 +375,15 @@ class ServoLoop:
         self._forward_return_active = False
         self._last_tune_seq = 0
         self._was_hand_track = False
+        self._prev_active_face_index: int = -1
+        self._prev_track_kind: str = "none"
+        self._face_switch_soft_until: float = 0.0
 
         # ── Speaking head drift ───────────────────────────────────────────────
         # While agent_speaking, freeze tracking and slowly drift pan ±5° from
         # the center position — like a person naturally shifting gaze while talking.
         self._speaking_drift_active = False
+        self._speaking_audience_idx: int = 0
         self._speaking_drift_pan_start: float = self.pan_center   # pan when speaking began
         self._speaking_drift_pan_target: float = self.pan_center  # current pan drift goal
         self._speaking_drift_tilt_target: float = self.tilt_center  # current tilt drift goal
@@ -392,12 +396,16 @@ class ServoLoop:
         self._speaking_drift_smooth_hz: float = 1.2   # how slowly the head glides
 
     def _tick_speaking_drift(self, now: float, dt: float) -> None:
-        """Slowly drift pan ±5° from center while agent is speaking.
+        """Slowly drift pan while agent is speaking, or sweep gaze across a group.
 
-        Gives the head a natural 'thinking aloud' micro-movement instead of
-        freezing stiff. Tilt is held at tilt_center throughout.
+        When 2+ faces were cached in face_candidates before vision paused for TTS,
+        smoothly alternates gaze across the listeners' 1:1 pan positions (inclusive
+        group eye contact). Otherwise, drifts ±5° around the speaking start pose.
         Called only when conv_state == 'speaking'.
         """
+        sp_state = self.bb.read("face_candidates", "face_count")
+        candidates = sp_state.get("face_candidates") or []
+
         # On first entry, anchor to wherever the head currently is (clamped
         # within ±drift_amp of physical limits so we don't snap to pan_center).
         if not self._speaking_drift_active:
@@ -413,23 +421,37 @@ class ServoLoop:
             self._speaking_drift_hold_until = now + random.uniform(
                 self._speaking_drift_hold_min, self._speaking_drift_hold_max
             )
+            self._speaking_audience_idx = 0
             self._speaking_drift_active = True
 
-        # Pick a new random target when the hold timer expires
+        # Pick a new target when the hold timer expires
         if now >= self._speaking_drift_hold_until:
-            pan_amp = self._speaking_drift_pan_amp_deg
-            # Pick a new pan target on the opposite side from anchor to ensure movement
-            current_pan_offset = self._pan - self._speaking_drift_pan_start
-            if current_pan_offset >= 0:
-                new_pan_offset = random.uniform(-pan_amp, -pan_amp * 0.3)
+            if len(candidates) >= 2:
+                pool_len = min(len(candidates), 4)
+                self._speaking_audience_idx = (self._speaking_audience_idx + 1) % pool_len
+                cand = candidates[self._speaking_audience_idx]
+                cand_pan_cmd = float(cand.get("pan_cmd", self._speaking_drift_pan_start))
+                cand_norm_x = float(cand.get("norm_x", 0.0))
+                # 1:1 direct pan command degrees (half-HFOV = 31.0 deg, 0.75 natural gaze factor)
+                target_pan = cand_pan_cmd + cand_norm_x * 31.0 * self.pan_track_sign * 0.75
+                self._speaking_drift_pan_target = clamp(target_pan, self.pan_min, self.pan_max)
+                hold_min, hold_max = 1.6, 2.8
             else:
-                new_pan_offset = random.uniform(pan_amp * 0.3, pan_amp)
-            self._speaking_drift_pan_target = clamp(
-                self._speaking_drift_pan_start + new_pan_offset,
-                self.pan_min,
-                self.pan_max,
-            )
-            
+                pan_amp = self._speaking_drift_pan_amp_deg
+                # Pick a new pan target on the opposite side from anchor to ensure movement
+                current_pan_offset = self._pan - self._speaking_drift_pan_start
+                if current_pan_offset >= 0:
+                    new_pan_offset = random.uniform(-pan_amp, -pan_amp * 0.3)
+                else:
+                    new_pan_offset = random.uniform(pan_amp * 0.3, pan_amp)
+                self._speaking_drift_pan_target = clamp(
+                    self._speaking_drift_pan_start + new_pan_offset,
+                    self.pan_min,
+                    self.pan_max,
+                )
+                hold_min = self._speaking_drift_hold_min
+                hold_max = self._speaking_drift_hold_max
+
             # Tilt: vary between center and slightly downward (thinking/introspective look)
             # 70% chance slight down, 30% chance back to center
             if random.random() < 0.7:
@@ -442,9 +464,7 @@ class ServoLoop:
                 self.tilt_max,
             )
 
-            self._speaking_drift_hold_until = now + random.uniform(
-                self._speaking_drift_hold_min, self._speaking_drift_hold_max
-            )
+            self._speaking_drift_hold_until = now + random.uniform(hold_min, hold_max)
 
         # Glide slowly toward target
         self._pan = smooth_toward(
@@ -740,7 +760,7 @@ class ServoLoop:
 
     def _tilt_track_travel(self, norm_y: float) -> float:
         """Servo command span available toward centering face vertically."""
-        if norm_y > 0.0:
+        if norm_y * self.tilt_track_sign < 0.0:
             return max(0.0, self.tilt_center - self.tilt_min)
         return max(0.0, self.tilt_max - self.tilt_center)
 
@@ -757,7 +777,7 @@ class ServoLoop:
     def _tick_track(self, now: float, dt: float, effective_tilt_center: float) -> str:
         state = self.bb.read(
             "face_detected", "face_norm_x", "face_norm_y",
-            "face_count", "track_kind", "face_candidates",
+            "face_count", "track_kind", "face_candidates", "active_face_index",
             "body_detected",
             "hand_detected", "hand_norm_x", "hand_norm_y",
             "skin_blob_detected", "skin_blob_norm_x", "skin_blob_norm_y",
@@ -769,6 +789,34 @@ class ServoLoop:
         norm_y = state["face_norm_y"]
         track_kind = state["track_kind"]
         body_detected = state["body_detected"]
+        active_face_index = int(state.get("active_face_index", -1))
+
+        # Detect multi-face attention switches (e.g. face 0 -> face 1 or -> "center")
+        # so the sudden jump in norm_x does not trigger a false velocity spike.
+        target_switched = (
+            face_detected
+            and self._prev_track_kind in ("face", "multi", "center")
+            and track_kind in ("face", "multi", "center")
+            and (
+                (
+                    active_face_index >= 0
+                    and self._prev_active_face_index >= 0
+                    and active_face_index != self._prev_active_face_index
+                )
+                or (track_kind == "center") != (self._prev_track_kind == "center")
+            )
+        )
+        self._prev_active_face_index = active_face_index
+        self._prev_track_kind = track_kind
+        if target_switched:
+            self._face_switch_soft_until = now + 0.35
+            self._pan_pid.soften(0.30)
+            self._tilt_pid.soften(0.30)
+            self._prev_face_raw_x = norm_x
+            self._prev_face_raw_y = norm_y
+            self._face_vel_x = 0.0
+            self._face_vel_y = 0.0
+        in_face_switch_glide = now < self._face_switch_soft_until
         
         # ── Hand / Blob fallback selection ──
         if not face_detected and not body_detected:
@@ -832,13 +880,19 @@ class ServoLoop:
         self._last_vision_norm_y = norm_y
 
         if is_new_frame:
+            if in_face_switch_glide:
+                self._prev_face_raw_x = norm_x
+                self._prev_face_raw_y = norm_y
+                self._face_vel_x = 0.0
+                self._face_vel_y = 0.0
+            else:
+                self._face_vel_x = (norm_x - self._prev_face_raw_x) / max(dt, 0.001)
+                self._face_vel_y = (norm_y - self._prev_face_raw_y) / max(dt, 0.001)
+                self._prev_face_raw_x = norm_x
+                self._prev_face_raw_y = norm_y
+
             self._filtered_norm_x += (norm_x - self._filtered_norm_x) * alpha_x
             self._filtered_norm_y += (norm_y - self._filtered_norm_y) * alpha_y * glide_y_scale
-
-            self._face_vel_x = (norm_x - self._prev_face_raw_x) / max(dt, 0.001)
-            self._face_vel_y = (norm_y - self._prev_face_raw_y) / max(dt, 0.001)
-            self._prev_face_raw_x = norm_x
-            self._prev_face_raw_y = norm_y
             self._prev_face_x = self._filtered_norm_x
             self._prev_face_y = self._filtered_norm_y
 
@@ -850,8 +904,8 @@ class ServoLoop:
                     pan_alpha = min(0.40, pan_alpha + (vel_x - self.hand_vel_boost_threshold) * 0.03)
                     self._pan_pid.soften(0.65)
             else:
-                pan_alpha = self.pan_track_alpha
-                if vel_x > 2.0:
+                pan_alpha = self.pan_track_alpha * (0.65 if in_face_switch_glide else 1.0)
+                if not in_face_switch_glide and vel_x > 2.0:
                     pan_alpha = min(0.58, pan_alpha + (vel_x - 2.0) * 0.05)
                     self._pan_pid.soften(0.55)
 
@@ -891,6 +945,9 @@ class ServoLoop:
                 self.pan_error_full_scale,
                 self.pan_track_min_gain,
             )
+            if in_face_switch_glide:
+                pan_gain *= 0.65
+                smooth_hz *= 0.75
             # Incremental visual servo from CURRENT pan — never re-aim from
             # pan_center. Absolute aim yanked the head toward center whenever
             # wander left the neck aside and a face appeared in that direction.
@@ -1127,7 +1184,13 @@ class ServoLoop:
         if self._tick_prox_investigate(now, dt, effective_tilt_center):
             return "wander"
 
-        state = self.bb.read("last_seen_world_yaw")
+        state = self.bb.read(
+            "last_seen_world_yaw",
+            "prox_zone_center",
+            "prox_approach_active",
+            "prox_approach_zone",
+            "prox_approach_distance",
+        )
         last_yaw = state["last_seen_world_yaw"]
         recently_tracked = (now - max(self._last_face_ts, self._last_body_ts)) < self.no_face_home_sec * 2.0
         exited_at_edge = abs(self._last_exit_norm_x) >= self.lss_edge_norm
@@ -1143,10 +1206,28 @@ class ServoLoop:
             self._lss_start_ts = now
             return "last_seen"
 
+        # Close-ToF upward tilt reflex: when someone is standing close in front
+        # (center ToF occupied or approach < 700mm) with no face in camera frame,
+        # bias tilt UP by 6.0 deg (tilt_sign = -1.0 -> 64 deg) to bring tall adults'
+        # faces into the camera crop.
+        prox_dist = int(state.get("prox_approach_distance", 0) or 0)
+        close_front_tof = bool(state.get("prox_zone_center", False)) or (
+            bool(state.get("prox_approach_active", False))
+            and state.get("prox_approach_zone") == "C"
+            and 0 < prox_dist < 700
+        )
+        wander_tilt_ref = self._wander_tilt_ref(effective_tilt_center)
+        if close_front_tof:
+            wander_tilt_ref = clamp(
+                wander_tilt_ref + self.tilt_sign * 6.0,
+                self.tilt_min,
+                self.tilt_max,
+            )
+
         pan_goal, tilt_goal = self._wander.tick(
             now,
             pan_center=self.pan_center,
-            tilt_center=self._wander_tilt_ref(effective_tilt_center),
+            tilt_center=wander_tilt_ref,
             pan_current=self._pan,
             tilt_current=self._tilt,
             pan_min=self.pan_min,
@@ -1160,8 +1241,12 @@ class ServoLoop:
             hold_max_sec=self.wander_hold_max,
             jump_chance=self.wander_jump_chance,
             arrival_deg=self.wander_arrival,
-            tilt_max_up_deg=self.wander_tilt_max_up,
-            tilt_max_down_deg=self.wander_tilt_max_down,
+            tilt_max_up_deg=(
+                self.wander_tilt_max_down if self.tilt_sign < 0 else self.wander_tilt_max_up
+            ),
+            tilt_max_down_deg=(
+                self.wander_tilt_max_up if self.tilt_sign < 0 else self.wander_tilt_max_down
+            ),
             tilt_step_max_deg=self.wander_tilt_step_max,
             world_yaw_deg=camera_world_yaw_deg,
             pan_sign=self.pan_sign,
@@ -1201,7 +1286,7 @@ class ServoLoop:
         ):
             self._tilt = smooth_toward(
                 self._tilt,
-                effective_tilt_center,
+                wander_tilt_ref if close_front_tof else effective_tilt_center,
                 dt,
                 smooth_hz=self.imu_horizon_smooth,
                 lo=self.tilt_min,

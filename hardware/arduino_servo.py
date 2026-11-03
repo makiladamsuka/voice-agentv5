@@ -220,6 +220,11 @@ class ArduinoServoLink:
                     self._error_logged = False
                     self._drain_rx()
                     print(f"ESP32 head servo ready on {port}")
+                    # Unlock firmware runtime pan/tilt clamps so config.yaml limits
+                    # (e.g. extended upward tilt < 50°) are accepted without reflashing.
+                    self.send_line("U", drain_after=False)
+                    time.sleep(0.03)
+                    self._drain_rx()
                     return True
                 print(f"No READY from ESP32 on {port}")
                 self.close(skip_home=True)

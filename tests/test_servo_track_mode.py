@@ -636,3 +636,31 @@ def test_multi_tick_between_camera_frames_subtracts_ego_motion():
     assert total_pan_moved > 1.0
     assert total_pan_moved < 6.0
     assert loop._pan_track_norm < 0.35
+
+
+def test_face_high_in_frame_uses_full_upward_tilt_travel():
+    """With reversed servo mount (tilt_track_sign=1.0, tilt_min=30, tilt_center=70, tilt_max=90),
+    a high face (norm_y < 0) steps toward tilt_min (30°) and uses the full 40° upward span."""
+    bb = Blackboard()
+    bb.write(
+        running=True,
+        face_detected=True,
+        body_detected=False,
+        face_norm_x=0.0,
+        face_norm_y=-0.65,
+        face_count=1,
+        track_kind="face",
+        face_candidates=[],
+    )
+    loop = ServoLoop(bb)
+    loop._mode = "track"
+    loop._tilt = 50.0  # already tilted up 20° from 70°
+    loop._tilt_track_norm = -0.65
+
+    assert loop._tilt_track_travel(-0.65) == 40.0  # 70.0 - 30.0
+    for i in range(25):
+        loop._tick_track(now=100.0 + i * 0.02, dt=0.02, effective_tilt_center=loop.tilt_center)
+
+    # Head must continue tilting up past the old 50° clamp toward 30°
+    assert loop._tilt < 42.0
+    assert loop._tilt >= 30.0

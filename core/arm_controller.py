@@ -247,7 +247,8 @@ class ArmController:
         while self.bb.read("running")["running"]:
             t0 = time.time()
             now = time.time()
-            voice_active = self.bb.read("voice_session_active")["voice_session_active"]
+            st_v = self.bb.read("voice_session_active", "agent_speaking")
+            voice_active = st_v["voice_session_active"] or st_v["agent_speaking"]
             hz = self.voice_loop_hz if voice_active else self.loop_hz
             loop_delay = 1.0 / max(1.0, hz)
 

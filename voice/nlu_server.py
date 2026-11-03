@@ -547,12 +547,18 @@ async def _monitor_face_greetings_loop() -> None:
                         audio_url = f"/assets/audio_cache/{audio_file}"
                         audio_path = APP_DIR / "assets" / "audio_cache" / audio_file
 
+                        duration_ms = 0
                         sync = get_speech_sync_service()
                         if sync is not None:
-                            sync.arm_utterance(reply_text=text, audio_path=str(audio_path))
+                            _, duration_ms = await loop.run_in_executor(
+                                None,
+                                lambda: sync.arm_utterance(reply_text=text, audio_path=str(audio_path)),
+                            )
 
                         if _bb is not None:
                             _bb.write(conv_state="speaking", agent_speaking=True)
+                        # Let EyeRenderer (24 Mbaud SPI) & FaceTracker pause before audio DMA starts
+                        await asyncio.sleep(0.08)
 
                         if _greet_ws_clients:
                             payload = json.dumps({"type": "greeting", "text": text, "audio_url": audio_url})
@@ -566,7 +572,7 @@ async def _monitor_face_greetings_loop() -> None:
                             await loop.run_in_executor(None, play_audio, audio_path)
 
                         word_count = len(text.split())
-                        clear_delay = max(1.8, word_count * 0.12 + 0.6)
+                        clear_delay = max(2.2, (duration_ms / 1000.0) + 0.6 if duration_ms else word_count * 0.35 + 0.8)
                         await asyncio.sleep(clear_delay)
                         if _bb is not None:
                             _bb.write(conv_state="waiting", agent_speaking=False)

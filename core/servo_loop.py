@@ -1330,7 +1330,8 @@ class ServoLoop:
     # ── Main loop ──────────────────────────────────────────────────────────────
 
     def _loop_sleep(self) -> None:
-        voice_active = self.bb.read("voice_session_active")["voice_session_active"]
+        st = self.bb.read("voice_session_active", "agent_speaking")
+        voice_active = st["voice_session_active"] or st["agent_speaking"]
         hz = self.voice_loop_hz if voice_active else self.loop_hz
         time.sleep(1.0 / max(1.0, hz))
 

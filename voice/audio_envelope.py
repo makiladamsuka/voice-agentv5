@@ -86,7 +86,7 @@ def _smooth_envelope(raw_values: list[float]) -> tuple[tuple[float, ...], tuple[
 def envelope_from_pcm(pcm: bytes, *, sample_rate: int = _PCM_SAMPLE_RATE) -> AudioEnvelope:
     """Build an envelope from mono s16le PCM."""
     raw: list[float] = []
-    step = _CHUNK_BYTES
+    step = max(2, int(sample_rate * _BYTES_PER_SAMPLE * (_CHUNK_MS / 1000)))
     for offset in range(0, len(pcm), step):
         chunk = pcm[offset : offset + step]
         raw.append(rms_pcm(chunk))

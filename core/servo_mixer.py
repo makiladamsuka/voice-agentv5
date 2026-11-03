@@ -436,7 +436,8 @@ class ServoMixer:
             ).start()
 
         while self.bb.read("running")["running"]:
-            voice_active = self.bb.read("voice_session_active")["voice_session_active"]
+            st_v = self.bb.read("voice_session_active", "agent_speaking")
+            voice_active = st_v["voice_session_active"] or st_v["agent_speaking"]
             loop_delay = 1.0 / (
                 self.voice_loop_hz if voice_active else self.loop_hz
             )
@@ -526,7 +527,8 @@ class ServoMixer:
         """Viz refresh for debug dashboard — skipped when auto_start is off."""
         while self.bb.read("running")["running"]:
             try:
-                voice_active = self.bb.read("voice_session_active")["voice_session_active"]
+                st_v = self.bb.read("voice_session_active", "agent_speaking")
+            voice_active = st_v["voice_session_active"] or st_v["agent_speaking"]
                 hz = self._viz_pose_voice_hz if voice_active else self._viz_pose_hz
                 if hz > 0:
                     self._publish_viz_from_cache()
@@ -556,13 +558,15 @@ class ServoMixer:
 
         m = _PROX_EVENT_RE.match(line)
         if m:
+            dist_mm = int(m.group(3))
             self.bb.write(
                 prox_approach_zone=self._map_prox_zone(m.group(1)),
                 prox_approach_velocity=float(m.group(2)),
-                prox_approach_distance=int(m.group(3)),
+                prox_approach_distance=dist_mm,
                 prox_approach_confidence=int(m.group(4)),
                 prox_approach_active=True,
                 prox_approach_ts=time.time(),
+                tof_too_close_safety=(0 < dist_mm < 320),
             )
             return
 
@@ -582,6 +586,7 @@ class ServoMixer:
                 prox_approach_confidence=0,
                 prox_depart_active=False,
                 prox_depart_zone="",
+                tof_too_close_safety=False,
             )
             return
 
@@ -592,11 +597,13 @@ class ServoMixer:
             zr = m.group(3) == "1"
             if self._prox_swap_lr:
                 zl, zr = zr, zl
+            z_count = int(zl) + int(zc) + int(zr)
             self.bb.write(
                 prox_zone_left=zl,
                 prox_zone_center=zc,
                 prox_zone_right=zr,
-                prox_zone_count=int(zl) + int(zc) + int(zr),
+                prox_zone_count=z_count,
+                tof_surrounded=(z_count >= 2),
             )
 
 

@@ -34,6 +34,7 @@ class Blackboard:
     face_area_ratio: float = 0.0
     face_count: int = 0
     face_candidates: list = None
+    active_face_index: int = -1    # index into face_candidates (-1 = none / center)
     body_detected: bool = False
     track_kind: str = "none"       # "face"|"multi"|"body"|"none"
     stream_frame: Any = None       # latest numpy frame for MJPEG
@@ -148,6 +149,8 @@ class Blackboard:
     prox_zone_center: bool = False
     prox_zone_right: bool = False
     prox_zone_count: int = 0             # how many zones occupied (0-3)
+    tof_surrounded: bool = False         # True when prox_zone_count >= 2 (crowd)
+    tof_too_close_safety: bool = False   # True when approach dist < 320mm (safety hold)
     prox_post_turn_lockout_ts: float = 0.0  # suppress prox turns until this time
     prox_search_active: bool = False
     prox_search_since: float = 0.0
@@ -190,6 +193,9 @@ class Blackboard:
     speech_sync_active: bool = False         # envelope player running
     user_speaking: bool = False              # True when user VAD triggers
     agent_speaking: bool = False             # True when agent TTS is playing
+    user_text: str = ""
+    agent_text: str = ""
+    current_action: dict = None
     local_speaker_active: bool = False       # Pi plays TTS locally — frontend should mute
     local_mic_active: bool = False           # Pi captures mic locally — frontend should not publish mic
 

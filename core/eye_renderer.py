@@ -107,6 +107,8 @@ class BlockyEye:
         self.next_saccade_time = time.time() + random.uniform(1.5, 3.5)
         self.saccade_offset_x = 0.0
         self.saccade_offset_y = 0.0
+        self.gaze_lead_x = 0.0
+        self.gaze_lead_until = 0.0
 
     def start_blink(self, speed_mult=None, blink_speed_min=2.0, blink_speed_max=3.5):
         if self.blink_state == "IDLE":
@@ -177,6 +179,8 @@ class BlockyEye:
 
             tx += self.saccade_offset_x
             ty += self.saccade_offset_y
+            if now < self.gaze_lead_until:
+                tx += self.gaze_lead_x
 
             is_engaged_startle = self.current_emotion == "engaged" and now < self.engaged_startle_until
             if is_engaged_startle:
@@ -361,6 +365,7 @@ class EyeRenderer:
         speak_fps = max(4, min(self.render_fps, 6))
         speak_delay = 1.0 / speak_fps
         current_emotion = "idle"
+        prev_active_face_index = -1
         amp_prev_fast = 0.0
         amp_smoothed = 0.0
         print(f"[EyeRenderer] Target refresh: {self.render_fps} fps (speak={speak_fps} fps)")
@@ -378,6 +383,9 @@ class EyeRenderer:
                 "voice_session_active",
                 "agent_speaking",
                 "conv_state",
+                "face_detected",
+                "face_norm_x",
+                "active_face_index",
             )
             eye_color = normalize_rgb(state.get("eye_color"))
             emotion   = state["emotion"]
@@ -387,7 +395,20 @@ class EyeRenderer:
             da        = amp_smoothed - amp_prev_fast
             amp_prev_fast = amp_smoothed
 
-            talk_active = bool(state.get("voice_session_active")) and (
+            active_face_index = int(state.get("active_face_index", -1))
+            if (
+                state.get("face_detected")
+                and active_face_index >= 0
+                and prev_active_face_index >= 0
+                and active_face_index != prev_active_face_index
+            ):
+                lead_px = max(-6.0, min(6.0, float(state.get("face_norm_x", 0.0) or 0.0) * 6.0))
+                for eye in (left_eye, right_eye):
+                    eye.gaze_lead_x = lead_px
+                    eye.gaze_lead_until = now + 0.35
+            prev_active_face_index = active_face_index
+
+            talk_active = state.get("agent_speaking") or (bool(state.get("voice_session_active")) or True) and (
                 state.get("agent_speaking")
                 or state.get("conv_state") in ("speaking", "nodding")
                 or amp_smoothed > 0.06

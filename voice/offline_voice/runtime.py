@@ -23,7 +23,7 @@ try:
     _os.environ["MKL_NUM_THREADS"] = "1"
     _os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
     import pygame
-    pygame.mixer.init()
+    # Lazy-init pygame.mixer in play_audio only if needed (48kHz / 4096 buffer)
 except ImportError:
     pygame = None
 
@@ -667,12 +667,12 @@ def play_audio(audio_path: Path, block: bool = False) -> bool:
         try:
             if block:
                 subprocess.run(
-                    ["mpv", "--no-video", "--really-quiet", str(audio_path)],
+                    ["mpv", "--no-video", "--really-quiet", "--audio-buffer=0.25", str(audio_path)],
                     check=True
                 )
             else:
                 subprocess.Popen(
-                    ["mpv", "--no-video", "--really-quiet", str(audio_path)],
+                    ["mpv", "--no-video", "--really-quiet", "--audio-buffer=0.25", str(audio_path)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
@@ -702,6 +702,8 @@ def play_audio(audio_path: Path, block: bool = False) -> bool:
     global pygame
     if pygame is not None:
         try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(frequency=48000, size=-16, channels=1, buffer=4096)
             pygame.mixer.music.load(str(audio_path))
             pygame.mixer.music.play()
             if block:

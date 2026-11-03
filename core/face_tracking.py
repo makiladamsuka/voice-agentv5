@@ -248,10 +248,10 @@ class FaceTracker:
         """True while user or agent audio is active — skip camera + YuNet."""
         if not self.vision_pause_on_audio:
             return False
-        if not state.get("voice_session_active"):
-            return False
         if state.get("user_speaking") or state.get("agent_speaking"):
             return True
+        if not state.get("voice_session_active"):
+            return False
         return state.get("conv_state", "idle") in ("listening", "speaking", "nodding")
     
     def _detect_reversals(self, history: list[int]) -> tuple[int, float]:
@@ -284,7 +284,7 @@ class FaceTracker:
         return reversals, amplitude
 
     def _effective_vision_fps(self, state: dict) -> float:
-        voice_active = bool(state.get("voice_session_active"))
+        voice_active = bool(state.get("voice_session_active") or state.get("agent_speaking"))
         if voice_active and self.vision_fps_voice > 0:
             return float(self.vision_fps_voice)
         return float(max(1, self.vision_fps))
@@ -690,6 +690,7 @@ class FaceTracker:
                                 "y": fy,
                                 "w": fw,
                                 "h": fh,
+                                "pan_cmd": cur_pan_cmd,
                                 "landmarks": landmarks if len(landmarks) == 10 else None,
                                 "detect_res": self.detect_res,
                             }
@@ -717,11 +718,19 @@ class FaceTracker:
 
                     face_detected = True
                     self._last_face_area = face_area
-                    self._update_memory(face_norm_x, face_norm_y, "face", now, confidence=self.pm_face_conf)
+                    for idx, cand in enumerate(face_candidates[:4]):
+                        conf = self.pm_face_conf if idx == 0 else self.pm_face_conf * 0.85
+                        self._update_memory(cand["norm_x"], cand["norm_y"], "face", now, confidence=conf)
 
-                    # Update ROI tracking box from active target face
-                    primary_f = selected_face[0] if (kind == "center" and isinstance(selected_face, tuple)) else selected_face
-                    self._roi_box = self._face_box(primary_f)
+                    # Update ROI tracking box as the union of all valid detected faces
+                    # so secondary group members are not cropped out while preserving
+                    # the ~40% YuNet ROI CPU savings and ego-motion shift.
+                    boxes = [self._face_box(vf) for vf in valid]
+                    ux1 = min(b[0] for b in boxes)
+                    uy1 = min(b[1] for b in boxes)
+                    ux2 = max(b[0] + b[2] for b in boxes)
+                    uy2 = max(b[1] + b[3] for b in boxes)
+                    self._roi_box = (ux1, uy1, ux2 - ux1, uy2 - uy1)
                     self._roi_cam_yaw_deg = cur_cam_yaw
                     self._roi_cam_tilt_deg = cur_tilt_mech
                     self._roi_active = True
@@ -960,6 +969,7 @@ class FaceTracker:
                 face_area_ratio=face_area,
                 face_count=face_count,
                 face_candidates=face_candidates,
+                active_face_index=active_face_index,
                 body_detected=body_detected,
                 track_kind=track_kind,
                 hand_detected=hand_detected,

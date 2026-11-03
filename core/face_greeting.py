@@ -37,6 +37,8 @@ class FaceGreetingMonitor:
         self._last_cfg_mtime = 0.0
         self._face_since: float | None = None
         self._greeted_this_visit = False
+        self._greeted_face_count = 0
+        self._crowd_growth_greeted = False
         self._last_greet_ts = 0.0
         self._seq = 0
         self._reload_config()
@@ -69,6 +71,7 @@ class FaceGreetingMonitor:
             state = self.bb.read(
                 "face_detected",
                 "face_area_ratio",
+                "face_count",
                 "body_detected",
                 "agent_speaking",
                 "user_speaking",
@@ -78,6 +81,7 @@ class FaceGreetingMonitor:
                 (state["face_detected"] and float(state["face_area_ratio"]) >= self.min_face_area_ratio)
                 or state["body_detected"]
             )
+            face_count = max(1, int(state.get("face_count", 1) or 1))
 
             if person_visible:
                 if self._face_since is None:
@@ -89,15 +93,37 @@ class FaceGreetingMonitor:
                     and not state["agent_speaking"]
                     and not state["user_speaking"]
                 ):
-                    text = generate_random_face_greeting()
+                    text = generate_random_face_greeting(face_count=face_count)
                     self._seq += 1
                     self.bb.write(face_greeting_seq=self._seq, face_greeting_text=text)
                     self._last_greet_ts = now
                     self._greeted_this_visit = True
-                    print(f"[FaceGreeting] Queued: {text!r}")
+                    self._greeted_face_count = face_count
+                    self._crowd_growth_greeted = face_count >= 3
+                    print(f"[FaceGreeting] Queued (faces={face_count}): {text!r}")
+                elif (
+                    self._greeted_this_visit
+                    and not self._crowd_growth_greeted
+                    and self._greeted_face_count <= 1
+                    and face_count >= 3
+                    and (now - self._last_greet_ts) >= 12.0
+                    and not state["agent_speaking"]
+                    and not state["user_speaking"]
+                ):
+                    text = generate_random_face_greeting(
+                        face_count=face_count,
+                        is_crowd_growth=True,
+                    )
+                    self._seq += 1
+                    self.bb.write(face_greeting_seq=self._seq, face_greeting_text=text)
+                    self._last_greet_ts = now
+                    self._crowd_growth_greeted = True
+                    print(f"[FaceGreeting] Crowd join-in queued (faces={face_count}): {text!r}")
             else:
                 self._face_since = None
                 self._greeted_this_visit = False
+                self._greeted_face_count = 0
+                self._crowd_growth_greeted = False
 
             time.sleep(loop_delay)
 

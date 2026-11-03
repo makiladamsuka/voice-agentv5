@@ -271,6 +271,8 @@ class FaceGreetingArmService:
         self._last_capture_time = 0.0
         self._last_cleanup = time.time()
         self._last_greeting_time: Optional[float] = None
+        self._visit_initial_face_count: int = 0
+        self._visit_crowd_growth_greeted: bool = False
 
         print(
             f"[FaceGreetingArm] Initialized — "
@@ -361,13 +363,16 @@ class FaceGreetingArmService:
 
     # ── Greeting trigger ──────────────────────────────────────────────────────
 
-    def _trigger_greeting(self) -> str:
+    def _trigger_greeting(self, face_count: int = 1, is_crowd_growth: bool = False) -> str:
         pose_name = random.choice(self.hi_poses)
         seq = self.bb.read("arm_greeting_seq").get("arm_greeting_seq", 0)
         
         try:
             from voice.greetings import generate_random_face_greeting
-            text = generate_random_face_greeting()
+            text = generate_random_face_greeting(
+                face_count=face_count,
+                is_crowd_growth=is_crowd_growth,
+            )
             f_seq = self.bb.read("face_greeting_seq").get("face_greeting_seq", 0)
             self.bb.write(
                 arm_greeting_seq=seq + 1,
@@ -375,7 +380,7 @@ class FaceGreetingArmService:
                 face_greeting_seq=f_seq + 1,
                 face_greeting_text=text,
             )
-            print(f"[FaceGreetingArm] Hi! → {pose_name} | Spoken greeting queued: '{text}'")
+            print(f"[FaceGreetingArm] Hi! → {pose_name} (faces={face_count}) | Spoken greeting queued: '{text}'")
         except Exception as e:
             self.bb.write(arm_greeting_seq=seq + 1, arm_greeting_pose=pose_name)
             print(f"[FaceGreetingArm] Hi! → {pose_name} (Voice trigger error: {e})")
@@ -407,6 +412,7 @@ class FaceGreetingArmService:
             state = self.bb.read(
                 "face_detected",
                 "face_area_ratio",
+                "face_count",
                 "face_candidates",
                 "stream_frame",
                 "agent_speaking",
@@ -418,6 +424,7 @@ class FaceGreetingArmService:
                 state["face_detected"]
                 and float(state["face_area_ratio"]) >= self.min_face_area_ratio
             )
+            face_count = max(1, int(state.get("face_count", 1) or 1))
             busy = (
                 state["agent_speaking"]
                 or state["user_speaking"]
@@ -429,6 +436,8 @@ class FaceGreetingArmService:
                 if self._face_since is None:
                     self._face_since = now
                     self._current_embedding = None
+                    self._visit_initial_face_count = face_count
+                    self._visit_crowd_growth_greeted = face_count >= 3
 
                 elif (now - self._face_since) >= self.hold_sec:
                     # Face stable long enough — handle initial computation or learning
@@ -448,10 +457,12 @@ class FaceGreetingArmService:
 
                                 if match is None:
                                     # NEW FACE ─────────────────────────────────────
-                                    self._trigger_greeting()
+                                    self._trigger_greeting(face_count=face_count)
                                     match = _CacheEntry(embedding, now)
                                     self._cache.append(match)
                                     self._last_greeting_time = now
+                                    self._visit_initial_face_count = face_count
+                                    self._visit_crowd_growth_greeted = face_count >= 3
 
                                 elif match.is_expired(now):
                                     # FORGOTTEN FACE (TTL expired) ─────────────────
@@ -459,9 +470,11 @@ class FaceGreetingArmService:
                                         f"[FaceGreetingArm] Forgotten face — "
                                         f"age {match.age_sec(now)/60:.1f} min"
                                     )
-                                    self._trigger_greeting()
+                                    self._trigger_greeting(face_count=face_count)
                                     match.re_encounter(now)
                                     self._last_greeting_time = now
+                                    self._visit_initial_face_count = face_count
+                                    self._visit_crowd_growth_greeted = face_count >= 3
 
                                 else:
                                     # KNOWN FACE — suppress greeting ───────────────
@@ -475,6 +488,17 @@ class FaceGreetingArmService:
 
                                 self._current_match = match
                                 self._last_capture_time = now
+
+                        # Crowd join-in trigger: 1 visitor grew into a crowd (>= 3 faces)
+                        elif (
+                            not self._visit_crowd_growth_greeted
+                            and self._visit_initial_face_count <= 1
+                            and face_count >= 3
+                            and (self._last_greeting_time is None or (now - self._last_greeting_time) >= 12.0)
+                        ):
+                            self._trigger_greeting(face_count=face_count, is_crowd_growth=True)
+                            self._last_greeting_time = now
+                            self._visit_crowd_growth_greeted = True
 
                         # Continuous learning phase (max 2 FPS)
                         elif self._current_match is not None and self._current_match.is_learning(now):
@@ -492,6 +516,8 @@ class FaceGreetingArmService:
                     self._face_since = None
                     self._current_embedding = None
                     self._current_match = None
+                    self._visit_initial_face_count = 0
+                    self._visit_crowd_growth_greeted = False
 
             time.sleep(loop_delay)
 

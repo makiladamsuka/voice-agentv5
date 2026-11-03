@@ -130,6 +130,7 @@ class EmotionEngine:
                 "face_area_ratio",
                 "face_norm_x",
                 "face_norm_y",
+                "face_roll_deg",
                 "face_count",
                 "track_kind",
                 "servo_mode",
@@ -290,6 +291,8 @@ class EmotionEngine:
                 squint_hint=squint_hint,
                 activity=activity,
                 wander_mode=wander_mode,
+                face_count=int(state.get("face_count", 0) or 0),
+                face_roll_deg=float(state.get("face_roll_deg", 0.0) or 0.0),
             )
             if pick:
                 self._set(pick)

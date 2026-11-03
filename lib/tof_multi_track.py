@@ -94,7 +94,8 @@ def _pick_primary(tracks: list[dict[str, Any]]) -> dict[str, Any] | None:
         vel = float(t.get("vel_mm_s") or 0.0)
         approach_w = max(0.0, -vel) * 0.5
         conf = float(t.get("confidence", 0.0)) * 50.0
-        return kind_w + approach_w + conf - dist * 0.05
+        center_bonus = 60.0 if "C" in (t.get("zones") or []) else 0.0
+        return kind_w + approach_w + conf + center_bonus - dist * 0.05
 
     return max(tracks, key=score)
 
@@ -102,18 +103,27 @@ def _pick_primary(tracks: list[dict[str, Any]]) -> dict[str, Any] | None:
 class MultiTrackTracker:
     """Per-frame clustering with short-lived track IDs for viz + approach lock."""
 
-    def __init__(self, *, merge_radius_mm: float = 800.0, window: int = 24) -> None:
+    def __init__(
+        self,
+        *,
+        merge_radius_mm: float = 800.0,
+        window: int = 24,
+        human_ttl_sec: float = 45.0,
+    ) -> None:
         self.merge_radius_mm = merge_radius_mm
         self._window = window
+        self.human_ttl_sec = human_ttl_sec
         self._histories: dict[int, deque[tuple[int, int, float]]] = {}
         self._next_id = 1
         self._last_positions: dict[int, tuple[float, float]] = {}
         self._missed_frames: dict[int, int] = {}
+        self._human_until: dict[int, float] = {}
 
     def reset(self) -> None:
         self._histories.clear()
         self._last_positions.clear()
         self._missed_frames.clear()
+        self._human_until.clear()
         self._next_id = 1
 
     def _fresh_id(self) -> int:
@@ -151,6 +161,7 @@ class MultiTrackTracker:
                     self._histories.pop(tid, None)
                     self._last_positions.pop(tid, None)
                     self._missed_frames.pop(tid, None)
+                    self._human_until.pop(tid, None)
             return [], [], None
 
         clusters = _cluster_hits(hits, self.merge_radius_mm)
@@ -183,7 +194,18 @@ class MultiTrackTracker:
                 "motion": motion,
                 "vel_mm_s": vel,
             }
-            tracks.append(_classify_track(track, hist))
+            classified = _classify_track(track, hist)
+            if classified["kind"] == "human":
+                self._human_until[tid] = now + self.human_ttl_sec
+            elif (
+                classified["kind"] in ("obstacle", "uncertain")
+                and now < self._human_until.get(tid, 0.0)
+                and dist < 1500
+            ):
+                classified["kind"] = "human"
+                classified["confidence"] = max(float(classified["confidence"]), 0.78)
+                classified["reason"] = "stationary visitor (TTL)"
+            tracks.append(classified)
 
         # Handle persistence and missed frames
         for tid in list(self._last_positions.keys()):
@@ -193,6 +215,7 @@ class MultiTrackTracker:
                     self._histories.pop(tid, None)
                     self._last_positions.pop(tid, None)
                     self._missed_frames.pop(tid, None)
+                    self._human_until.pop(tid, None)
                 else:
                     # Keep position alive
                     new_positions[tid] = self._last_positions[tid]

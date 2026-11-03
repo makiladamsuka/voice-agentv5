@@ -723,8 +723,22 @@ class BaseController:
             self._last_prox_ts = now
             if approach_ts > 0.0:
                 self._last_prox_reaction_approach_ts = approach_ts
-            if zone in ("L", "R", "C"):
+            # Crowd / engagement anti-distraction gate:
+            # Do not yank head away with ToF side glances when already engaged
+            # in conversation with a visible face or tracking a group (>= 2 faces).
+            engaged_with_crowd_or_voice = state.get("face_detected", False) and (
+                state.get("voice_session_active", False)
+                or int(state.get("face_count", 0) or 0) >= 2
+            )
+            if not engaged_with_crowd_or_voice and zone in ("L", "R", "C"):
                 self._trigger_prox_glance(now, zone, pan)
+            return None, "", 0.0
+
+        # Do not spin physical base wheels on blind ToF triggers when surrounded
+        # by a crowd (>= 2 zones occupied) or when someone is within < 320mm safety distance.
+        if state.get("tof_surrounded", False) or state.get("tof_too_close_safety", False):
+            if approach_ts > 0.0:
+                self._last_prox_reaction_approach_ts = approach_ts
             return None, "", 0.0
 
         if state.get("voice_session_active", False):
@@ -792,6 +806,8 @@ class BaseController:
             return None, "", 0.0
         if state.get("face_detected", False) or state.get("body_detected", False):
             return None, "", 0.0
+        if state.get("tof_surrounded", False) or state.get("tof_too_close_safety", False):
+            return None, "", 0.0
         if state.get("prox_investigate_active", False):
             return None, "", 0.0
         priority_yaw = state.get("prox_verified_priority_yaw")
@@ -836,7 +852,7 @@ class BaseController:
             self._apply_live_tune_if_changed()
 
             state = self.bb.read(
-                "face_detected", "face_norm_x", "face_area_ratio",
+                "face_detected", "face_norm_x", "face_area_ratio", "face_count",
                 "body_detected", "track_kind",
                 "hand_detected", "hand_norm_x",
                 "arm_greeting_active", "bye_wave_active",
@@ -853,6 +869,8 @@ class BaseController:
                 "prox_approach_confidence", "prox_post_turn_lockout_ts",
                 "prox_approach_ts", "prox_investigate_active",
                 "prox_verified_priority_yaw",
+                "tof_surrounded", "tof_too_close_safety",
+                "voice_session_active",
             )
 
             pan_offset = self._head_pan_offset(state["servo_pan"])

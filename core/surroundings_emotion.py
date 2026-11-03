@@ -66,6 +66,9 @@ class SurroundingsEmotionController:
         zone: str,
         activity: float,
         squint_hint: float,
+        *,
+        face_count: int = 1,
+        face_roll_deg: float = 0.0,
     ) -> str:
         if zone == "near":
             weights = {
@@ -110,6 +113,17 @@ class SurroundingsEmotionController:
             if activity < 0.2:
                 weights["calm"] += 0.12
 
+        # Exhibition crowd & head-roll social mirroring boosts
+        if face_count >= 3:
+            weights["excited"] = weights.get("excited", 0.0) + 0.85
+            weights["happy"] = weights.get("happy", 0.0) + 0.55
+        elif face_count == 2:
+            weights["happy"] = weights.get("happy", 0.0) + 0.35
+            weights["excited"] = weights.get("excited", 0.0) + 0.30
+
+        if abs(face_roll_deg) >= 6.5:
+            weights["curious"] = weights.get("curious", 0.0) + 0.75
+
         for recent in self.emotion_history[-self.cfg.emotion_history_len :]:
             if recent in weights:
                 weights[recent] *= 0.35
@@ -133,6 +147,8 @@ class SurroundingsEmotionController:
         squint_hint: float,
         activity: float,
         wander_mode: bool,
+        face_count: int = 1,
+        face_roll_deg: float = 0.0,
     ) -> str | None:
         """Return mapped emotion when a surroundings change is due, else None."""
         if face_detected:
@@ -172,6 +188,8 @@ class SurroundingsEmotionController:
                     self.distance_zone,
                     activity,
                     squint_hint,
+                    face_count=face_count,
+                    face_roll_deg=face_roll_deg,
                 )
                 hold_base = random.uniform(
                     self.cfg.person_hold_min_sec,

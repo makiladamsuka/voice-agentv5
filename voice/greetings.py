@@ -120,9 +120,54 @@ def generate_presence_greeting() -> str:
     return random.choice(pool)
 
 
-def generate_random_face_greeting() -> str:
-    """Short generic hello when a face appears (no enrollment / no name)."""
+def generate_random_face_greeting(
+    face_count: int = 1,
+    is_crowd_growth: bool = False,
+) -> str:
+    """Short generic hello when 1 or more faces appear (static strings for 100% TTS WAV cache hits)."""
+    if is_crowd_growth:
+        return random.choice(
+            [
+                "Oh, more friends joined! Hi everyone!",
+                "Look at this crowd! Hello everyone!",
+                "Whoa, more people! Welcome everyone!",
+                "Hey, the whole crew is here! Hi everyone!",
+            ]
+        )
+
     time_of_day = get_time_of_day()
+    if face_count >= 3:
+        pool = [
+            "Hi everyone!",
+            "Hello everyone! Welcome!",
+            "Whoa, a whole group! Hi everyone!",
+            "Hey everyone! Come say hi!",
+            "Hello friends! Good to see you all!",
+        ]
+        if time_of_day == "morning":
+            pool.append("Good morning everyone!")
+        elif time_of_day == "afternoon":
+            pool.append("Good afternoon everyone!")
+        elif time_of_day == "evening":
+            pool.append("Good evening everyone!")
+        return random.choice(pool)
+
+    if face_count == 2:
+        pool = [
+            "Hey you two!",
+            "Hi both of you!",
+            "Hello there, you two!",
+            "Oh, hi you two! Welcome!",
+            "Hey there, friends!",
+        ]
+        if time_of_day == "morning":
+            pool.append("Good morning, you two!")
+        elif time_of_day == "afternoon":
+            pool.append("Good afternoon, you two!")
+        elif time_of_day == "evening":
+            pool.append("Good evening, you two!")
+        return random.choice(pool)
+
     pool = [
         "Hi!",
         "Hello!",

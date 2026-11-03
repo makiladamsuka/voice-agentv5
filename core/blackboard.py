@@ -54,8 +54,8 @@ class Blackboard:
     hand_gesture_seq: int = 0       # incremented on each new gesture
 
     # ── Servo targets (written by ServoLoop) ─────────────────────────────────
-    servo_pan: float = 80.0        # servo command degrees
-    servo_tilt: float = 110.0
+    servo_pan: float = 100.0       # servo command degrees
+    servo_tilt: float = 70.0
     servo_mode: str = "wander"     # "track"|"wander"|"memory_track"|"last_seen"
     servo_forward_return_active: bool = False
     servo_pan_hold: bool = False

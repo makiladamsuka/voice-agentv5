@@ -39,7 +39,7 @@ except ImportError:
 
 from core.blackboard import Blackboard
 from lib.hand_detector import HandDetector
-from lib.head_mech import signed_pan_mech_deg
+from lib.head_mech import signed_pan_mech_deg, signed_tilt_mech_deg
 from lib.person_memory import PersonMemory, angular_error_deg, wrap_degrees
 from lib.motion_memory import MotionMemory, MotionMemoryItem
 

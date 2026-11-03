@@ -528,7 +528,7 @@ class ServoMixer:
         while self.bb.read("running")["running"]:
             try:
                 st_v = self.bb.read("voice_session_active", "agent_speaking")
-            voice_active = st_v["voice_session_active"] or st_v["agent_speaking"]
+                voice_active = st_v["voice_session_active"] or st_v["agent_speaking"]
                 hz = self._viz_pose_voice_hz if voice_active else self._viz_pose_hz
                 if hz > 0:
                     self._publish_viz_from_cache()

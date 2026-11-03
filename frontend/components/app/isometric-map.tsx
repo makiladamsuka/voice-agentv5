@@ -90,7 +90,7 @@ const DestinationMarker = ({
   label,
 }: {
   position: [number, number, number];
-  label: string;
+  label?: string;
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const ringRef = useRef<THREE.Mesh>(null);
@@ -117,32 +117,21 @@ const DestinationMarker = ({
       >
         <ringGeometry args={[0.6, 0.9, 32]} />
         <meshBasicMaterial
-          color="#10B981"
+          color="#EF4444"
           transparent
-          opacity={0.5}
+          opacity={0.6}
           side={THREE.DoubleSide}
         />
       </mesh>
-      {/* Floating marker */}
+      {/* Floating beacon marker */}
       <mesh ref={meshRef} position={position}>
         <octahedronGeometry args={[0.3]} />
-        <meshStandardMaterial
-          color="#10B981"
-          emissive="#10B981"
+        <meshLambertMaterial
+          color="#EF4444"
+          emissive="#DC2626"
           emissiveIntensity={0.8}
         />
       </mesh>
-      {/* Label */}
-      <Text
-        position={[position[0], position[1] + 1.5, position[2]]}
-        fontSize={0.5}
-        color="#059669"
-        anchorX="center"
-        anchorY="middle"
-        fontWeight="bold"
-      >
-        {label}
-      </Text>
     </group>
   );
 };
@@ -217,7 +206,7 @@ const RealisticStaircase = ({ size, isDestination, boxColor }: { size: [number, 
             <boxGeometry args={[width, currentHeight, stepDepth]} />
             <meshLambertMaterial
               color="#3d3d3dff"
-              emissive={isDestination ? "#2563EB" : "#000000"}
+              emissive={isDestination ? "#DC2626" : "#000000"}
               emissiveIntensity={isDestination ? 0.4 : 0}
             />
           </mesh>
@@ -337,8 +326,7 @@ const RoomBlock = React.memo(function RoomBlock({
 }) {
   const size = node.size || [1, 1, 1];
   const theme = getRoomTheme(node.label);
-  // Use a vibrant indigo for the destination instead of green
-  // If it's a staircase, always force the theme color to ignore server overrides
+  // Keep original building color scheme
   const boxColor = isDestination ? "#2563EB" : theme.color;
 
   // Elevate labels using a high-variance stagger to completely eliminate horizontal overlapping
@@ -384,7 +372,11 @@ const RoomBlock = React.memo(function RoomBlock({
       ) : (
         <group>
           <Box args={size} castShadow={!LITE_3D} receiveShadow={!LITE_3D}>
-            <meshLambertMaterial color={boxColor} emissive={isDestination ? "#FACC15" : "#000000"} emissiveIntensity={isDestination ? 0.4 : 0} />
+            <meshLambertMaterial
+              color={boxColor}
+              emissive={isDestination ? "#EF4444" : "#000000"}
+              emissiveIntensity={isDestination ? 0.3 : 0}
+            />
           </Box>
           {/* Dark Roof to match reference image */}
           <Box position={[0, size[1]/2 + 0.05, 0]} args={[size[0] * 0.95, 0.1, size[2] * 0.95]} castShadow={!LITE_3D} receiveShadow={!LITE_3D}>
@@ -407,11 +399,19 @@ const RoomBlock = React.memo(function RoomBlock({
           <Html
             position={[0, textY, 0]}
             center
-            zIndexRange={[100, 0]}
+            zIndexRange={isDestination ? [1000, 500] : [100, 0]}
             transform={false}
           >
-            <div className={`flex items-center justify-center bg-yellow-400 px-3 py-1.5 border-2 border-black shadow-lg whitespace-nowrap pointer-events-none text-black transition-all ${isDestination ? 'scale-110 drop-shadow-[0_0_15px_rgba(250,204,21,0.6)]' : ''}`}>
-              <span className="text-[11px] font-extrabold tracking-wider uppercase leading-none">{node.label}</span>
+            <div
+              className={`flex items-center justify-center bg-yellow-400 px-3 py-1.5 border-2 border-black shadow-lg whitespace-nowrap pointer-events-none text-black transition-all ${
+                isDestination
+                  ? "scale-115 drop-shadow-[0_0_20px_rgba(239,68,68,0.95)] drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]"
+                  : ""
+              }`}
+            >
+              <span className="text-[11px] font-extrabold tracking-wider uppercase leading-none">
+                {node.label}
+              </span>
             </div>
           </Html>
         </group>
@@ -533,7 +533,7 @@ export default function NavigationMap({
   const destNode = useMemo(() => {
     return nodes.find(
       (n: any) =>
-        n.label?.toLowerCase() === destination.toLowerCase() &&
+        n.label?.toLowerCase().trim() === destination?.toLowerCase().trim() &&
         n.type !== "waypoint",
     );
   }, [nodes, destination]);
@@ -841,18 +841,22 @@ export default function NavigationMap({
                 ))}
 
                 {/* Room Blocks */}
-                {floorNodes.map((node: any, index: number) => (
-                  <RoomBlock
-                    key={node.id}
-                    node={node}
-                    index={index}
-                    isDestination={
-                      node.label?.toLowerCase() === destination.toLowerCase()
-                    }
-                    hasClick={hasNodeClick}
-                    onNodeClickRef={onNodeClickRef}
-                  />
-                ))}
+                {floorNodes.map((node: any, index: number) => {
+                  const isDestination = Boolean(destination) && (
+                    node.label?.toLowerCase().trim() === destination?.toLowerCase().trim() ||
+                    (destNode && node.id === destNode.id)
+                  );
+                  return (
+                    <RoomBlock
+                      key={node.id}
+                      node={node}
+                      index={index}
+                      isDestination={isDestination}
+                      hasClick={hasNodeClick}
+                      onNodeClickRef={onNodeClickRef}
+                    />
+                  );
+                })}
                 {/* Glowing route — navigation only, never in explore mode */}
                 {
                   !isStandalone && pathPoints.length >= 2 && (

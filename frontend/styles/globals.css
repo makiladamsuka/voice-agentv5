@@ -554,3 +554,67 @@ button, a, select, input, [role="button"], .interactive-element {
   -webkit-overflow-scrolling: touch;
   scroll-behavior: smooth;
 }
+
+/* ── Animated Emoji Stage Keyframes ── */
+@keyframes emoji-wave {
+  0%, 100% { transform: rotate(0deg); }
+  20%, 60% { transform: rotate(16deg); }
+  40%, 80% { transform: rotate(-12deg); }
+}
+
+@keyframes emoji-bounce {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-14px) scale(1.08); }
+}
+
+@keyframes emoji-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.95; }
+  50% { transform: scale(1.12); opacity: 1; }
+}
+
+@keyframes emoji-wobble {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-8deg) translateY(-4px); }
+  75% { transform: rotate(8deg) translateY(-4px); }
+}
+
+@keyframes emoji-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes emoji-tilt {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(14deg); }
+}
+
+.anim-emoji-wave {
+  animation: emoji-wave 1.2s ease-in-out infinite;
+  display: inline-block;
+  transform-origin: 70% 70%;
+}
+
+.anim-emoji-bounce {
+  animation: emoji-bounce 0.9s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+  display: inline-block;
+}
+
+.anim-emoji-pulse {
+  animation: emoji-pulse 1.3s ease-in-out infinite;
+  display: inline-block;
+}
+
+.anim-emoji-wobble {
+  animation: emoji-wobble 0.8s ease-in-out infinite;
+  display: inline-block;
+}
+
+.anim-emoji-float {
+  animation: emoji-float 2.4s ease-in-out infinite;
+  display: inline-block;
+}
+
+.anim-emoji-tilt {
+  animation: emoji-tilt 1.8s ease-in-out infinite;
+  display: inline-block;
+}

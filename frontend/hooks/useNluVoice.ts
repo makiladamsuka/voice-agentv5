@@ -98,6 +98,8 @@ const playStartChime = () => {
   }
 
   const now = ctx.currentTime;
+  const masterVol = typeof (window as any)._masterVolume === "number" ? (window as any)._masterVolume : 1.0;
+  if (masterVol <= 0.001) return;
   
   // Tone 1: C5
   const osc1 = ctx.createOscillator();
@@ -349,7 +351,11 @@ export function useNluVoice({
 
         const source = ctx.createBufferSource();
         source.buffer = audioBuffer;
-        source.connect(ctx.destination);
+        const gainNode = ctx.createGain();
+        const masterVol = typeof (window as any)._masterVolume === "number" ? (window as any)._masterVolume : 1.0;
+        gainNode.gain.setValueAtTime(masterVol, ctx.currentTime);
+        source.connect(gainNode);
+        gainNode.connect(ctx.destination);
 
         audioRef.current = source;
 
@@ -365,6 +371,8 @@ export function useNluVoice({
       const playWithHtmlAudio = async (url: string, uid?: string) => {
         return new Promise<void>((resolve, reject) => {
           const audio = new Audio(url);
+          const masterVol = typeof (window as any)._masterVolume === "number" ? (window as any)._masterVolume : 1.0;
+          audio.volume = masterVol;
           audioRef.current = audio;
           audio.onplay = () => {
             isPlayingRef.current = true;

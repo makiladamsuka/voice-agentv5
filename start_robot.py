@@ -285,6 +285,9 @@ def _shutdown_home_base(
     base_cfg: dict,
 ) -> None:
     """IMU closed-loop spin back to startup forward before exit (like approach HOME)."""
+    if not base_cfg.get("home_on_shutdown", True) or not base_cfg.get("spin_home_enabled", True):
+        print("[Bootstrap] Base return to HOME spin disabled in config.", flush=True)
+        return
     if not link.connected or not tracker.home_locked:
         return
 

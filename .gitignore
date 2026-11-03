@@ -43,3 +43,4 @@ frontend_flutter/ios/Runner/GeneratedPluginRegistrant.*
 frontend_flutter/macos/Flutter/ephemeral/
 frontend_flutter/windows/flutter/ephemeral/
 frontend_flutter/.flutter-plugins-dependencies
+voice/.weather-cache.json

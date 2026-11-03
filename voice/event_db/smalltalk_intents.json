@@ -13,11 +13,11 @@
       "hi robot",
       "hello nema"
     ],
-    "response_text": "Hello there! Welcome to the campus. How can I help you today?",
+    "response_text": "Hello there! Welcome to FIT EXPO. How can I help you today?",
     "audio_file": null,
     "action": {
       "action": "speak",
-      "suggested_buttons": ["Where is the auditorium?", "What events are happening?"]
+      "suggested_buttons": []
     }
   },
   {
@@ -48,7 +48,7 @@
       "introduce yourself",
       "are you a robot"
     ],
-    "response_text": "I am NEma, your autonomous campus guide robot! I can help you find rooms, events, and locations on campus.",
+    "response_text": "I am NEma, your FIT EXPO robot guide! Ask me anything about the exhibition stalls, projects, or directions.",
     "audio_file": null,
     "action": {
       "action": "speak"
@@ -64,11 +64,11 @@
       "help me",
       "can you help"
     ],
-    "response_text": "I can give you turn-by-turn directions to any room, show you upcoming campus events and competitions, or answer general questions!",
+    "response_text": "I can guide you through FIT EXPO, help you find stalls and projects, or answer your questions!",
     "audio_file": null,
     "action": {
       "action": "speak",
-      "suggested_buttons": ["Where is the auditorium?", "What events are happening?"]
+      "suggested_buttons": []
     }
   },
   {
@@ -80,7 +80,7 @@
       "thank you so much",
       "appreciate it"
     ],
-    "response_text": "You're very welcome! Have a great time exploring campus.",
+    "response_text": "You're very welcome! Have a wonderful time exploring FIT EXPO.",
     "audio_file": null,
     "action": {
       "action": "speak"
@@ -95,7 +95,7 @@
       "talk to you later",
       "catch you later"
     ],
-    "response_text": "Goodbye! Feel free to ask me whenever you need directions.",
+    "response_text": "Goodbye! Enjoy the rest of FIT EXPO!",
     "audio_file": null,
     "action": {
       "action": "speak"

@@ -621,11 +621,11 @@ _EVENTS_QUERY_RE = re.compile(
 )
 
 def _is_events_query(text: str) -> bool:
-    """Return True if the user's text looks like an events/discovery question."""
-    return bool(_EVENTS_QUERY_RE.search(text))
+    return False
 
 
 def _get_event_buttons(max_buttons: int = 4) -> list:
+    return []
     """Return button descriptors for the most recent uploaded posters.
 
     Each entry is ``{"label": str, "filename": str, "category": str}`` so the
@@ -763,7 +763,7 @@ def _match_intent_internal(runtime, user_text: str) -> dict:
             return _navigate_response(action["destination"])
 
         # ── Events ambiguity: show all event buttons instead of a single event ──
-        if intent.get("_events_ambiguous"):
+        if False:  # intent.get("_events_ambiguous") disabled
             buttons = _get_event_buttons()
             if buttons:
                 reply_text = "Here are the latest events on campus! Tap one to find out more."
@@ -809,7 +809,7 @@ def _match_intent_internal(runtime, user_text: str) -> dict:
             intent_id = intent.get("id", "")
             if intent_id == "smalltalk_greeting" or intent_id == "smalltalk_what_can_you_do":
                 action["suggested_buttons"] = ["Where is the auditorium?", "What events are happening?"]
-            elif intent_id.startswith("events_"):
+            elif False and intent_id.startswith("events_"):  # disabled
                 action["suggested_buttons"] = _get_event_buttons()
 
         return _with_audio_path({
@@ -861,7 +861,7 @@ def _get_campus_system_prompt() -> str:
         return _campus_system_prompt
 
     parts = [
-        "You are Nema, a friendly campus kiosk guide robot at the University of Moratuwa Faculty of Information Technology (FIT) in Katubedda, Sri Lanka.",
+        "You are Nema, a friendly guide robot at FIT EXPO. You help visitors discover exhibition stalls, projects, directions, and event information. Keep your answers warm, concise, and helpful.",
         "Strict rules:",
         "1. Reply in 1 to 2 short spoken sentences (maximum 25 words).",
         "2. Never use markdown, asterisks, bullet points, or emojis.",
@@ -885,7 +885,7 @@ def _get_campus_system_prompt() -> str:
             pass
 
     extracted_path = APP_DIR / "voice" / "event_db" / "extracted_events.json"
-    if extracted_path.exists():
+    if False and extracted_path.exists():
         try:
             events = json.loads(extracted_path.read_text(encoding="utf-8"))
             if events:
@@ -939,7 +939,7 @@ def _generate_dynamic_fallback(transcript: str) -> str:
     """Generate a fast, smart campus reply using Groq Free Tier or OpenRouter Free/Paid."""
     client, model = _get_cloud_llm_client()
     if client is None:
-        return "I'm not sure about that. I can help you with campus directions or upcoming events!"
+        return "I'm not sure about that. Feel free to ask me anything about the FIT EXPO stalls, projects, or directions!"
 
     try:
         _t0 = time.perf_counter()
@@ -961,7 +961,7 @@ def _generate_dynamic_fallback(transcript: str) -> str:
             return reply
     except Exception as e:
         log.error(f"Dynamic fallback LLM ({model}) failed: {e}")
-    return "I'm not sure about that. I can help you with campus directions or upcoming events!"
+    return "I'm not sure about that. Feel free to ask me anything about the FIT EXPO stalls, projects, or directions!"
 
 
 _tts_lock = threading.Lock()

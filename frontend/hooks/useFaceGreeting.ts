@@ -85,7 +85,11 @@ export function useFaceGreeting({
 
         const source = ctx.createBufferSource();
         source.buffer = audioBuffer;
-        source.connect(ctx.destination);
+        const gainNode = ctx.createGain();
+        const masterVol = typeof (window as any)._masterVolume === "number" ? (window as any)._masterVolume : 1.0;
+        gainNode.gain.setValueAtTime(masterVol, ctx.currentTime);
+        source.connect(gainNode);
+        gainNode.connect(ctx.destination);
         currentAudioRef.current = source;
 
         // Notify parent: greeting started

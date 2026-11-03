@@ -120,6 +120,8 @@ imu:
 
 base:
   enabled: true
+  spin_home_enabled: true     # set false to disable spin when returning base to home
+  home_on_shutdown: true      # set false to skip spinning base back to forward on exit
   # --- BASE CALIBRATION (change only via test_base_motor.py, not face-tracking tuning) ---
   counts_per_degree: 31.166667  # set by --calibrate-manual
   encoder_sign: -1  # set by --calibrate-manual (+deg → encoder counts decrease)

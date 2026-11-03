@@ -167,7 +167,7 @@ const getRoomTheme = (label: string) => {
   if (lower.includes("washroom")) return { color: "#E2E8F0", icon: "🚻" };
   if (lower.includes("evaluator") || lower.includes("desk")) return { color: "#E2E8F0", icon: "💁" };
   if (lower.includes("study")) return { color: "#E2E8F0", icon: "📚" };
-  if (lower.includes("stair")) return { color: "#94A3B8", icon: "🪜" };
+  if (lower.includes("stair")) return { color: "#2563EB", icon: "🪜" };
   if (lower.includes("exit")) return { color: "#F87171", icon: "🚪" };
   
   return { color: "#CBD5E1", icon: "📍" };
@@ -205,9 +205,9 @@ const RealisticStaircase = ({ size, isDestination, boxColor }: { size: [number, 
           >
             <boxGeometry args={[width, currentHeight, stepDepth]} />
             <meshLambertMaterial
-              color="#3d3d3dff"
-              emissive={isDestination ? "#DC2626" : "#000000"}
-              emissiveIntensity={isDestination ? 0.4 : 0}
+              color="#2563EB"
+              emissive={isDestination ? "#DC2626" : "#1D4ED8"}
+              emissiveIntensity={isDestination ? 0.4 : 0.15}
             />
           </mesh>
         );
@@ -440,21 +440,13 @@ export default function NavigationMap({
   const animTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [webglSupported, setWebglSupported] = useState<boolean>(true);
   const [isTransitioning, setIsTransitioning] = useState(false);
-  const [indicatorFloor, setIndicatorFloor] = useState<string | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const isTransitioningRef = useRef(false);
-  const indicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Latest click handler without making every RoomBlock re-render when the parent
   // passes a fresh function each render.
   const onNodeClickRef = useRef(onNodeClick);
   onNodeClickRef.current = onNodeClick;
-
-  useEffect(() => {
-    return () => {
-      if (indicatorTimerRef.current) clearTimeout(indicatorTimerRef.current);
-    };
-  }, []);
 
   useEffect(() => {
     try {
@@ -697,11 +689,7 @@ export default function NavigationMap({
 
                   isTransitioningRef.current = true;
                   setIsTransitioning(true);
-                  setIndicatorFloor(f as string);
                   cancelAnim();
-
-                  if (indicatorTimerRef.current) clearTimeout(indicatorTimerRef.current);
-                  indicatorTimerRef.current = setTimeout(() => setIndicatorFloor(null), 1000);
 
                   setTimeout(() => {
                     setCurrentFloor(f as string);
@@ -733,17 +721,6 @@ export default function NavigationMap({
         </div>
       )}
 
-      {/* Floor Indicator Micro-interaction */}
-      <div
-        className={`absolute top-24 left-1/2 -translate-x-1/2 px-8 py-3 rounded-full bg-black/60 border border-white/20 shadow-2xl transition-all duration-300 pointer-events-none z-50 flex items-center gap-3 ${indicatorFloor ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-4 scale-95'
-          }`}
-      >
-        <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-        <span className="text-white font-bold tracking-widest uppercase text-[15px] drop-shadow-lg">
-          {indicatorFloor ? indicatorFloor.replace("floor_", "Floor ") : ""}
-        </span>
-      </div>
-
       {/* 3D Canvas */}
       <div
         className={`w-full h-full transition-all duration-150 ease-in-out motion-reduce:transition-opacity motion-reduce:transform-none ${isTransitioning ? 'opacity-0 translate-y-[10px]' : 'opacity-100 translate-y-0'
@@ -770,11 +747,7 @@ export default function NavigationMap({
             // Start transition
             isTransitioningRef.current = true;
             setIsTransitioning(true);
-            setIndicatorFloor(nextFloor);
             cancelAnim();
-
-            if (indicatorTimerRef.current) clearTimeout(indicatorTimerRef.current);
-            indicatorTimerRef.current = setTimeout(() => setIndicatorFloor(null), 1000);
 
             // Wait for fade out (150ms), swap floor, fade back in
             setTimeout(() => {
@@ -802,7 +775,7 @@ export default function NavigationMap({
             dpr={LITE_3D ? 1 : [1, 2]}
             gl={{ antialias: !LITE_3D, powerPreference: "high-performance" }}
             orthographic
-            camera={{ position: [20, 20, 20], zoom: isStandalone ? 23 : 20 }}
+            camera={{ position: [20, 20, 20], zoom: isStandalone ? 30 : 27.5 }}
           >
             <React.Suspense fallback={null}>
               <ambientLight intensity={1.1} />

@@ -470,3 +470,119 @@ def test_wander_holds_track_pose_after_loss():
     loop._tick_wander(now=100.05, dt=0.05, effective_tilt_center=loop.tilt_center - 8.0, camera_world_yaw_deg=0.0)
     assert abs(loop._pan - track_pan) < 2.0
     assert abs(loop._tilt - (loop.tilt_center + 4.0)) < 2.0
+
+
+def test_on_mode_change_preserves_exit_direction_for_wander_edge_search():
+    """When a face exits right (+norm_x), wander edge search must step right, not jerk left."""
+    bb = Blackboard()
+    loop = ServoLoop(bb)
+    loop._mode = "track"
+    loop._pan = 75.0  # looking right (pan < pan_center with pan_sign=-1)
+    loop._prev_face_x = 0.55  # exited on the right edge
+    mech_before = _mech(loop._pan, loop)
+
+    loop._on_mode_change("track", "wander")
+    assert loop._last_exit_norm_x == 0.55
+    assert getattr(loop._wander, "_search_mode", "") == "edge"
+
+    # Advance past hold_until so _wander picks its edge search target
+    pan_goal, _ = loop._wander.tick(
+        loop._wander.hold_until + 0.1,
+        pan_center=loop.pan_center,
+        tilt_center=loop.tilt_center,
+        pan_current=loop._pan,
+        tilt_current=loop._tilt,
+        pan_min=loop.pan_min,
+        pan_max=loop.pan_max,
+        tilt_min=loop.tilt_min,
+        tilt_max=loop.tilt_max,
+        amp_deg=loop.wander_pan_amp,
+        step_min_deg=loop.wander_step_min,
+        step_max_deg=loop.wander_step_max,
+        hold_min_sec=loop.wander_hold_min,
+        hold_max_sec=loop.wander_hold_max,
+        jump_chance=loop.wander_jump_chance,
+        arrival_deg=loop.wander_arrival,
+        tilt_max_up_deg=loop.wander_tilt_max_up,
+        tilt_max_down_deg=loop.wander_tilt_max_down,
+        tilt_step_max_deg=loop.wander_tilt_step_max,
+        world_yaw_deg=mech_before,
+        pan_sign=loop.pan_sign,
+    )
+    # Physical angle of pan_goal must be further right (> mech_before), not jerked left!
+    assert _mech(pan_goal, loop) > mech_before
+
+
+def test_wander_does_not_immediately_abort_into_last_seen_on_center_loss():
+    """Losing a centered face must hold wander pose rather than ping-ponging into last_seen."""
+    bb = Blackboard()
+    bb.write(
+        running=True,
+        face_detected=False,
+        body_detected=False,
+        last_seen_world_yaw=12.0,
+    )
+    loop = ServoLoop(bb)
+    loop._mode = "track"
+    loop._last_face_ts = 98.7
+    loop._prev_face_x = 0.08  # near center, not an edge exit
+    loop._on_mode_change("track", "wander")
+    loop._mode = "wander"
+
+    mode = loop._tick_wander(now=100.0, dt=0.02, effective_tilt_center=loop.tilt_center, camera_world_yaw_deg=0.0)
+    assert mode == "wander"
+
+
+def test_base_compensation_counter_rotates_in_correct_direction_with_negative_base_sign():
+    """When base physically rotates right (+delta_enc), head must counter-rotate left."""
+    bb = Blackboard()
+    bb.write(running=True, base_encoder_deg=0.0, face_detected=False, body_detected=False)
+    loop = ServoLoop(bb)
+    loop.base_sign = -1.0
+    loop._mode = "wander"
+    loop._pan = 70.0  # head turned right (+mech)
+    loop._last_base_enc = 0.0
+    mech_before = _mech(loop._pan, loop)
+
+    # Base rotates right by +1.2 deg
+    bb.write(base_encoder_deg=1.2)
+    loop._apply_base_compensation()
+    mech_after = _mech(loop._pan, loop)
+
+    # Head mechanical yaw must decrease (counter-rotate left toward center), not increase!
+    assert mech_after < mech_before
+
+
+def test_speaking_drift_anchors_to_current_pan_not_pan_center():
+    """Speaking while looking at an off-center user must not yank pan back to pan_center."""
+    bb = Blackboard()
+    loop = ServoLoop(bb)
+    loop._pan = 60.0  # looking right at user (40 cmd units from pan_center=100)
+    loop._speaking_drift_active = False
+
+    loop._tick_speaking_drift(now=100.0, dt=0.05)
+    assert abs(loop._speaking_drift_pan_start - 60.0) < 0.01
+    assert abs(loop._pan - 60.0) < 1.0
+
+
+def test_last_seen_does_not_double_count_head_pan_in_camera_yaw():
+    """When camera is already aimed at last_seen_world_yaw, _tick_last_seen must hold steady."""
+    bb = Blackboard()
+    loop = ServoLoop(bb)
+    loop._pan = 70.0  # mech = +16.0 deg
+    pan_mech = _mech(loop._pan, loop)
+    # base_world_yaw_deg on BB is body_yaw (0.0) + head_yaw_on_body (pan_mech)
+    bb.write(
+        running=True,
+        face_detected=False,
+        body_detected=False,
+        base_world_yaw_deg=pan_mech,
+        head_yaw_on_body_deg=pan_mech,
+        last_seen_world_yaw=pan_mech,
+    )
+    loop._mode = "last_seen"
+    loop._lss_active = True
+    loop._lss_start_ts = 100.0
+
+    loop._tick_last_seen(now=100.1, dt=0.05, effective_tilt_center=loop.tilt_center)
+    assert abs(loop._pan - 70.0) < 0.01

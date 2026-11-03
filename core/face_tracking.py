@@ -39,6 +39,7 @@ except ImportError:
 
 from core.blackboard import Blackboard
 from lib.hand_detector import HandDetector
+from lib.head_mech import signed_pan_mech_deg
 from lib.person_memory import PersonMemory, angular_error_deg, wrap_degrees
 from lib.motion_memory import MotionMemory, MotionMemoryItem
 
@@ -143,6 +144,7 @@ class FaceTracker:
         inv = _cfg(prox, "investigate", default={}) or {}
 
         servo = _cfg(cfg, "servo", default={}) or {}
+        self._servo_cfg = servo
         self.servo_pan_center = float(servo.get("pan_center", 100.0))
         self.servo_pan_sign = float(servo.get("pan_sign", -1.0))
 
@@ -392,15 +394,15 @@ class FaceTracker:
     def _update_memory(self, norm_x: float, norm_y: float, kind: str, now: float, confidence: float) -> None:
         if self._person_memory is None:
             return
-        state = self.bb.read("base_world_yaw_deg", "servo_pan")
-        world_yaw = state["base_world_yaw_deg"]
-        pan = state["servo_pan"]
-        # Calculate mechanical pan offset properly using servo config
-        pan_mech = (pan - self.servo_pan_center) * self.servo_pan_sign
+        state = self.bb.read("base_world_yaw_deg", "head_yaw_on_body_deg", "servo_pan")
+        base_only_yaw = float(state["base_world_yaw_deg"]) - float(state.get("head_yaw_on_body_deg", 0.0) or 0.0)
+        pan = float(state["servo_pan"])
+        # Calculate mechanical pan offset using asymmetric servo config mapping
+        pan_mech = signed_pan_mech_deg(pan, self._servo_cfg)
         self._person_memory.observe(
             norm_x=norm_x,
             norm_y=norm_y,
-            base_world_yaw_deg=world_yaw,
+            base_world_yaw_deg=base_only_yaw,
             pan_mech_deg=pan_mech,
             kind=kind,
             confidence=confidence,
@@ -448,7 +450,7 @@ class FaceTracker:
         state = self.bb.read(
             "prox_investigate_active", "prox_investigate_phase",
             "prox_investigate_yaw", "prox_investigate_motion_id",
-            "base_world_yaw_deg", "servo_pan", "prox_scan_complete_ts",
+            "base_world_yaw_deg", "head_yaw_on_body_deg", "servo_pan", "prox_scan_complete_ts",
         )
         scan_ts = float(state.get("prox_scan_complete_ts", 0.0) or 0.0)
         if scan_ts > 0.0 and scan_ts != self._last_scan_complete_ts:
@@ -474,11 +476,13 @@ class FaceTracker:
             return None
 
         inv_yaw = float(state.get("prox_investigate_yaw", 0.0))
+        base_only_yaw = float(state["base_world_yaw_deg"]) - float(state.get("head_yaw_on_body_deg", 0.0) or 0.0)
+        pan_mech = signed_pan_mech_deg(float(state["servo_pan"]), self._servo_cfg)
         self._person_memory.observe(
             norm_x=face_norm_x,
             norm_y=face_norm_y,
-            base_world_yaw_deg=float(state["base_world_yaw_deg"]),
-            pan_mech_deg=(float(state["servo_pan"]) - self.servo_pan_center) * self.servo_pan_sign,
+            base_world_yaw_deg=base_only_yaw,
+            pan_mech_deg=pan_mech,
             kind="face",
             confidence=self.pm_face_conf,
             source="prox_verify",
@@ -533,6 +537,9 @@ class FaceTracker:
             if paused != self._was_vision_paused:
                 label = "paused (voice audio — CPU saved)" if paused else "resumed"
                 print(f"[FaceTracker] Vision {label}")
+                if paused:
+                    # Zero frame-error norms on pause so ServoLoop never integrates a frozen error
+                    self.bb.write(face_norm_x=0.0, face_norm_y=0.0)
                 self._was_vision_paused = paused
 
             if paused:

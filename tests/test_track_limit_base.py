@@ -41,14 +41,16 @@ def test_track_limit_step_when_head_stuck_and_face_off_center():
     pan_mech = signed_pan_mech_deg(pan, ctrl._servo_cfg)
     assert ctrl._pan_needs_base_help(pan, pan_mech)
 
+    # With pan_sign=-1.0, pan=25.2 is the right mechanical limit (+40°), so a face
+    # further right (+0.75) agrees with head lead.
     state = {
         "servo_pan": pan,
-        "face_norm_x": -0.75,
+        "face_norm_x": 0.75,
         "base_encoder_deg": 0.0,
         "base_motion_allowed": True,
         "imu_available": False,
     }
-    ctrl._trigger_since = 0.0
+    ctrl._trigger_since = 8.0
     ctrl._last_nudge_ts = 0.0
     step, source, comp_pan = ctrl._plan_track_step(10.0, state)
     assert source == "track_limit"

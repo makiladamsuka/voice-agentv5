@@ -107,7 +107,10 @@ def write_base_step_spin(
                     reason = "stall"
                     break
             if on_poll is not None:
-                on_poll()
+                try:
+                    on_poll(st)
+                except TypeError:
+                    on_poll()
             time.sleep(poll)
     finally:
         link.write_base_stop()

@@ -351,6 +351,7 @@ class ServoLoop:
         self._prev_face_y = 0.0
         self._prev_face_raw_x = 0.0
         self._prev_face_raw_y = 0.0
+        self._last_exit_norm_x = 0.0
         self._lss_active = False
         self._lss_start_ts = 0.0
         self._memory_reacquire_ts = 0.0
@@ -392,13 +393,13 @@ class ServoLoop:
         Called only when conv_state == 'speaking'.
         """
         # On first entry, anchor to wherever the head currently is (clamped
-        # within ±drift_amp of center so we don't start from a wild position).
+        # within ±drift_amp of physical limits so we don't snap to pan_center).
         if not self._speaking_drift_active:
             pan_amp = self._speaking_drift_pan_amp_deg
             self._speaking_drift_pan_start = clamp(
                 self._pan,
-                self.pan_center - pan_amp,
-                self.pan_center + pan_amp,
+                self.pan_min + pan_amp,
+                self.pan_max - pan_amp,
             )
             self._speaking_drift_pan_target = self._speaking_drift_pan_start
             # Start with a slight downward tilt
@@ -411,14 +412,14 @@ class ServoLoop:
         # Pick a new random target when the hold timer expires
         if now >= self._speaking_drift_hold_until:
             pan_amp = self._speaking_drift_pan_amp_deg
-            # Pick a new pan target on the opposite side from current to ensure movement
-            current_pan_offset = self._pan - self.pan_center
+            # Pick a new pan target on the opposite side from anchor to ensure movement
+            current_pan_offset = self._pan - self._speaking_drift_pan_start
             if current_pan_offset >= 0:
                 new_pan_offset = random.uniform(-pan_amp, -pan_amp * 0.3)
             else:
                 new_pan_offset = random.uniform(pan_amp * 0.3, pan_amp)
             self._speaking_drift_pan_target = clamp(
-                self.pan_center + new_pan_offset,
+                self._speaking_drift_pan_start + new_pan_offset,
                 self.pan_min,
                 self.pan_max,
             )
@@ -606,7 +607,10 @@ class ServoLoop:
             if abs(delta) > 0.01:
                 self._pan = clamp(self._pan + delta, self.pan_min, self.pan_max)
         else:
-            self._pan = clamp(comp_pan, self.pan_min, self.pan_max)
+            # Ramp smoothly in wander/last_seen too so the neck never jerks before the base moves.
+            delta = clamp(comp_pan - self._pan, -self.pan_max_step_deg, self.pan_max_step_deg)
+            if abs(delta) > 0.01:
+                self._pan = clamp(self._pan + delta, self.pan_min, self.pan_max)
             self._wander.pan_goal = clamp(comp_pan, self.pan_min, self.pan_max)
         self._pan_pid.soften(0.45)
         self._target_glide.soften()
@@ -614,7 +618,7 @@ class ServoLoop:
     
     def _apply_base_compensation(self) -> None:
         """Feed-forward compensation: counter-rotate head when base moves."""
-        state = self.bb.read("base_encoder_deg")
+        state = self.bb.read("base_encoder_deg", "face_detected", "body_detected")
         enc = state.get("base_encoder_deg", 0.0)
         
         if self._last_base_enc is None or abs(enc - self._last_base_enc) > 40.0:
@@ -627,11 +631,20 @@ class ServoLoop:
         if abs(delta_enc) < 0.05:
             return
             
-        # Convert encoder delta to physical base degrees
-        delta_phys_base = delta_enc / self.base_sign if abs(self.base_sign) > 1e-6 else delta_enc
+        # base_encoder_deg is ALREADY in physical world yaw degrees (+ = right, - = left),
+        # matching pan_mech_deg (do NOT divide by base_sign, which inverted the direction).
+        delta_phys_base = delta_enc
         
-        # We want to counter-rotate the head by this amount
-        comp_mech_deg = delta_phys_base * self.base_comp_gain
+        # During active face/body tracking, if a large delayed encoder jump arrives in one tick
+        # (e.g., after a blocking spin when visual PID has already centered the target),
+        # skip the feed-forward jump so we don't yank the head away from the locked face.
+        if self._mode == "track" and (state.get("face_detected") or state.get("body_detected")):
+            if abs(delta_phys_base) > 2.5:
+                return
+        
+        # Clamp per-tick mechanical compensation so delayed serial polls never snap the neck.
+        max_comp_mech = max(0.5, self.pan_max_step_deg * 2.0)
+        comp_mech_deg = clamp(delta_phys_base * self.base_comp_gain, -max_comp_mech, max_comp_mech)
         
         # Current physical pan angle
         current_pan_mech = signed_pan_mech_deg(self._pan, self._servo_cfg)
@@ -716,6 +729,12 @@ class ServoLoop:
         self._prev_pan_err_x = 0.0
         self._off_forward_since = None
         self._forward_return_active = False
+        # Capture last face bearing BEFORE zeroing it out so wander/last_seen
+        # transitions know which side of the frame the target exited from.
+        last_face_x = self._prev_face_x
+        if old_mode == "track" and new_mode != "track":
+            self._last_exit_norm_x = last_face_x
+
         if new_mode == "track":
             state = self.bb.read("face_norm_x", "face_norm_y")
             nx = float(state["face_norm_x"])
@@ -740,7 +759,7 @@ class ServoLoop:
             self._prev_face_raw_y = 0.0
             self._pan_in_center_band = True
         if new_mode == "wander" and old_mode in ("track", "last_seen"):
-            self._enter_wander_from_current_pose(time.time(), self._prev_face_x)
+            self._enter_wander_from_current_pose(time.time(), last_face_x)
         elif new_mode == "wander":
             self._wander.tilt_goal = self._tilt
             self._wander.pan_goal = self._pan
@@ -934,6 +953,8 @@ class ServoLoop:
                     blend = min(blend, self.prox_glance_blend_track)
                 blend_pan = self._pan + (glance_target - self._pan) * mix * blend
                 self._pan = clamp(blend_pan, self.pan_min, self.pan_max)
+                # Prevent PID integral windup while glance overlay pulls pan away from face
+                self._pan_pid.soften(0.25)
                 if elapsed > self.prox_glance_toward_sec:
                     self.bb.write(prox_glance_phase="return", prox_glance_since=now)
             elif phase == "return":
@@ -1031,6 +1052,8 @@ class ServoLoop:
                 smooth_hz=self.tilt_smooth_hz, lo=self.tilt_min, hi=self.tilt_max,
                 max_step=tilt_max_step,
             )
+            self._wander.pan_goal = self._pan
+            self._wander.tilt_goal = self._tilt
             self.bb.write(wander_moving=True, wander_last_step_deg=0.0)
             return True
         if phase != "scan":
@@ -1080,6 +1103,8 @@ class ServoLoop:
             smooth_hz=self.tilt_smooth_hz, lo=self.tilt_min, hi=self.tilt_max,
             max_step=tilt_max_step,
         )
+        self._wander.pan_goal = self._pan
+        self._wander.tilt_goal = self._tilt
         self.bb.write(wander_moving=True, wander_last_step_deg=0.0)
         return True
 
@@ -1120,7 +1145,15 @@ class ServoLoop:
         state = self.bb.read("last_seen_world_yaw")
         last_yaw = state["last_seen_world_yaw"]
         recently_tracked = (now - max(self._last_face_ts, self._last_body_ts)) < self.no_face_home_sec * 2.0
-        if last_yaw is not None and recently_tracked and not self._lss_active:
+        exited_at_edge = abs(self._last_exit_norm_x) >= self.lss_edge_norm
+        post_track_hold_done = now >= self._wander.hold_until
+        if (
+            last_yaw is not None
+            and recently_tracked
+            and exited_at_edge
+            and post_track_hold_done
+            and not self._lss_active
+        ):
             self._lss_active = True
             self._lss_start_ts = now
             return "last_seen"
@@ -1146,6 +1179,7 @@ class ServoLoop:
             tilt_max_down_deg=self.wander_tilt_max_down,
             tilt_step_max_deg=self.wander_tilt_step_max,
             world_yaw_deg=camera_world_yaw_deg,
+            pan_sign=self.pan_sign,
             thinking_hold_chance=self.wander_thinking_chance,
             thinking_hold_min_sec=self.wander_thinking_min,
             thinking_hold_max_sec=self.wander_thinking_max,
@@ -1196,7 +1230,10 @@ class ServoLoop:
         if self._forward_return_active:
             return self._tick_forward_return(now, dt, effective_tilt_center)
 
-        state = self.bb.read("face_detected", "body_detected", "last_seen_world_yaw", "base_world_yaw_deg")
+        state = self.bb.read(
+            "face_detected", "body_detected", "last_seen_world_yaw",
+            "base_world_yaw_deg", "head_yaw_on_body_deg",
+        )
         if state["face_detected"] or state["body_detected"]:
             self._lss_active = False
             self._forward_return_active = False
@@ -1208,8 +1245,9 @@ class ServoLoop:
             self._lss_active = False
             return "wander"
 
-        # Aim pan toward last-seen world yaw
-        camera_yaw = state["base_world_yaw_deg"] + self._pan_mech_offset()
+        # Aim pan toward last-seen world yaw (subtract head_yaw_on_body_deg so pan is not double-counted)
+        base_only_yaw = state["base_world_yaw_deg"] - float(state.get("head_yaw_on_body_deg", 0.0) or 0.0)
+        camera_yaw = base_only_yaw + self._pan_mech_offset()
         yaw_err = angular_error_deg(last_yaw, camera_yaw)
         pan_step = clamp(yaw_err * self.lss_track_gain * -self.pan_sign, -self.lss_max_step, self.lss_max_step)
         pan_target = clamp(self._pan + pan_step, self.pan_min, self.pan_max)
@@ -1277,10 +1315,13 @@ class ServoLoop:
             self._apply_base_compensation()
             effective_tilt_center = self._effective_tilt_center(dt)
 
-            vision = self.bb.read("face_detected", "body_detected", "hand_detected", "base_world_yaw_deg")
+            vision = self.bb.read(
+                "face_detected", "body_detected", "hand_detected",
+                "base_world_yaw_deg", "head_yaw_on_body_deg",
+            )
             tracking_face = vision["face_detected"] or vision["body_detected"] or vision["hand_detected"]
-            base_world = vision.get("base_world_yaw_deg", 0.0)
-            camera_world_yaw = base_world + self._pan_mech_offset()
+            base_only_yaw = vision.get("base_world_yaw_deg", 0.0) - float(vision.get("head_yaw_on_body_deg", 0.0) or 0.0)
+            camera_world_yaw = base_only_yaw + self._pan_mech_offset()
 
             # ── Speaking drift: freeze tracking, drift head naturally while talking ──
             agent_speaking = self.bb.read("conv_state")["conv_state"] == "speaking"
@@ -1294,7 +1335,12 @@ class ServoLoop:
                 self._loop_sleep()
                 continue
             else:
-                # Reset drift state so next speaking session starts fresh
+                # Reset drift state and sync goals so resuming track/wander is bumpless
+                if self._speaking_drift_active:
+                    self._wander.pan_goal = self._pan
+                    self._wander.tilt_goal = self._tilt
+                    self._pan_pid.reset()
+                    self._tilt_pid.reset()
                 self._speaking_drift_active = False
 
             self._update_off_forward_timer(now, camera_world_yaw, tracking_face=tracking_face)

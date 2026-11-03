@@ -640,8 +640,11 @@ class ServoMixer:
     def _send_angles(self, pan: float, tilt: float) -> None:
         self._send_pose(pan, tilt)
 
-    def _refresh_during_spin(self) -> None:
-        """Keep head tracking and arm lean fresh while base L/R spin is in progress."""
+    def _refresh_during_spin(self, st=None) -> None:
+        """Keep head tracking, encoder deg, and arm lean fresh while base L/R spin is in progress."""
+        if st is not None and hasattr(st, "degrees"):
+            self._encoder_deg = float(st.degrees)
+            self.bb.write(base_encoder_deg=self._encoder_deg)
         state = self.bb.read("servo_pan", "servo_tilt")
         pan = self._quantize(state["servo_pan"])
         tilt = self._quantize(state["servo_tilt"])

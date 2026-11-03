@@ -57,3 +57,14 @@ def test_track_limit_step_when_head_stuck_and_face_off_center():
     assert step is not None
     assert abs(step) >= ctrl.min_step
     assert abs(comp_pan - ctrl.pan_center) < abs(pan - ctrl.pan_center)
+
+
+def test_cap_for_aim_caps_large_step_with_negative_base_sign():
+    """With base_sign=-1.0, _cap_for_aim must still cap step to aim angle (no sign mismatch bypass)."""
+    ctrl = _make_controller()
+    ctrl.min_step = 4.0
+    # norm_x = 0.20 -> aim_deg = 0.20 * 31 = 6.2 deg -> max_useful = 6.51 deg
+    capped = ctrl._cap_for_aim(-15.0, 0.20, hfov=62.0)
+    assert capped < 0.0
+    assert abs(capped) < 7.0
+    assert abs(capped) >= ctrl.min_step

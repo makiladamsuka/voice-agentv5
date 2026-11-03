@@ -86,13 +86,16 @@ class _PidAxis:
         self._deriv_filtered = 0.0
         self._prev_error *= keep
 
-    def tick(self, error: float, dt: float) -> float:
+    def tick(self, error: float, dt: float, *, update_deriv: bool = True) -> float:
         dt = max(0.001, min(0.5, dt))
         if abs(error) < 0.02:
             error = 0.0
         self._integral = clamp(self._integral + error * dt, -self.integral_limit, self.integral_limit)
-        raw_deriv = 0.0 if not self._initialized else (error - self._prev_error) / dt
-        self._deriv_filtered = self._deriv_filtered * 0.82 + raw_deriv * 0.18
+        if update_deriv:
+            raw_deriv = 0.0 if not self._initialized else (error - self._prev_error) / dt
+            self._deriv_filtered = self._deriv_filtered * 0.82 + raw_deriv * 0.18
+        else:
+            self._deriv_filtered *= 0.85
         self._prev_error = error
         self._initialized = True
         return self.kp * error + self.ki * self._integral + self.kd * self._deriv_filtered
@@ -356,7 +359,10 @@ class ServoLoop:
         self._lss_start_ts = 0.0
         self._memory_reacquire_ts = 0.0
         self._last_base_enc = None
+        self._pending_base_comp_deg = 0.0
         self._proactive_comp_applied = False
+        self._last_vision_norm_x: Optional[float] = None
+        self._last_vision_norm_y: Optional[float] = None
         self._last_debug_cmd_seq = 0
         self._debug_head_step = float(dv.get("head_step_deg", 5.0))
         self._filtered_norm_x = 0.0
@@ -592,7 +598,13 @@ class ServoLoop:
     # ── Base Compensation ──────────────────────────────────────────────────────
 
     def _apply_proactive_base_comp(self) -> None:
-        """Apply planned neck counter-rotation when BaseController flags a base step."""
+        """Prepare PID when BaseController flags a base step.
+
+        Do NOT pre-rotate self._pan or _wander.pan_goal open-loop before the base
+        actually moves — if the base stalls or barely moves, open-loop counter-rotation
+        swings the head away from the face, and when the base does move, _apply_base_compensation
+        already counter-rotates 1:1 from real measured encoder deltas.
+        """
         state = self.bb.read("base_step_ready", "base_comp_pan_deg", "base_motion_busy")
         if not state["base_step_ready"] or state["base_motion_busy"]:
             self._proactive_comp_applied = False
@@ -600,96 +612,45 @@ class ServoLoop:
         comp_pan = state["base_comp_pan_deg"]
         if comp_pan == 0.0 or self._proactive_comp_applied:
             return
-        if self._mode == "track":
-            # During face track, ramp compensation — never snap pan away from the PID aim.
-            delta = comp_pan - self._pan
-            delta = clamp(delta, -self.pan_max_step_deg, self.pan_max_step_deg)
-            if abs(delta) > 0.01:
-                self._pan = clamp(self._pan + delta, self.pan_min, self.pan_max)
-        else:
-            # Ramp smoothly in wander/last_seen too so the neck never jerks before the base moves.
-            delta = clamp(comp_pan - self._pan, -self.pan_max_step_deg, self.pan_max_step_deg)
-            if abs(delta) > 0.01:
-                self._pan = clamp(self._pan + delta, self.pan_min, self.pan_max)
-            self._wander.pan_goal = clamp(comp_pan, self.pan_min, self.pan_max)
         self._pan_pid.soften(0.45)
         self._target_glide.soften()
         self._proactive_comp_applied = True
     
     def _apply_base_compensation(self) -> None:
-        """Feed-forward compensation: counter-rotate head when base moves."""
-        state = self.bb.read("base_encoder_deg", "face_detected", "body_detected")
-        enc = state.get("base_encoder_deg", 0.0)
+        """Closed-loop encoder feed-forward: counter-rotate head 1:1 with actual base movement."""
+        state = self.bb.read("base_encoder_deg")
+        enc = float(state.get("base_encoder_deg", 0.0) or 0.0)
         
-        if self._last_base_enc is None or abs(enc - self._last_base_enc) > 40.0:
+        if self._last_base_enc is None or abs(enc - self._last_base_enc) > 25.0:
             self._last_base_enc = enc
+            self._pending_base_comp_deg = 0.0
             return
             
         delta_enc = enc - self._last_base_enc
         self._last_base_enc = enc
         
-        if abs(delta_enc) < 0.05:
+        if abs(delta_enc) >= 0.05:
+            # base_encoder_deg is already in physical world yaw degrees (+ = right, - = left).
+            self._pending_base_comp_deg += delta_enc * self.base_comp_gain
+
+        if abs(self._pending_base_comp_deg) < 0.01:
             return
-            
-        # base_encoder_deg is ALREADY in physical world yaw degrees (+ = right, - = left),
-        # matching pan_mech_deg (do NOT divide by base_sign, which inverted the direction).
-        delta_phys_base = delta_enc
-        
-        # During active face/body tracking, if a large delayed encoder jump arrives in one tick
-        # (e.g., after a blocking spin when visual PID has already centered the target),
-        # skip the feed-forward jump so we don't yank the head away from the locked face.
-        if self._mode == "track" and (state.get("face_detected") or state.get("body_detected")):
-            if abs(delta_phys_base) > 2.5:
-                return
-        
-        # Clamp per-tick mechanical compensation so delayed serial polls never snap the neck.
-        max_comp_mech = max(0.5, self.pan_max_step_deg * 2.0)
-        comp_mech_deg = clamp(delta_phys_base * self.base_comp_gain, -max_comp_mech, max_comp_mech)
-        
-        # Current physical pan angle
-        current_pan_mech = signed_pan_mech_deg(self._pan, self._servo_cfg)
-        
-        # New desired physical pan angle
-        target_pan_mech = current_pan_mech - comp_mech_deg
-        
-        # Convert back to pan command
-        new_pan = mech_to_pan_cmd(
-            target_pan_mech,
-            pan_center=self.pan_center,
-            pan_min=self.pan_min,
-            pan_max=self.pan_max,
-            mech_left=self.mech_left,
-            mech_right=self.mech_right,
-            pan_sign=self.pan_sign,
-        )
-        
-        self._pan = clamp(new_pan, self.pan_min, self.pan_max)
-        
-        # Apply to wander goal as well so we don't snap back after returning to wander
-        current_goal_mech = signed_pan_mech_deg(self._wander.pan_goal, self._servo_cfg)
-        target_goal_mech = current_goal_mech - comp_mech_deg
-        new_goal = mech_to_pan_cmd(
-            target_goal_mech,
-            pan_center=self.pan_center,
-            pan_min=self.pan_min,
-            pan_max=self.pan_max,
-            mech_left=self.mech_left,
-            mech_right=self.mech_right,
-            pan_sign=self.pan_sign,
-        )
-        self._wander.pan_goal = clamp(new_goal, self.pan_min, self.pan_max)
-        
-        # In track mode, the base movement means the target shifts in the camera frame.
-        # Shift the visual memory so the PID doesn't fight the physical counter-rotation.
+
+        # Drain pending encoder compensation smoothly across 80 Hz ticks so 25 Hz serial
+        # polls never snap in a single tick and never drop degrees on larger poll steps.
+        max_comp_mech = max(1.25, self.pan_max_step_deg * 2.0)
+        comp_mech_deg = clamp(self._pending_base_comp_deg, -max_comp_mech, max_comp_mech)
+        self._pending_base_comp_deg -= comp_mech_deg
+
+        # 1 servo command unit = 1 physical servo degree on the PCA9685 head servo.
+        # Direct 1:1 degree counter-rotation prevents the 1.875x / 1.25x asymmetric
+        # stretch from mech_to_pan_cmd across pan_center=100.
+        delta_pan_cmd = -comp_mech_deg * self.pan_sign
+        self._pan = clamp(self._pan + delta_pan_cmd, self.pan_min, self.pan_max)
+        self._wander.pan_goal = clamp(self._wander.pan_goal + delta_pan_cmd, self.pan_min, self.pan_max)
+
         if self._mode == "track":
-            hfov_deg = 62.0  # approximate camera horizontal FOV
-            # If base physically turns right (+), object moves left (-) in frame.
-            # 1 physical degree = 2.0 / hfov_deg in normalized coordinates (-1 to 1).
-            norm_shift = -delta_phys_base * (2.0 / hfov_deg)
-            self._filtered_norm_x = clamp(self._filtered_norm_x + norm_shift, -1.0, 1.0)
-            self._pan_track_norm = clamp(self._pan_track_norm + norm_shift, -1.0, 1.0)
-            self._prev_face_x += norm_shift
-            self._prev_face_raw_x += norm_shift
+            self._pan_pid.soften(0.65)
 
     # ── IMU tilt compensation ──────────────────────────────────────────────────
 
@@ -727,6 +688,8 @@ class ServoLoop:
         self._target_glide.target_x = 0.0
         self._target_glide.target_y = 0.0
         self._prev_pan_err_x = 0.0
+        self._last_vision_norm_x = None
+        self._last_vision_norm_y = None
         self._off_forward_since = None
         self._forward_return_active = False
         # Capture last face bearing BEFORE zeroing it out so wander/last_seen
@@ -860,36 +823,45 @@ class ServoLoop:
             alpha_y = self.blob_alpha_y
             smooth_hz = self.blob_smooth_hz
 
-        self._filtered_norm_x += (norm_x - self._filtered_norm_x) * alpha_x
-        self._filtered_norm_y += (norm_y - self._filtered_norm_y) * alpha_y * glide_y_scale
+        is_new_frame = (
+            self._last_vision_norm_x is None
+            or abs(norm_x - self._last_vision_norm_x) > 1e-6
+            or abs(norm_y - (self._last_vision_norm_y or 0.0)) > 1e-6
+        )
+        self._last_vision_norm_x = norm_x
+        self._last_vision_norm_y = norm_y
 
-        self._face_vel_x = (norm_x - self._prev_face_raw_x) / max(dt, 0.001)
-        self._face_vel_y = (norm_y - self._prev_face_raw_y) / max(dt, 0.001)
-        self._prev_face_raw_x = norm_x
-        self._prev_face_raw_y = norm_y
-        self._prev_face_x = self._filtered_norm_x
-        self._prev_face_y = self._filtered_norm_y
+        if is_new_frame:
+            self._filtered_norm_x += (norm_x - self._filtered_norm_x) * alpha_x
+            self._filtered_norm_y += (norm_y - self._filtered_norm_y) * alpha_y * glide_y_scale
 
-        # Pan error: lightly filtered bearing reduces bbox jitter; follow faster when face moves quickly.
-        vel_x = abs(self._face_vel_x)
-        if track_kind == "hand":
-            # Hand: use a slower, fixed pan_track_alpha — MediaPipe landmark velocity is
-            # far noisier than face bbox velocity, so the adaptive alpha boost used for
-            # faces causes over-reaction to micro-tremors. Cap alpha boost threshold higher
-            # and use a hand-specific base alpha to keep _pan_track_norm stable.
-            pan_alpha = self.hand_pan_track_alpha
-            if vel_x > self.hand_vel_boost_threshold:
-                # Only boost on clearly intentional fast sweeps, not landmark jitter
-                pan_alpha = min(0.40, pan_alpha + (vel_x - self.hand_vel_boost_threshold) * 0.03)
-                self._pan_pid.soften(0.65)  # softer than face (0.55) — avoid integral spike
+            self._face_vel_x = (norm_x - self._prev_face_raw_x) / max(dt, 0.001)
+            self._face_vel_y = (norm_y - self._prev_face_raw_y) / max(dt, 0.001)
+            self._prev_face_raw_x = norm_x
+            self._prev_face_raw_y = norm_y
+            self._prev_face_x = self._filtered_norm_x
+            self._prev_face_y = self._filtered_norm_y
+
+            # Pan error: lightly filtered bearing reduces bbox jitter; follow faster when face moves quickly.
+            vel_x = abs(self._face_vel_x)
+            if track_kind == "hand":
+                pan_alpha = self.hand_pan_track_alpha
+                if vel_x > self.hand_vel_boost_threshold:
+                    pan_alpha = min(0.40, pan_alpha + (vel_x - self.hand_vel_boost_threshold) * 0.03)
+                    self._pan_pid.soften(0.65)
+            else:
+                pan_alpha = self.pan_track_alpha
+                if vel_x > 2.0:
+                    pan_alpha = min(0.58, pan_alpha + (vel_x - 2.0) * 0.05)
+                    self._pan_pid.soften(0.55)
+
+            self._pan_track_norm += (norm_x - self._pan_track_norm) * pan_alpha
+            self._tilt_track_norm += (norm_y - self._tilt_track_norm) * self.tilt_track_alpha * glide_y_scale
         else:
-            pan_alpha = self.pan_track_alpha
-            if vel_x > 2.0:
-                pan_alpha = min(0.58, pan_alpha + (vel_x - 2.0) * 0.05)
-                self._pan_pid.soften(0.55)
-
-        self._pan_track_norm += (norm_x - self._pan_track_norm) * pan_alpha
-        self._tilt_track_norm += (norm_y - self._tilt_track_norm) * self.tilt_track_alpha * glide_y_scale
+            # Between 10 FPS camera frames, do not keep integrating the stale Blackboard norm_x
+            # into the EMA; decay velocity until the next vision frame arrives.
+            self._face_vel_x *= 0.85
+            self._face_vel_y *= 0.85
         # Hand gets a wider x deadzone — palm position is noisier than a face bbox centroid
         active_deadzone_x = self.hand_deadzone_x if track_kind == "hand" else self.deadzone_x
         pan_err_x = _apply_deadzone(self._pan_track_norm, active_deadzone_x)
@@ -913,7 +885,7 @@ class ServoLoop:
             self._pan_pid.reset()
             pan_target = self._pan
         else:
-            pan_corr = clamp(self._pan_pid.tick(pan_err_x, dt), -1.0, 1.0)
+            pan_corr = clamp(self._pan_pid.tick(pan_err_x, dt, update_deriv=is_new_frame), -1.0, 1.0)
             pan_gain = _track_error_gain(
                 self._pan_track_norm,
                 self.pan_error_full_scale,
@@ -933,12 +905,25 @@ class ServoLoop:
         if track_kind == "hand":
             self.pan_center_norm_x = _saved_center_norm
 
+        pan_before_step = self._pan
         pan_max_step = min(self.pan_max_step_deg, self.pan_track_slew_dps * max(dt, 0.001))
         self._pan = _smooth_toward_stepped(
             self._pan, pan_target, dt,
             smooth_hz=smooth_hz, lo=self.pan_min, hi=self.pan_max,
             max_step=pan_max_step,
         )
+        delta_pan_step = self._pan - pan_before_step
+        if abs(delta_pan_step) > 1e-4:
+            # Subtract camera ego-motion from _pan_track_norm (half-HFOV ≈ 31.0°) so the
+            # 80 Hz servo loop knows how much of the camera error it already closed on
+            # ticks between 10 FPS camera frames, eliminating tracking overshoot.
+            ego_norm_x = (delta_pan_step * self.pan_track_sign) / 31.0
+            if self._pan_track_norm > 0.0:
+                self._pan_track_norm = max(0.0, self._pan_track_norm - max(0.0, ego_norm_x))
+            elif self._pan_track_norm < 0.0:
+                self._pan_track_norm = min(0.0, self._pan_track_norm - min(0.0, ego_norm_x))
+            self._filtered_norm_x = self._pan_track_norm
+            self._prev_face_x = self._filtered_norm_x
 
         # ── Prox Glance Overlay ──
         if state.get("prox_glance_active", False):

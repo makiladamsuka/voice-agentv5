@@ -350,13 +350,15 @@ class BaseController:
         if aim_deg < 0.4:
             return 0.0
         aim_sign = 1.0 if aim_norm_x >= 0.0 else -1.0
+        plate_step = step / self.base_sign if abs(self.base_sign) > 1e-6 else step
+        plate_sign = 1.0 if plate_step >= 0.0 else -1.0
         step_sign = 1.0 if step >= 0.0 else -1.0
-        if aim_sign * step_sign < 0.0:
+        if aim_sign * plate_sign < 0.0:
             return step
         max_useful = aim_deg * 1.05
         if abs(step) <= max_useful:
             return step
-        return step_sign * max(max_useful, self.min_step * 0.5)
+        return step_sign * max(max_useful, self.min_step)
 
     def _plan_base_follow_step(self, magnitude_deg: float, pan_cmd: float) -> Optional[float]:
         """Base follows only after the head has turned toward interest."""
@@ -622,10 +624,11 @@ class BaseController:
 
         pan = state["servo_pan"]
         pan_mech = self._pan_mech(pan)
-        raw = self._plan_base_follow_step(
+        desired_mag = min(
+            abs(pan_mech) * 0.85,
             clamp(abs(pan_mech) * self.pan_offset_to_step, self.min_step, self.max_step),
-            pan,
         )
+        raw = self._plan_base_follow_step(desired_mag, pan)
         if raw is None:
             return None, "", 0.0
         step = raw * self.base_sign

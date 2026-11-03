@@ -569,6 +569,11 @@ class FaceTracker:
                 frame = frame_full
 
             # ── ROI Crop Detection vs Full-Frame Detection ───────────────────
+            pose_st = self.bb.read("servo_pan", "servo_tilt", "base_encoder_deg")
+            cur_pan_mech = signed_pan_mech_deg(float(pose_st.get("servo_pan", self.pan_center)), self._servo_cfg)
+            cur_tilt_mech = signed_tilt_mech_deg(float(pose_st.get("servo_tilt", self.tilt_center)), self._servo_cfg)
+            cur_cam_yaw = float(pose_st.get("base_encoder_deg", 0.0) or 0.0) + cur_pan_mech
+
             faces = None
             use_roi = (
                 self.roi_tracking_enabled
@@ -580,40 +585,60 @@ class FaceTracker:
             if use_roi:
                 fx, fy, fw, fh = self._roi_box
                 cx, cy = fx + fw * 0.5, fy + fh * 0.5
-                crop_w = max(60.0, fw * self.roi_padding_factor)
-                crop_h = max(60.0, fh * self.roi_padding_factor)
+                # Shift ROI crop by camera world-yaw / tilt ego-motion since the last frame
+                # so the face does not leave the crop box while the head/base is rotating.
+                prev_cam_yaw = getattr(self, "_roi_cam_yaw_deg", cur_cam_yaw)
+                prev_cam_tilt = getattr(self, "_roi_cam_tilt_deg", cur_tilt_mech)
+                delta_cam_yaw = cur_cam_yaw - prev_cam_yaw
+                delta_cam_tilt = cur_tilt_mech - prev_cam_tilt
+                if abs(delta_cam_yaw) > 12.0 or abs(delta_cam_tilt) > 10.0:
+                    # Fast sweep: skip narrow ROI crop and run full-frame scan directly
+                    # instead of wasting 45 ms on a missed ROI crop first.
+                    self._roi_active = False
+                    self._roi_scan_count = 0
+                else:
+                    hfov = max(self.pm_hfov, 30.0)
+                    vfov = hfov * (self.detect_res[1] / max(1.0, float(self.detect_res[0])))
+                    shift_x_px = -(delta_cam_yaw / hfov) * self.detect_res[0]
+                    shift_y_px = (delta_cam_tilt / max(vfov, 20.0)) * self.detect_res[1]
+                    cx += shift_x_px
+                    cy += shift_y_px
+                    motion_pad_x = abs(shift_x_px) * 0.8
+                    motion_pad_y = abs(shift_y_px) * 0.8
+                    crop_w = max(60.0, fw * self.roi_padding_factor + motion_pad_x)
+                    crop_h = max(60.0, fh * self.roi_padding_factor + motion_pad_y)
 
-                rx1 = max(0, int(cx - crop_w * 0.5))
-                ry1 = max(0, int(cy - crop_h * 0.5))
-                rx2 = min(self.detect_res[0], int(cx + crop_w * 0.5))
-                ry2 = min(self.detect_res[1], int(cy + crop_h * 0.5))
+                    rx1 = max(0, int(cx - crop_w * 0.5))
+                    ry1 = max(0, int(cy - crop_h * 0.5))
+                    rx2 = min(self.detect_res[0], int(cx + crop_w * 0.5))
+                    ry2 = min(self.detect_res[1], int(cy + crop_h * 0.5))
 
-                rw = rx2 - rx1
-                rh = ry2 - ry1
+                    rw = rx2 - rx1
+                    rh = ry2 - ry1
 
-                if rw > 30 and rh > 30:
-                    roi_patch = frame[ry1:ry2, rx1:rx2]
-                    detector.setInputSize((rw, rh))
-                    _, roi_faces = detector.detect(roi_patch)
+                    if rw > 30 and rh > 30:
+                        roi_patch = frame[ry1:ry2, rx1:rx2]
+                        detector.setInputSize((rw, rh))
+                        _, roi_faces = detector.detect(roi_patch)
 
-                    if roi_faces is not None and len(roi_faces) > 0:
-                        mapped_faces = []
-                        for rf in roi_faces:
-                            f_mapped = np.copy(rf)
-                            f_mapped[0] += rx1
-                            f_mapped[1] += ry1
-                            if len(f_mapped) >= 14:
-                                for li in range(4, 14, 2):
-                                    f_mapped[li] += rx1
-                                    f_mapped[li + 1] += ry1
-                            mapped_faces.append(f_mapped)
-                        faces = np.array(mapped_faces)
-                        self._roi_scan_count += 1
+                        if roi_faces is not None and len(roi_faces) > 0:
+                            mapped_faces = []
+                            for rf in roi_faces:
+                                f_mapped = np.copy(rf)
+                                f_mapped[0] += rx1
+                                f_mapped[1] += ry1
+                                if len(f_mapped) >= 14:
+                                    for li in range(4, 14, 2):
+                                        f_mapped[li] += rx1
+                                        f_mapped[li + 1] += ry1
+                                mapped_faces.append(f_mapped)
+                            faces = np.array(mapped_faces)
+                            self._roi_scan_count += 1
+                        else:
+                            self._roi_active = False
+                            self._roi_scan_count = 0
                     else:
                         self._roi_active = False
-                        self._roi_scan_count = 0
-                else:
-                    self._roi_active = False
 
             if faces is None:
                 detector.setInputSize(self.detect_res)
@@ -695,6 +720,8 @@ class FaceTracker:
                     # Update ROI tracking box from active target face
                     primary_f = selected_face[0] if (kind == "center" and isinstance(selected_face, tuple)) else selected_face
                     self._roi_box = self._face_box(primary_f)
+                    self._roi_cam_yaw_deg = cur_cam_yaw
+                    self._roi_cam_tilt_deg = cur_tilt_mech
                     self._roi_active = True
                 else:
                     self._roi_active = False

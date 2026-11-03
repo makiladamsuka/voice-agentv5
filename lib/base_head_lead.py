@@ -137,24 +137,13 @@ def proactive_comp_pan_cmd(
     mech_right: float,
     pan_sign: float = 1.0,
 ) -> float:
-    """Servo pan command after proactive neck counter-rotation for a base step."""
-    pan_mech = pan_cmd_to_mech(
-        current_pan_cmd,
-        pan_center=pan_center,
-        pan_min=pan_min,
-        pan_max=pan_max,
-        mech_left=mech_left,
-        mech_right=mech_right,
-        pan_sign=pan_sign,
-    )
-    comp_mech = base_step_deg * compensation_gain
-    compensated_mech = pan_mech - comp_mech
-    return mech_to_pan_cmd(
-        compensated_mech,
-        pan_center=pan_center,
-        pan_min=pan_min,
-        pan_max=pan_max,
-        mech_left=mech_left,
-        mech_right=mech_right,
-        pan_sign=pan_sign,
-    )
+    """Servo pan command after proactive neck counter-rotation for a base step.
+
+    1 servo command unit = 1 physical degree on the PCA9685 head servo, so
+    counter-rotating by comp_mech degrees is a direct 1:1 offset in command space
+    (avoiding asymmetric left/right span stretching across pan_center).
+    """
+    sign = -1.0 if pan_sign < 0.0 else 1.0
+    comp_deg = base_step_deg * compensation_gain
+    target_cmd = current_pan_cmd - comp_deg * sign
+    return max(pan_min, min(pan_max, target_cmd))

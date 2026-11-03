@@ -200,7 +200,8 @@ def test_pan_stabilizes_when_face_centered_filtered():
     assert abs(loop._pan - (loop.pan_center + 20.0)) < 0.01
 
 
-def test_track_proactive_comp_ramps_instead_of_snapping():
+def test_track_proactive_comp_softens_pid_without_open_loop_pan_jump():
+    """Proactive base comp must only soften PID and never pre-rotate pan before encoder moves."""
     bb = Blackboard()
     bb.write(
         running=True,
@@ -213,11 +214,11 @@ def test_track_proactive_comp_ramps_instead_of_snapping():
     loop = ServoLoop(bb)
     loop._mode = "track"
     loop._pan = loop.pan_center
-    loop.pan_max_step_deg = 0.75
+    loop._pan_pid._integral = 0.4
 
     loop._apply_proactive_base_comp()
-    assert loop._pan > loop.pan_center
-    assert loop._pan < loop.pan_center + 1.0
+    assert loop._pan == loop.pan_center
+    assert loop._pan_pid._integral < 0.4
 
 
 def test_pan_stabilizes_when_face_centered():
@@ -586,3 +587,52 @@ def test_last_seen_does_not_double_count_head_pan_in_camera_yaw():
 
     loop._tick_last_seen(now=100.1, dt=0.05, effective_tilt_center=loop.tilt_center)
     assert abs(loop._pan - 70.0) < 0.01
+
+
+def test_base_compensation_is_1_to_1_without_right_side_amplification():
+    """When pan < pan_center (right side), 1 deg of base rotation must NOT move pan by 1.875 deg."""
+    bb = Blackboard()
+    bb.write(running=True, base_encoder_deg=0.0, face_detected=True, body_detected=False)
+    loop = ServoLoop(bb)
+    loop._mode = "track"
+    loop._pan = 70.0  # right side (pan < 100)
+    loop._last_base_enc = 0.0
+    loop.base_comp_gain = 1.0
+
+    # Base rotates right by +1.0 deg
+    bb.write(base_encoder_deg=1.0)
+    loop._apply_base_compensation()
+
+    # Exact 1:1 counter-rotation (+1.0 cmd unit), not +1.875 cmd units!
+    assert abs(loop._pan - 71.0) < 0.01
+
+
+def test_multi_tick_between_camera_frames_subtracts_ego_motion():
+    """80 Hz servo ticks between 10 FPS camera frames must decay _pan_track_norm by servo step."""
+    bb = Blackboard()
+    bb.write(
+        running=True,
+        face_detected=True,
+        body_detected=False,
+        face_norm_x=0.35,  # ~10.85 deg off-center
+        face_norm_y=0.0,
+        face_count=1,
+        track_kind="face",
+        face_candidates=[],
+    )
+    loop = ServoLoop(bb)
+    loop._mode = "track"
+    loop._pan = loop.pan_center
+    loop._pan_track_norm = 0.35
+    loop._filtered_norm_x = 0.35
+    loop._pan_in_center_band = False
+
+    # Run 8 ticks at 80 Hz with the same camera frame on Blackboard
+    for i in range(8):
+        loop._tick_track(now=100.0 + i * 0.0125, dt=0.0125, effective_tilt_center=loop.tilt_center)
+
+    # Head must move toward the face and subtract that ego-motion from _pan_track_norm
+    total_pan_moved = abs(loop._pan - loop.pan_center)
+    assert total_pan_moved > 1.0
+    assert total_pan_moved < 6.0
+    assert loop._pan_track_norm < 0.35

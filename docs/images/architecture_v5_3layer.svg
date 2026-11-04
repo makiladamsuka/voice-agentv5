@@ -1,0 +1,247 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 875" width="1200" height="875" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <!-- Solid Background for Canva Compatibility -->
+  <rect width="1200" height="875" fill="#f8f9fa" />
+
+  <!-- ================= ARROWHEAD MARKER DEFINITIONS ================= -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 2 L 8 5 L 0 8 z" fill="#343a40" />
+    </marker>
+  </defs>
+
+  <!-- ================= 1. INPUT LAYER ================= -->
+  <rect x="15" y="25" width="175" height="835" fill="none" stroke="#4a6fa5" stroke-width="1.3" />
+  <rect x="15" y="10" width="105" height="18" rx="2" ry="2" fill="#1b4965" />
+  <text x="67.5" y="23" fill="#ffffff" font-size="10.5" font-weight="600" letter-spacing="0.4" text-anchor="middle">1. INPUT LAYER</text>
+
+  <!-- Input Nodes (w=148, x=28, h=58) -->
+  <!-- Raspberry Pi Camera (cy=79) -->
+  <rect x="28" y="50" width="148" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="102" y="74" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Raspberry Pi</text>
+  <text x="102" y="93" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Camera</text>
+
+  <!-- Head IMU (cy=174) -->
+  <rect x="28" y="145" width="148" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="102" y="169" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Head IMU</text>
+  <text x="102" y="188" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Sensor</text>
+
+  <!-- ToF Array (cy=269) -->
+  <rect x="28" y="240" width="148" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="102" y="264" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">ToF Laser</text>
+  <text x="102" y="283" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Array</text>
+
+  <!-- Wheel Encoders (cy=364) -->
+  <rect x="28" y="335" width="148" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="102" y="359" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Wheel</text>
+  <text x="102" y="378" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Encoders</text>
+
+  <!-- Microphone (cy=504) -->
+  <rect x="28" y="475" width="148" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="102" y="510" fill="#1a1e54" font-size="15" font-weight="500" text-anchor="middle">Microphone</text>
+
+  <!-- Touchscreen UI (cy=704) -->
+  <rect x="28" y="675" width="148" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="102" y="699" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Touchscreen</text>
+  <text x="102" y="718" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">UI</text>
+
+  <!-- Asset Feeds (cy=804) -->
+  <rect x="28" y="775" width="148" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="102" y="799" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Asset &amp; Event</text>
+  <text x="102" y="818" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Feeds</text>
+
+
+  <!-- ================= 2. PROCESSING LAYER ================= -->
+  <rect x="210" y="25" width="715" height="835" fill="none" stroke="#529456" stroke-width="1.3" />
+  <rect x="210" y="10" width="145" height="18" rx="2" ry="2" fill="#2d6a4f" />
+  <text x="282.5" y="23" fill="#ffffff" font-size="10.5" font-weight="600" letter-spacing="0.4" text-anchor="middle">2. PROCESSING LAYER</text>
+
+  <!-- 2A. Perception Column (w=135, x=230, h=58) -->
+  <!-- Face Tracker (cy=79) -->
+  <rect x="230" y="50" width="135" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="297.5" y="85" fill="#1a1e54" font-size="15" font-weight="500" text-anchor="middle">Face Tracker</text>
+
+  <!-- Proximity Controller (cy=269) -->
+  <rect x="230" y="240" width="135" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="297.5" y="264" fill="#1a1e54" font-size="14" font-weight="500" text-anchor="middle">Proximity &amp; Scan</text>
+  <text x="297.5" y="283" fill="#1a1e54" font-size="14" font-weight="500" text-anchor="middle">Controller</text>
+
+  <!-- Voice Pipeline (cy=504) -->
+  <rect x="230" y="475" width="135" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="297.5" y="499" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Voice Pipeline</text>
+  <text x="297.5" y="518" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">&amp; VAD</text>
+
+  <!-- 2B. Central State Bus: Shared State Blackboard (w=140, h=100, x=390, y=125, cy=175) -->
+  <rect x="390" y="125" width="140" height="100" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="460" y="170" fill="#1a1e54" font-size="15" font-weight="500" text-anchor="middle">Shared State</text>
+  <text x="460" y="192" fill="#1a1e54" font-size="15" font-weight="500" text-anchor="middle">Blackboard</text>
+
+  <!-- 2C. Logic & Kinematics Column (w=150, x=560, h=58) -->
+  <!-- NLU Engine & Intent Parser (cy=79) -->
+  <rect x="560" y="50" width="150" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="635" y="74" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">NLU Engine &amp;</text>
+  <text x="635" y="93" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Intent Parser</text>
+
+  <!-- Campus Wayfinding Solver (cy=174) -->
+  <rect x="560" y="145" width="150" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="635" y="169" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Campus Wayfinding</text>
+  <text x="635" y="188" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Solver</text>
+
+  <!-- Arm Dynamics & Gesticulation (cy=269) -->
+  <rect x="560" y="240" width="150" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="635" y="264" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Arm Dynamics &amp;</text>
+  <text x="635" y="283" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Gesticulation</text>
+
+  <!-- Servo Mixer & PID Engine (cy=364) -->
+  <rect x="560" y="335" width="150" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="635" y="359" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Servo Mixer &amp;</text>
+  <text x="635" y="378" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">PID Engine</text>
+
+  <!-- Emotion & Animation Engine (cy=504) -->
+  <rect x="560" y="475" width="150" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="635" y="499" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Emotion &amp;</text>
+  <text x="635" y="518" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Animation Engine</text>
+
+  <!-- TTS Speech Engine (cy=604) -->
+  <rect x="560" y="575" width="150" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="635" y="599" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">TTS Speech</text>
+  <text x="635" y="618" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Engine</text>
+
+  <!-- Media & API Server (cy=704) -->
+  <rect x="560" y="675" width="150" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="635" y="699" fill="#1a1e54" font-size="15" font-weight="500" text-anchor="middle">Media &amp; API</text>
+  <text x="635" y="718" fill="#1a1e54" font-size="15" font-weight="500" text-anchor="middle">Server</text>
+
+  <!-- 2D. Actuator Controller Bridge: ESP32 (w=155, h=165, x=745, y=230, cy=312.5) -->
+  <rect x="745" y="230" width="155" height="165" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="822.5" y="307" fill="#1a1e54" font-size="15" font-weight="500" text-anchor="middle">ESP32</text>
+  <text x="822.5" y="329" fill="#1a1e54" font-size="15" font-weight="500" text-anchor="middle">Microcontroller</text>
+
+
+  <!-- ================= 3. OUTPUT LAYER ================= -->
+  <rect x="945" y="25" width="240" height="835" fill="none" stroke="#b07d4f" stroke-width="1.3" />
+  <rect x="945" y="10" width="115" height="18" rx="2" ry="2" fill="#7f4f24" />
+  <text x="1002.5" y="23" fill="#ffffff" font-size="10.5" font-weight="600" letter-spacing="0.4" text-anchor="middle">3. OUTPUT LAYER</text>
+
+  <!-- Output Nodes (w=200, x=965, h=58) -->
+  <!-- Pan / Tilt Head Servos (cy=174) -->
+  <rect x="965" y="145" width="200" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="1065" y="169" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Pan / Tilt</text>
+  <text x="1065" y="188" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Head Servos</text>
+
+  <!-- 4-DOF Robotic Arms (cy=269) -->
+  <rect x="965" y="240" width="200" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="1065" y="264" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">4-DOF</text>
+  <text x="1065" y="283" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Robotic Arms</text>
+
+  <!-- Base Drive Motors (cy=364) -->
+  <rect x="965" y="335" width="200" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="1065" y="359" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Base Drive</text>
+  <text x="1065" y="378" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Motors</text>
+
+  <!-- TFT Eye Displays (cy=504) -->
+  <rect x="965" y="475" width="200" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="1065" y="499" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">TFT Eye</text>
+  <text x="1065" y="518" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Displays</text>
+
+  <!-- Audio Speaker (cy=604) -->
+  <rect x="965" y="575" width="200" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="1065" y="610" fill="#1a1e54" font-size="15" font-weight="500" text-anchor="middle">Audio Speaker</text>
+
+  <!-- Next.js Kiosk Screen (cy=704) -->
+  <rect x="965" y="675" width="200" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="1065" y="699" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Next.js Kiosk</text>
+  <text x="1065" y="718" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Screen</text>
+
+  <!-- Debug Dashboard (cy=804) -->
+  <rect x="965" y="775" width="200" height="58" rx="4" ry="4" fill="#a6b9ff" stroke="#3983f5" stroke-width="1.5" />
+  <text x="1065" y="799" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Debug</text>
+  <text x="1065" y="818" fill="#1a1e54" font-size="14.5" font-weight="500" text-anchor="middle">Dashboard</text>
+
+
+  <!-- ================= PERFECTLY CENTERED, WELL-ORGANIZED CONNECTIONS ================= -->
+
+  <!-- 1. Raspberry Pi Camera -> Face Tracker (Exact horizontal center at y=79) -->
+  <path d="M 176 79 L 230 79" fill="none" stroke="#343a40" stroke-width="1.3" marker-end="url(#arrow)" />
+
+  <!-- 2. Face Tracker -> Shared State Blackboard (Enters upper port at y=145) -->
+  <path d="M 365 79 L 378 79 L 378 145 L 390 145" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+  <!-- 3. Head IMU -> Shared State Blackboard (Exact horizontal center at y=174) -->
+  <path d="M 176 174 L 390 174" fill="none" stroke="#343a40" stroke-width="1.3" marker-end="url(#arrow)" />
+
+  <!-- 4. ToF Array -> Proximity & Scan Controller (Exact horizontal center at y=269) -->
+  <path d="M 176 269 L 230 269" fill="none" stroke="#343a40" stroke-width="1.3" marker-end="url(#arrow)" />
+
+  <!-- 5. Proximity Controller -> Shared State Blackboard (Enters lower port at y=205) -->
+  <path d="M 365 269 L 378 269 L 378 205 L 390 205" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+  <!-- 6. Wheel Encoders -> Servo Mixer & PID Engine (Enters at left edge y=364) -->
+  <path d="M 176 364 L 545 364 L 545 350 L 560 350" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+  <!-- 7. Microphone -> Voice Pipeline (Exact horizontal center at y=504) -->
+  <path d="M 176 504 L 230 504" fill="none" stroke="#343a40" stroke-width="1.3" marker-end="url(#arrow)" />
+
+  <!-- 8. Voice Pipeline -> NLU Engine (Enters at center y=79) -->
+  <path d="M 365 504 L 545 504 L 545 79 L 560 79" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+  <!-- 9. Touchscreen UI -> Media & API Server (Enters at y=700) -->
+  <path d="M 176 704 L 545 704 L 545 700 L 560 700" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+  <!-- 10. Asset & Event Feeds -> Media & API Server (Enters at y=715) -->
+  <path d="M 176 804 L 545 804 L 545 715 L 560 715" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+  <!-- 11. Shared State Blackboard <-> NLU Engine (Clean parallel routing) -->
+  <path d="M 530 135 L 545 135 L 545 70 L 560 70" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+  <path d="M 560 88 L 538 88 L 538 145 L 530 145" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+  <!-- 12. NLU Engine -> Campus Wayfinding Solver (Exact vertical alignment at x=635) -->
+  <path d="M 635 108 L 635 145" fill="none" stroke="#343a40" stroke-width="1.3" marker-end="url(#arrow)" />
+
+  <!-- 13. Campus Wayfinding Solver -> Shared State Blackboard (Straight horizontal at y=174) -->
+  <path d="M 560 174 L 530 174" fill="none" stroke="#343a40" stroke-width="1.3" marker-end="url(#arrow)" />
+
+  <!-- 14. Shared State Blackboard <-> Arm Dynamics (Clean parallel routing) -->
+  <path d="M 530 195 L 545 195 L 545 255 L 560 255" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+  <path d="M 560 275 L 538 275 L 538 210 L 530 210" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+  <!-- 15. Shared State Blackboard <-> Servo Mixer & PID (Clean parallel routing) -->
+  <path d="M 510 225 L 510 350 L 560 350" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+  <path d="M 560 370 L 520 370 L 520 225" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+  <!-- 16. Shared State Blackboard -> Emotion & Animation Engine (Clean drop into center y=504) -->
+  <path d="M 480 225 L 480 504 L 560 504" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+  <!-- 17. Shared State Blackboard -> Media & API Server (Clean drop into y=690) -->
+  <path d="M 450 225 L 450 690 L 560 690" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+  <!-- 18. Arm Dynamics -> ESP32 (Straight horizontal at center y=269) -->
+  <path d="M 710 269 L 745 269" fill="none" stroke="#343a40" stroke-width="1.3" marker-end="url(#arrow)" />
+
+  <!-- 19. Servo Mixer & PID -> ESP32 (Straight horizontal at center y=364) -->
+  <path d="M 710 364 L 745 364" fill="none" stroke="#343a40" stroke-width="1.3" marker-end="url(#arrow)" />
+
+  <!-- 20. ESP32 -> Pan/Tilt Head Servos (Leaves y=269, enters center y=174) -->
+  <path d="M 900 269 L 925 269 L 925 174 L 965 174" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+  <!-- 21. ESP32 -> 4-DOF Robotic Arms (Direct straight horizontal into center y=269) -->
+  <path d="M 900 269 L 965 269" fill="none" stroke="#343a40" stroke-width="1.3" marker-end="url(#arrow)" />
+
+  <!-- 22. ESP32 -> Base Drive Motors (Direct straight horizontal into center y=364) -->
+  <path d="M 900 364 L 965 364" fill="none" stroke="#343a40" stroke-width="1.3" marker-end="url(#arrow)" />
+
+  <!-- 23. Emotion & Animation Engine -> TFT Eye Displays (Exact straight horizontal at center y=504) -->
+  <path d="M 710 504 L 965 504" fill="none" stroke="#343a40" stroke-width="1.3" marker-end="url(#arrow)" />
+
+  <!-- 24. NLU Engine -> TTS Engine (Right bus drop into y=595) -->
+  <path d="M 710 79 L 728 79 L 728 595 L 710 595" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+  <!-- 25. TTS Engine -> Audio Speaker (Exact straight horizontal at center y=604) -->
+  <path d="M 710 604 L 965 604" fill="none" stroke="#343a40" stroke-width="1.3" marker-end="url(#arrow)" />
+
+  <!-- 26. Media & API Server -> Next.js Kiosk Screen (Exact straight horizontal at center y=704) -->
+  <path d="M 710 704 L 965 704" fill="none" stroke="#343a40" stroke-width="1.3" marker-end="url(#arrow)" />
+
+  <!-- 27. Media & API Server -> Debug Dashboard (Clean drop into center y=804) -->
+  <path d="M 680 733 L 680 804 L 965 804" fill="none" stroke="#343a40" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#arrow)" />
+
+</svg>

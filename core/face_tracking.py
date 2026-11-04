@@ -160,6 +160,8 @@ class FaceTracker:
         self.stream_res = tuple(_cfg(stream, "res", default=[320, 180]))
         self.confidence = float(_cfg(cam, "confidence_threshold", default=0.6))
         self.nms = float(_cfg(cam, "nms_threshold", default=0.3))
+        self.exposure_value = float(_cfg(cam, "exposure_value", default=1.0))
+        self.low_light = bool(_cfg(cam, "low_light", default=True))
         self.rotate_180 = bool(_cfg(cam, "rotate_180", default=False))
         self.swap_rb = bool(_cfg(cam, "stream_swap_rb", default=True))
         self.stream_enabled = bool(_cfg(stream, "enabled", default=True))
@@ -326,6 +328,18 @@ class FaceTracker:
             else:
                 self._hardware_transformed = False
             cam.start()
+            try:
+                ctrls = {}
+                if self.exposure_value != 0.0:
+                    ctrls["ExposureValue"] = float(self.exposure_value)
+                if self.low_light:
+                    # Allow shutter time up to 100ms (10 fps min) in low light
+                    ctrls["FrameDurationLimits"] = (33333, 100000)
+                if ctrls:
+                    cam.set_controls(ctrls)
+                    print(f"[FaceTracker] Applied camera exposure controls: {ctrls}")
+            except Exception as ce:
+                print(f"[FaceTracker] Camera controls note: {ce}")
             print(
                 f"[FaceTracker] Camera started ({mode}): "
                 f"{self.main_res} → detect {self.detect_res}"

@@ -2,9 +2,12 @@
 
 camera:
   face_model_path: face_detection_yunet_2023mar.onnx
-  main_res: [1920, 1080]
-  detect_res: [1280, 720]
-  confidence_threshold: 0.6
+  main_res: [640, 360]
+  detect_res: [640, 360]
+  full_sensor_fov: false
+  exposure_value: 1.2
+  low_light: true
+  confidence_threshold: 0.5
   nms_threshold: 0.3
   rotate_180: false
   stream_swap_rb: true

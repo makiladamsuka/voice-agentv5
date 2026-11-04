@@ -612,9 +612,13 @@ async def _monitor_face_greetings_loop() -> None:
                         await asyncio.sleep(0.08)
 
                         if _greet_ws_clients:
-                            payload = json.dumps({"type": "greeting", "text": text, "audio_url": audio_url})
+                            # Fix double voices: send audio_url only to primary active client (last connected).
+                            # Other clients receive audio_url=None to update subtitles without duplicate playback.
+                            primary_ws = list(_greet_ws_clients)[-1]
                             for ws in list(_greet_ws_clients):
                                 try:
+                                    url = audio_url if ws is primary_ws else None
+                                    payload = json.dumps({"type": "greeting", "text": text, "audio_url": url})
                                     await ws.send_text(payload)
                                 except Exception:
                                     pass

@@ -7,6 +7,7 @@
  * completely independently of the voice conversation session.
  *
  * Features:
+ * - Single-voice deduplication guard (prevents dual-audio echo)
  * - Auto-reconnects on disconnect (exponential backoff, max 10s)
  * - Does NOT play greeting while agent is already speaking (voice state guard)
  * - Falls back to /api/tts if no pre-generated audio_url is provided
@@ -52,8 +53,22 @@ export function useFaceGreeting({
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef(1000);
   const mountedRef = useRef(true);
+  const intentionalCloseRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const currentAudioRef = useRef<AudioBufferSourceNode | null>(null);
+
+  // Keep latest callbacks in refs to avoid rebuilding connect/playGreeting closures
+  const isBusyRef = useRef(isBusy);
+  isBusyRef.current = isBusy;
+  const onGreetingStartRef = useRef(onGreetingStart);
+  onGreetingStartRef.current = onGreetingStart;
+  const onGreetingEndRef = useRef(onGreetingEnd);
+  onGreetingEndRef.current = onGreetingEnd;
+  const onStatusUpdateRef = useRef(onStatusUpdate);
+  onStatusUpdateRef.current = onStatusUpdate;
+
+  // Single-voice deduplication ref: ignores duplicate greeting events within 3.5s
+  const lastPlayedRef = useRef<{ text: string; time: number }>({ text: "", time: 0 });
 
   const getAudioCtx = useCallback(() => {
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
@@ -66,11 +81,28 @@ export function useFaceGreeting({
   const playGreeting = useCallback(
     async (text: string, audioUrl: string | null) => {
       if (!enabled) return;
+
+      // Deduplication guard against rapid duplicate events / dual voices
+      const now = Date.now();
+      if (text === lastPlayedRef.current.text && now - lastPlayedRef.current.time < 3500) {
+        console.log(`[FaceGreeting] Skipped duplicate audio: "${text}"`);
+        return;
+      }
+
+      // If backend explicitly sent audioUrl=null, update subtitles without audio
+      if (!audioUrl) {
+        onGreetingStartRef.current?.(text);
+        setTimeout(() => onGreetingEndRef.current?.(), 2500);
+        return;
+      }
+
       // Don't interrupt an ongoing agent response
-      if (isBusy?.()) {
+      if (isBusyRef.current?.()) {
         console.log("[FaceGreeting] Skipped — agent busy.");
         return;
       }
+
+      lastPlayedRef.current = { text, time: now };
 
       // Stop any previous greeting
       try {
@@ -81,9 +113,7 @@ export function useFaceGreeting({
       const backendHost =
         typeof window !== "undefined" ? window.location.hostname : "localhost";
 
-      const resolvedUrl = audioUrl
-        ? `http://${backendHost}:8080${audioUrl}`
-        : `/api/tts?text=${encodeURIComponent(text)}`;
+      const resolvedUrl = `http://${backendHost}:8080${audioUrl}`;
 
       try {
         const ctx = getAudioCtx();
@@ -105,16 +135,16 @@ export function useFaceGreeting({
 
         // Notify parent: greeting started with text
         setIsGreeting(true);
-        onGreetingStart?.(text);
+        onGreetingStartRef.current?.(text);
 
         source.onended = () => {
           setIsGreeting(false);
-          onGreetingEnd?.();
+          onGreetingEndRef.current?.();
           currentAudioRef.current = null;
         };
 
         source.start(0);
-        console.log(`[FaceGreeting] 🎙️ Playing: "${text}"`);
+        console.log(`[FaceGreeting] 🎙️ Playing single voice: "${text}"`);
       } catch (e) {
         console.warn("[FaceGreeting] Web Audio failed, trying HTML5 Audio fallback:", e);
         try {
@@ -124,32 +154,42 @@ export function useFaceGreeting({
           currentAudioRef.current = audio as any;
           audio.onplay = () => {
             setIsGreeting(true);
-            onGreetingStart?.(text);
+            onGreetingStartRef.current?.(text);
           };
           audio.onended = () => {
             setIsGreeting(false);
-            onGreetingEnd?.();
+            onGreetingEndRef.current?.();
             currentAudioRef.current = null;
           };
           audio.onerror = () => {
             setIsGreeting(false);
-            onGreetingEnd?.();
+            onGreetingEndRef.current?.();
             currentAudioRef.current = null;
           };
           await audio.play();
         } catch (e2) {
           console.error("[FaceGreeting] Audio playback failed:", e2);
           setIsGreeting(false);
-          onGreetingEnd?.();
+          onGreetingEndRef.current?.();
         }
       }
     },
-    [enabled, isBusy, getAudioCtx, onGreetingStart, onGreetingEnd]
+    [enabled, getAudioCtx]
   );
 
   const connect = useCallback(() => {
     if (!mountedRef.current || !enabled) return;
 
+    // Close any previous stale socket before establishing a new one
+    if (wsRef.current) {
+      try {
+        intentionalCloseRef.current = true;
+        wsRef.current.close();
+      } catch (_) {}
+      wsRef.current = null;
+    }
+
+    intentionalCloseRef.current = false;
     const backendHost =
       typeof window !== "undefined" ? window.location.hostname : "localhost";
     const url = nluServerUrl
@@ -174,7 +214,7 @@ export function useFaceGreeting({
         if (msg.type === "greeting") {
           void playGreeting(msg.text, msg.audio_url ?? null);
         } else if (msg.type === "robot_status") {
-          onStatusUpdate?.({
+          onStatusUpdateRef.current?.({
             emotion: String(msg.emotion || "idle"),
             faceDetected: Boolean(msg.face_detected),
             faceCount: Number(msg.face_count || 0),
@@ -190,8 +230,8 @@ export function useFaceGreeting({
     };
 
     ws.onclose = () => {
-      console.log("[FaceGreeting] Disconnected. Reconnecting...");
-      if (!mountedRef.current || !enabled) return;
+      console.log("[FaceGreeting] Disconnected.");
+      if (intentionalCloseRef.current || !mountedRef.current || !enabled) return;
       reconnectTimerRef.current = setTimeout(() => {
         reconnectDelayRef.current = Math.min(
           reconnectDelayRef.current * 2,
@@ -204,9 +244,11 @@ export function useFaceGreeting({
 
   useEffect(() => {
     mountedRef.current = true;
+    intentionalCloseRef.current = false;
     if (!enabled) {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       try {
+        intentionalCloseRef.current = true;
         wsRef.current?.close();
       } catch (_) {}
       try {
@@ -216,9 +258,10 @@ export function useFaceGreeting({
       return;
     }
     // Small delay so the NLU server has time to start before we connect
-    const t = setTimeout(connect, 2000);
+    const t = setTimeout(connect, 1500);
     return () => {
       mountedRef.current = false;
+      intentionalCloseRef.current = true;
       clearTimeout(t);
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       try {

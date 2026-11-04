@@ -5,10 +5,12 @@
 
 camera:
   face_model_path: face_detection_yunet_2023mar.onnx
-  main_res: [1920, 1080]     # max camera sensor resolution
-  detect_res: [1280, 720]     # optimized detection resolution for kiosk CPU
+  main_res: [640, 360]     # optimized camera sensor resolution
+  detect_res: [640, 360]     # optimized detection resolution for kiosk CPU
+  exposure_value: 1.2        # EV compensation boost for low light (+1.2 stops)
+  low_light: true            # allow longer shutter times up to 100ms in dark rooms
   full_sensor_fov: false     # use full sensor FOV for higher res
-  confidence_threshold: 0.6
+  confidence_threshold: 0.5
   nms_threshold: 0.3
   rotate_180: false
   stream_swap_rb: true

@@ -666,6 +666,11 @@ export function useNluVoice({
     const isStreamActive = stream && stream.getAudioTracks().some(track => track.readyState === "live");
 
     if (!isStreamActive) {
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        throw new Error(
+          "Microphone access blocked: browser requires a Secure Context. Please access via http://localhost:3000 (not via IP address) or use HTTPS."
+        );
+      }
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,

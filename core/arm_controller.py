@@ -281,10 +281,10 @@ class ArmController:
                 time.sleep(loop_delay)
                 continue
 
-            # Yield to TalkGestureService while it is active — same pattern
-            # as bye_wave: passively track BB values so we resume cleanly.
+            # Yield to TalkGestureService while it is active, UNLESS a greeting is running
+            # Greetings (hi wave) strictly own the arms over random talking gestures.
             talk_active = self.bb.read("talk_gesture_active").get("talk_gesture_active", False)
-            if talk_active:
+            if talk_active and not greeting_active:
                 current_arm = self.bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
                 self._current[0] = float(current_arm["arm_a0"])
                 self._current[1] = float(current_arm["arm_a1"])

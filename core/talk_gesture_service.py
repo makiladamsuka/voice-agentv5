@@ -268,9 +268,12 @@ class TalkGestureService:
         self.bb.write(talk_gesture_active=False)
         
         while self.bb.read("running")["running"]:
-            # Check if bye wave is active - pause talk gestures during bye animations
-            bye_wave_active = self.bb.read("bye_wave_active")["bye_wave_active"]
-            if bye_wave_active:
+            # Check if bye wave or greeting is active - pause talk gestures completely
+            guards = self.bb.read("bye_wave_active", "arm_greeting_active")
+            if guards.get("bye_wave_active") or guards.get("arm_greeting_active"):
+                if last_speaking:
+                    self.bb.write(talk_gesture_active=False)
+                    last_speaking = False
                 time.sleep(self.poll_interval)
                 continue
 

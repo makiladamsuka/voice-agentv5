@@ -33,6 +33,7 @@ class Blackboard:
     face_roll_deg: float = 0.0
     face_area_ratio: float = 0.0
     face_count: int = 0
+    no_face_elapsed_sec: float = 0.0
     face_candidates: list = None
     active_face_index: int = -1    # index into face_candidates (-1 = none / center)
     body_detected: bool = False
@@ -261,7 +262,7 @@ class Blackboard:
     def read(self, *fields: str) -> dict[str, Any]:
         """Atomically read one or more fields. Returns a plain dict."""
         with self._lock:
-            return {f: getattr(self, f) for f in fields}
+            return {f: getattr(self, f, None) for f in fields}
 
     def read_all(self) -> dict[str, Any]:
         """Read every public field atomically (for debug / status)."""

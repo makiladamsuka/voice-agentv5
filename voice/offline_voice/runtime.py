@@ -168,9 +168,11 @@ _NUM_WORDS = {
 # Prefixes to strip when generating hashmap variants
 _STRIP_PREFIXES = re.compile(
     r"^(can you |could you |please |i want to |i'd like to |i need to "
-    r"|i am looking for |i'm looking for |take me to |bring me to "
-    r"|guide me to |show me the way to |navigate me to "
-    r"|find the |find me |show me )",
+    r"|i am looking for |i'm looking for |take me to |take me |bring me to "
+    r"|guide me to |show me the way to |navigate me to |navigate to "
+    r"|where is the |where is |where are the |where are |where's the |where's "
+    r"|how do i get to the |how do i get to |how can i get to "
+    r"|find the |find me |find |show me )",
     re.IGNORECASE,
 )
 

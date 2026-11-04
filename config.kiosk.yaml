@@ -213,10 +213,10 @@ servo:
   baud: 115200
   pan_min: 25.0
   pan_max: 150.0
-  tilt_min: 40.0
+  tilt_min: 60.0
   tilt_max: 100.0
   pan_center: 100.0
-  tilt_center: 70.0  # mechanical upright (0°)
+  tilt_center: 60.0  # mechanical upright (0°)
   # 1 command unit = 1 physical servo degree (firmware bug fixed)
   tilt_mechanical_scale: 1.0   # mech° = (tilt_cmd - tilt_center) * scale
   tilt_max_mechanical_deg: 45.0

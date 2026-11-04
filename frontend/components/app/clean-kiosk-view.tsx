@@ -46,7 +46,15 @@ interface RobotSettingsState {
 }
 
 export function CleanKioskView() {
-  const nluAdapter = useNluAdapter();
+  // Hardware switches loaded from /api/robot-settings
+  const [robotSettings, setRobotSettings] = useState<RobotSettingsState>({
+    faceGreeting: true,
+    talkGestures: true,
+    baseHomeSpin: true,
+    faceTracking: true,
+  });
+
+  const nluAdapter = useNluAdapter({ autoGreetEnabled: robotSettings.faceGreeting });
   const startRef = useRef(nluAdapter.start);
   startRef.current = nluAdapter.start;
   const endRef = useRef(nluAdapter.end);
@@ -68,14 +76,6 @@ export function CleanKioskView() {
   const [clearedAt, setClearedAt] = useState<number>(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [volume, setVolume] = useState<number>(0.85);
-
-  // Hardware switches loaded from /api/robot-settings
-  const [robotSettings, setRobotSettings] = useState<RobotSettingsState>({
-    faceGreeting: true,
-    talkGestures: true,
-    baseHomeSpin: true,
-    faceTracking: true,
-  });
 
   useEffect(() => {
     // 1. Load volume from localStorage and backend /api/volume
@@ -255,6 +255,22 @@ export function CleanKioskView() {
     };
   }, [nluAdapter.messages, nluAdapter.transcriptions, clearedAt]);
 
+  // ── 20s Inactivity Reset Timer ──
+  // Whenever text is shown (greetings, answers, queries), return to "Welcome to FIT EXPO" home after 20s of idle time
+  useEffect(() => {
+    if (!activeCaption.text) return;
+    // Don't reset while robot or user is actively interacting
+    if (agentState === "speaking" || agentState === "listening" || agentState === "thinking") {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setClearedAt(Date.now());
+    }, 20_000);
+
+    return () => clearTimeout(timer);
+  }, [activeCaption.text, agentState]);
+
   return (
     <div className="relative w-screen h-screen bg-white dark:bg-neutral-950 text-neutral-900 dark:text-neutral-50 overflow-hidden flex flex-col justify-between p-6 md:p-8 select-none">
       {/* ── Top Navigation Bar ── */}
@@ -284,8 +300,11 @@ export function CleanKioskView() {
         <EmojiStage
           transcript={activeCaption.text}
           convState={agentState}
-          emotion="idle"
-          faceCount={1}
+          emotion={nluAdapter.robotStatus?.emotion ?? "idle"}
+          faceCount={nluAdapter.robotStatus?.faceCount ?? 0}
+          faceDetected={nluAdapter.robotStatus?.faceDetected ?? false}
+          faceArea={nluAdapter.robotStatus?.faceArea ?? 0}
+          noFaceSec={nluAdapter.robotStatus?.noFaceSec ?? 0}
         />
 
         {/* Hero Transcript Display */}

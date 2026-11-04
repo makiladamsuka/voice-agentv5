@@ -531,10 +531,35 @@ async def _monitor_face_greetings_loop() -> None:
     if _bb is None:
         return
     _last_processed_greet_seq = _bb.read("face_greeting_seq").get("face_greeting_seq", 0)
+    last_status_broadcast_ts = 0.0
 
     while _bb.read("running").get("running", True):
         await asyncio.sleep(0.3)
         try:
+            # Broadcast live robot presence & TFT eye emotion to kiosk frontend every ~0.5s
+            now_ts = time.time()
+            if _greet_ws_clients and (now_ts - last_status_broadcast_ts >= 0.5):
+                last_status_broadcast_ts = now_ts
+                bb_data = _bb.read(
+                    "emotion",
+                    "face_detected",
+                    "face_count",
+                    "face_area_ratio",
+                    "no_face_elapsed_sec",
+                )
+                status_payload = json.dumps({
+                    "type": "robot_status",
+                    "emotion": str(bb_data.get("emotion") or "idle"),
+                    "face_detected": bool(bb_data.get("face_detected", False)),
+                    "face_count": int(bb_data.get("face_count", 0)),
+                    "face_area": float(bb_data.get("face_area_ratio", 0.0) or 0.0),
+                    "no_face_sec": float(bb_data.get("no_face_elapsed_sec", 0.0) or 0.0),
+                })
+                for ws in list(_greet_ws_clients):
+                    try:
+                        await ws.send_text(status_payload)
+                    except Exception:
+                        pass
             state = _bb.read("face_greeting_seq", "face_greeting_text", "agent_speaking", "user_speaking")
             seq = state.get("face_greeting_seq", 0)
             if seq > _last_processed_greet_seq:

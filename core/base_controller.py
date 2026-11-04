@@ -207,6 +207,7 @@ class BaseController:
         self.prox_comp_gain = float(prox.get("compensation_gain", 0.90))
         self.prox_cooldown_sec = float(prox.get("cooldown_sec", 1.8))
         self.prox_post_motion_blanking_sec = float(prox.get("post_motion_blanking_sec", 0.5))
+        self.prox_max_dist_mm = int(prox.get("tof_max_dist_mm", 1000))
         inv = _cfg(prox, "investigate", default={}) or {}
         self.prox_investigate_enabled = bool(inv.get("enabled", True))
         self.prox_motion_fade_sec = float(inv.get("motion_fade_sec", 5.0))
@@ -264,6 +265,7 @@ class BaseController:
         )
 
     def _start_investigate(self, now: float, zone: str, world_yaw: float, phase: str, motion_id: int = 0) -> None:
+        from lib.prox_investigate import glance_emotion_for_zone
         self.bb.write(
             prox_investigate_active=True,
             prox_investigate_phase=phase,
@@ -271,6 +273,7 @@ class BaseController:
             prox_investigate_yaw=world_yaw,
             prox_investigate_since=now,
             prox_investigate_motion_id=motion_id,
+            prox_glance_emotion=glance_emotion_for_zone(zone),
             prox_search_active=False,
         )
 
@@ -424,13 +427,18 @@ class BaseController:
         state: dict,
         *,
         require_head_lead: bool = True,
+        max_step_override: Optional[float] = None,
     ) -> float:
         """Return 0 if base not allowed; apply encoder and world-yaw limits."""
         if not self._gate.allowed() or not state.get("base_motion_allowed", True):
             return 0.0
         if require_head_lead and self._reject_head_lead(step, pan_cmd):
             return 0.0
-        hard_max = min(self.max_step, self.single_shot_max)
+        hard_max = (
+            float(max_step_override)
+            if max_step_override is not None
+            else min(self.max_step, self.single_shot_max)
+        )
         if abs(step) > hard_max:
             step = math.copysign(hard_max, step)
         pan_offset = self._head_pan_offset(pan_cmd)
@@ -710,6 +718,9 @@ class BaseController:
             return None, "", 0.0
         if state.get("prox_approach_confidence", 0) < self.prox_min_confidence:
             return None, "", 0.0
+        dist_mm = int(state.get("prox_approach_distance", 0) or 0)
+        if dist_mm > self.prox_max_dist_mm:
+            return None, "", 0.0
         recent = [t for t in self._prox_turn_timestamps if now - t < self.prox_window_sec]
         if len(recent) >= self.prox_max_turns:
             return None, "", 0.0
@@ -776,7 +787,7 @@ class BaseController:
         step = step_sign * self.prox_turn_step * self.base_sign
         step = self._apply_gate(
             step, pan, state["base_encoder_deg"], state,
-            require_head_lead=False,
+            require_head_lead=False, max_step_override=self.prox_turn_step,
         )
         if abs(step) < self.min_step:
             return None, "", 0.0
@@ -797,7 +808,7 @@ class BaseController:
                 prox_search_zone=zone,
             )
 
-        comp_pan = self._comp_pan_for_step(step, pan, self.prox_comp_gain)
+        comp_pan = 0.0 if self.prox_investigate_enabled else self._comp_pan_for_step(step, pan, self.prox_comp_gain)
         return step, "proximity", comp_pan
 
     def _plan_prox_verified_revisit(
@@ -825,13 +836,13 @@ class BaseController:
         pan = state["servo_pan"]
         step = self._apply_gate(
             step, pan, state["base_encoder_deg"], state,
-            require_head_lead=False,
+            require_head_lead=False, max_step_override=self.prox_turn_step,
         )
         if abs(step) < self.min_step:
             return None, "", 0.0
         self._last_prox_ts = now
         self._start_investigate(now, "R" if err > 0 else "L", float(priority_yaw), "turn")
-        comp_pan = self._comp_pan_for_step(step, pan, self.prox_comp_gain)
+        comp_pan = 0.0 if self.prox_investigate_enabled else self._comp_pan_for_step(step, pan, self.prox_comp_gain)
         return step, "prox_revisit", comp_pan
 
     # ── Main loop ──────────────────────────────────────────────────────────────
@@ -866,7 +877,7 @@ class BaseController:
                 "imu_available", "imu_gyro_dps", "imu_gyro_z_dps",
                 "imu_yaw_integral_deg",
                 "yaw_reference_locked",
-                "prox_approach_active", "prox_approach_zone",
+                "prox_approach_active", "prox_approach_zone", "prox_approach_distance",
                 "prox_approach_confidence", "prox_post_turn_lockout_ts",
                 "prox_approach_ts", "prox_investigate_active",
                 "prox_verified_priority_yaw",
@@ -944,7 +955,10 @@ class BaseController:
                 if step is None:
                     step, source, comp_pan = self._plan_memory_step(now, state)
             elif mode == "wander":
-                step, source, comp_pan = self._plan_prox_verified_revisit(now, state)
+                if self.prox_enabled:
+                    step, source, comp_pan = self._plan_proximity_step(now, state)
+                if step is None:
+                    step, source, comp_pan = self._plan_prox_verified_revisit(now, state)
                 if step is None:
                     step, source, comp_pan = self._plan_wander_follow(now, state)
 

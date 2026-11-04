@@ -223,3 +223,57 @@ def test_crowd_greetings_and_emotions():
         for _ in range(25)
     }
     assert "curious" in picks
+
+
+def test_tof_1m_orienting_reflex_eye_base_head():
+    from core.tof_state import TofState
+    from core.tof_stream import TofStreamHandler
+
+    bb = Blackboard()
+    mixer = ServoMixer(bb, None)
+    ctrl = BaseController(bb, None)
+    loop = ServoLoop(bb)
+    tof_state = TofState()
+    handler = TofStreamHandler(tof_state, bb)
+
+    # 1. Above 1m (1250mm) PROX and TOF lines are strictly ignored
+    mixer._handle_prox_line("PROX A=L V=-150 D=1250 C=5")
+    assert bb.read("prox_approach_active")["prox_approach_active"] is False
+
+    for _ in range(4):
+        handler.handle_tof_line("TOF L=1250 C=-1 R=-1 VL=-80 VC=0 VR=0")
+    assert bb.read("prox_approach_active")["prox_approach_active"] is False
+
+    # 2. Person stands at 750mm on Left (within 1m) -> TofStreamHandler triggers approach
+    for _ in range(3):
+        handler.handle_tof_line("TOF L=750 C=-1 R=-1 VL=0 VC=0 VR=0")
+    state = bb.read(
+        "face_detected", "face_count", "body_detected", "servo_pan",
+        "base_world_yaw_deg", "base_encoder_deg", "prox_approach_active",
+        "prox_approach_zone", "prox_approach_distance", "prox_approach_confidence",
+        "prox_approach_ts", "prox_post_turn_lockout_ts", "tof_surrounded",
+        "tof_too_close_safety", "voice_session_active",
+    )
+    assert state["prox_approach_active"] is True
+    assert state["prox_approach_zone"] == "L"
+    assert state["prox_approach_distance"] == 750
+
+    # 3. BaseController plans full unclamped 28° step toward Left, sets eye emotion, and 0 comp_pan
+    step, source, comp_pan = ctrl._plan_proximity_step(500.0, state)
+    assert source == "proximity"
+    assert abs(step) == ctrl.prox_turn_step  # 28.0°, not clamped to 15.0°
+    assert comp_pan == 0.0
+    assert bb.read("prox_glance_emotion")["prox_glance_emotion"] == "looking_left_natural"
+    assert bb.read("prox_investigate_active")["prox_investigate_active"] is True
+
+    # 4. ServoLoop pans head Left (> 100.0°) and suppresses base counter-rotation during turn
+    loop._pan = 100.0
+    loop._last_base_enc = 0.0
+    bb.write(base_encoder_deg=-15.0)
+    loop._apply_base_compensation()
+    assert loop._pan == 100.0  # Not counter-rotated right!
+
+    for _ in range(10):
+        loop._tick_prox_investigate(now=500.2, dt=0.03, effective_tilt_center=loop.tilt_center)
+    assert loop._pan > 105.0  # Head actively panning Left toward 116.0°
+

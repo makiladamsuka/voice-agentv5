@@ -7,7 +7,7 @@ from collections import deque
 from dataclasses import dataclass
 
 MIN_TRUST_MM = 80
-MAX_TRUST_MM = 1800
+MAX_TRUST_MM = 1000
 HOLD_SEC = 0.4
 AVG_WINDOW = 5
 MAX_VEL_MM_S = 300

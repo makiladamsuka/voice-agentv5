@@ -334,6 +334,7 @@ class ServoLoop:
         self.prox_glance_return_sec = float(prox.get("glance_return_sec", 0.6))
         self.prox_glance_blend = float(prox.get("glance_blend", 0.4))
         self.prox_glance_blend_track = float(inv.get("glance_blend_track", 0.35))
+        self.prox_investigate_pan_deg = float(inv.get("head_lead_pan_deg", 16.0))
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self._pan = self.pan_center
@@ -787,8 +788,12 @@ class ServoLoop:
     
     def _apply_base_compensation(self) -> None:
         """Closed-loop encoder feed-forward: counter-rotate head 1:1 with actual base movement."""
-        state = self.bb.read("base_encoder_deg")
+        state = self.bb.read("base_encoder_deg", "prox_investigate_active")
         enc = float(state.get("base_encoder_deg", 0.0) or 0.0)
+        if state.get("prox_investigate_active", False):
+            self._last_base_enc = enc
+            self._pending_base_comp_deg = 0.0
+            return
         
         if self._last_base_enc is None or abs(enc - self._last_base_enc) > 25.0:
             self._last_base_enc = enc
@@ -1232,16 +1237,23 @@ class ServoLoop:
         """Tilt sweep while investigating a ToF cue. Returns True if handling motion."""
         state = self.bb.read(
             "prox_investigate_active", "prox_investigate_phase", "prox_investigate_since",
-            "face_detected", "body_detected",
+            "prox_investigate_zone", "face_detected", "body_detected",
         )
         if not state.get("prox_investigate_active"):
             return False
+        zone = str(state.get("prox_investigate_zone", ""))
+        if zone == "L":
+            investigate_pan_target = clamp(self.pan_center + self.prox_investigate_pan_deg, self.pan_min, self.pan_max)
+        elif zone == "R":
+            investigate_pan_target = clamp(self.pan_center - self.prox_investigate_pan_deg, self.pan_min, self.pan_max)
+        else:
+            investigate_pan_target = self.pan_center
         phase = str(state.get("prox_investigate_phase", ""))
         if phase == "turn":
             pan_max_step = min(self.pan_max_step_deg, self.pan_track_slew_dps * max(dt, 0.001))
             tilt_max_step = min(self.tilt_max_step_deg, self.tilt_track_slew_dps * max(dt, 0.001))
             self._pan = _smooth_toward_stepped(
-                self._pan, self.pan_center, dt,
+                self._pan, investigate_pan_target, dt,
                 smooth_hz=self.pan_smooth_hz, lo=self.pan_min, hi=self.pan_max,
                 max_step=pan_max_step,
             )
@@ -1264,6 +1276,7 @@ class ServoLoop:
                 prox_investigate_active=False,
                 prox_investigate_phase="",
                 prox_search_active=False,
+                prox_glance_emotion="",
             )
             return True
 
@@ -1272,6 +1285,7 @@ class ServoLoop:
                 prox_investigate_active=False,
                 prox_investigate_phase="done",
                 prox_search_active=False,
+                prox_glance_emotion="",
                 prox_scan_complete_ts=now,
             )
             return True
@@ -1292,7 +1306,7 @@ class ServoLoop:
         pan_max_step = min(self.pan_max_step_deg, self.pan_track_slew_dps * max(dt, 0.001))
         tilt_max_step = min(self.tilt_max_step_deg, self.tilt_track_slew_dps * max(dt, 0.001))
         self._pan = _smooth_toward_stepped(
-            self._pan, self.pan_center, dt,
+            self._pan, investigate_pan_target, dt,
             smooth_hz=self.pan_smooth_hz, lo=self.pan_min, hi=self.pan_max,
             max_step=pan_max_step,
         )
@@ -1331,7 +1345,7 @@ class ServoLoop:
 
             self._lss_active = False
             self._forward_return_active = False
-            self.bb.write(prox_search_active=False, prox_investigate_active=False)
+            self.bb.write(prox_search_active=False, prox_investigate_active=False, prox_glance_emotion="")
             self._pan_pid.soften()
             self._tilt_pid.soften()
             self._target_glide.soften()

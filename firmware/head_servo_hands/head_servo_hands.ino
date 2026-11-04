@@ -87,8 +87,8 @@ const char    TOF_LABEL[TOF_COUNT]  = {'L', 'C', 'R'};
 const float   TOF_SAMPLE_HZ = 10.0f;
 const int     TOF_MAX_RANGE_MM = 2200;
 const int     TOF_MIN_RANGE_MM = 80;
-const int     TOF_TRUST_MAX_MM = 1800;   // above: unreliable max-range jitter
-const int     APPROACH_MAX_MM = 1500;    // only detect approach below this
+const int     TOF_TRUST_MAX_MM = 1000;   // above 1m: ignored for exhibition
+const int     APPROACH_MAX_MM = 1000;    // only detect approach within 1m
 const uint32_t TOF_TIMING_BUDGET_US = 66000;
 const float   FILTER_ALPHA = 0.25f;
 const unsigned long FILTER_HOLD_MS = 400;
@@ -97,7 +97,7 @@ const int     BASELINE_DRIFT_MM = 50;
 const int     APPROACH_THRESHOLD_MM = 80;
 const float   APPROACH_VEL_THRESHOLD = -30.0f;    // mm/s (negative = closer)
 const int     APPROACH_CONFIRM_FRAMES = 2;
-const unsigned long APPROACH_DWELL_MS = 800;       // walk-by filter
+const unsigned long APPROACH_DWELL_MS = 300;       // responsive approach confirmation
 const unsigned long BASELINE_FORCE_RELEARN_MS = 10000;
 const unsigned long TOF_EVENT_COOLDOWN_MS = 300;
 const unsigned long TOF_STREAM_MS = 100;           // 10 Hz viz stream
@@ -105,7 +105,7 @@ const unsigned long TOF_STREAM_BUSY_MS = 250;      // 4 Hz while base spinning
 const float   DEPART_VEL_THRESHOLD = 50.0f;       // mm/s (positive = leaving)
 const int     DEPART_CONFIRM_FRAMES = 4;
 const int     DEPART_MIN_START_MM = 600;
-const int     PRESENCE_ENTER_MM = 800;
+const int     PRESENCE_ENTER_MM = 950;
 const int     PRESENCE_EXIT_MM = 1000;
 const unsigned long PRESENCE_DEBOUNCE_MS = 500;
 

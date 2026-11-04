@@ -413,12 +413,12 @@ proximity:
   max_turns_per_window: 6
   turn_window_sec: 30.0
   # How far to turn toward a side sensor (~45° mounting angle)
-  turn_step_deg: 20.0
+  turn_step_deg: 28.0
   # Approach harness: turn base toward live ToF fused bearing (not only PROX velocity)
   tof_turn_enabled: true
   tof_min_bearing_deg: 3.0
   tof_min_dist_mm: 80
-  tof_max_dist_mm: 2000
+  tof_max_dist_mm: 1000
   tof_confirm_ticks: 2
   tof_merge_radius_mm: 350
   tof_aim_tolerance_deg: 5.0
@@ -439,7 +439,7 @@ proximity:
   # Min time between proximity turns
   cooldown_sec: 1.8
   # Counter-rotate neck to keep gaze during turn
-  compensation_gain: 0.90
+  compensation_gain: 0.0
   # Ignore PROX after any base motion ends
   post_motion_blanking_sec: 0.5
   # How long to hold forward-search after prox turn
@@ -457,7 +457,8 @@ proximity:
     scan_duration_sec: 2.5
     scan_tilt_down_deg: 12.0
     scan_tilt_up_deg: 8.0
-    zone_yaw_deg: 20.0
+    zone_yaw_deg: 28.0
+    head_lead_pan_deg: 16.0
     glance_blend_track: 0.35
     revisit_enabled: true
     revisit_max_age_sec: 5.0

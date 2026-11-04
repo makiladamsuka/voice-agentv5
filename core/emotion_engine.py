@@ -127,6 +127,8 @@ class EmotionEngine:
                 "conv_emotion",
                 "prox_glance_active",
                 "prox_glance_emotion",
+                "prox_investigate_active",
+                "prox_investigate_zone",
                 "face_detected",
                 "face_area_ratio",
                 "face_norm_x",
@@ -261,8 +263,10 @@ class EmotionEngine:
             self._thinking_glance_until = 0.0
             self._conv_emotion_last = None
 
-            if state.get("prox_glance_active") and state.get("prox_glance_emotion"):
-                self._set(str(state["prox_glance_emotion"]))
+            if (state.get("prox_glance_active") or state.get("prox_investigate_active")) and (state.get("prox_glance_emotion") or state.get("prox_investigate_zone")):
+                from lib.prox_investigate import glance_emotion_for_zone
+                emo = state.get("prox_glance_emotion") or glance_emotion_for_zone(str(state.get("prox_investigate_zone", "")))
+                self._set(str(emo))
                 time.sleep(loop_delay)
                 continue
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from core.tof_state import FILTER_BANK, STATE, _TOF_RE
+from core.tof_state import FILTER_BANK, STATE, SWAP_LEFT_RIGHT, _TOF_RE
 
 if TYPE_CHECKING:
     from core.blackboard import Blackboard
@@ -29,6 +29,10 @@ class TofStreamHandler:
         self.tof_gyro_settle_dps = float(gyro_settle_dps)
         self._tof_ignore_until = 0.0
         self._last_base_busy = False
+        self._zone_streaks: dict[str, int] = {"L": 0, "C": 0, "R": 0}
+        self._clear_streak = 0
+        self._last_synth_zone = ""
+        self._last_synth_ts = 0.0
 
     def accept_tof_samples(self) -> bool:
         if time.time() < self._tof_ignore_until:
@@ -70,10 +74,88 @@ class TofStreamHandler:
         raw = [int(m.group(i)) for i in range(1, 4)]
         mm, vel, open_flags = FILTER_BANK.update_all(raw)
         self._state.update_sample(mm, vel, open_flags=open_flags)
+        self._update_bb_from_sample(mm, vel)
+
+    def _update_bb_from_sample(
+        self, mm: list[int], vel: list[int | None]
+    ) -> None:
+        if self._bb is None:
+            return
+        idx_l = 2 if SWAP_LEFT_RIGHT else 0
+        idx_r = 0 if SWAP_LEFT_RIGHT else 2
+        zone_mm = {"L": mm[idx_l], "C": mm[1], "R": mm[idx_r]}
+        zone_vel = {"L": vel[idx_l], "C": vel[1], "R": vel[idx_r]}
+
+        for z in ("L", "C", "R"):
+            d = zone_mm[z]
+            if 80 <= d <= 1000:
+                self._zone_streaks[z] = min(30, self._zone_streaks[z] + 1)
+            else:
+                self._zone_streaks[z] = 0
+
+        zl = self._zone_streaks["L"] >= 2
+        zc = self._zone_streaks["C"] >= 2
+        zr = self._zone_streaks["R"] >= 2
+        z_count = int(zl) + int(zc) + int(zr)
+        surrounded = (zl and zr) or (z_count >= 3)
+        too_close = any(0 < zone_mm[z] < 300 for z in ("L", "C", "R"))
+
+        self._bb.write(
+            prox_zone_left=zl,
+            prox_zone_center=zc,
+            prox_zone_right=zr,
+            prox_zone_count=z_count,
+            tof_surrounded=surrounded,
+            tof_too_close_safety=too_close,
+        )
+
+        # Synthesize approach trigger for sustained presence within <= 1000mm
+        side_candidates = [
+            z for z in ("L", "R")
+            if self._zone_streaks[z] >= 3 and 300 <= zone_mm[z] <= 1000
+        ]
+        if side_candidates:
+            best_zone = min(side_candidates, key=lambda z: zone_mm[z])
+        elif self._zone_streaks["C"] >= 3 and 300 <= zone_mm["C"] <= 1000:
+            best_zone = "C"
+        else:
+            best_zone = ""
+
+        now = time.time()
+        if best_zone:
+            self._clear_streak = 0
+            streak = self._zone_streaks[best_zone]
+            is_new_entry = (streak == 3) or (best_zone != self._last_synth_zone)
+            is_retrigger_due = (now - self._last_synth_ts) >= 2.2
+            if is_new_entry or is_retrigger_due:
+                self._last_synth_zone = best_zone
+                self._last_synth_ts = now
+                v = float(zone_vel[best_zone] or 0.0)
+                self._bb.write(
+                    prox_approach_zone=best_zone,
+                    prox_approach_velocity=v,
+                    prox_approach_distance=int(zone_mm[best_zone]),
+                    prox_approach_confidence=max(4, streak),
+                    prox_approach_active=True,
+                    prox_approach_ts=now,
+                )
+        else:
+            self._clear_streak += 1
+            if self._clear_streak >= 5:
+                self._last_synth_zone = ""
+                if self._bb.read("prox_approach_active")["prox_approach_active"]:
+                    self._bb.write(
+                        prox_approach_active=False,
+                        prox_approach_zone="",
+                        prox_approach_confidence=0,
+                    )
 
     def reset_after_motion(self) -> None:
         self._state.reset_tracks()
         FILTER_BANK.reset()
+        self._zone_streaks = {"L": 0, "C": 0, "R": 0}
+        self._clear_streak = 0
+        self._last_synth_zone = ""
 
     def on_spin_start(self) -> None:
         self._last_base_busy = True

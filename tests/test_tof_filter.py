@@ -57,7 +57,7 @@ def test_filter_bank_three_channels():
 
 def test_trusted_range_constants():
     assert MIN_TRUST_MM == 80
-    assert MAX_TRUST_MM == 1800
+    assert MAX_TRUST_MM == 1000
 
 
 if __name__ == "__main__":

@@ -147,7 +147,8 @@ class ServoMixer:
         self.max_yaw_deg = float(b.get("max_yaw_deg", 120.0))
 
         prox = _cfg(cfg, "proximity", default={}) or {}
-        self._prox_swap_lr = bool(prox.get("swap_left_right", False))
+        self._prox_swap_lr = bool(prox.get("swap_left_right", False))
+        self._prox_max_dist_mm = int(prox.get("tof_max_dist_mm", 1000))
 
         a = _cfg(cfg, "arms", default={}) or {}
         self._arms_enabled = bool(a.get("enabled", False))
@@ -558,7 +559,9 @@ class ServoMixer:
 
         m = _PROX_EVENT_RE.match(line)
         if m:
-            dist_mm = int(m.group(3))
+            dist_mm = int(m.group(3))
+            if dist_mm <= 0 or dist_mm > self._prox_max_dist_mm:
+                return
             conf = int(m.group(4))
             raw_zone = m.group(1)
             zone = self._map_prox_zone(raw_zone)

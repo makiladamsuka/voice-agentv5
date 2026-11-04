@@ -673,11 +673,13 @@ class ServoLoop:
         return (now - self._off_forward_since) >= self.forward_return_timeout_sec
 
     def _maybe_start_forward_return(self, now: float, camera_world_yaw_deg: float, *, tracking_face: bool) -> None:
-        if self.sustained_head_follow_enabled:
-            return
         if tracking_face or self._forward_return_active:
             return
         if self._mode not in ("wander", "last_seen"):
+            return
+        tilt_off = abs(self._tilt - self.tilt_center) >= self.forward_return_min_tilt_deg
+        pan_off = (not self.sustained_head_follow_enabled) and (abs(camera_world_yaw_deg) >= self.forward_return_min_pan_deg)
+        if not (tilt_off or pan_off):
             return
         if not self._off_forward_timed_out(now):
             return
@@ -724,7 +726,7 @@ class ServoLoop:
 
         self._wander.seed_from_pose(
             self._pan,
-            self._tilt,
+            self.tilt_center,
             now,
             hold_min_sec=self.wander_track_loss_hold_min,
             hold_max_sec=self.wander_track_loss_hold_max,
@@ -908,8 +910,8 @@ class ServoLoop:
     def _tilt_track_travel(self, norm_y: float) -> float:
         """Servo command span available toward centering face vertically."""
         if norm_y * self.tilt_track_sign < 0.0:
-            return max(0.0, self.tilt_center - self.tilt_min)
-        return max(0.0, self.tilt_max - self.tilt_center)
+            return max(0.0, self._tilt - self.tilt_min)
+        return max(0.0, self.tilt_max - self._tilt)
 
     def _pan_center_band_active(self, norm_x: float) -> bool:
         """True when face is close enough to frame center to hold pan steady."""

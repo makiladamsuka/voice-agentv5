@@ -270,17 +270,17 @@ servo:
   lost_search_min_norm_x: 0.22
   lost_search_base_step_deg: 2.0
   lost_search_base_cooldown_sec: 2.0
-  forward_return_timeout_sec: 12.0   # stare off-forward this long → glide back to center
+  forward_return_timeout_sec: 4.0   # stare off-forward this long → glide back to center
   forward_return_min_pan_deg: 15.0   # |mech pan| above this counts as off-forward
-  forward_return_min_tilt_deg: 10.0  # |mech tilt| above this counts as off-forward
+  forward_return_min_tilt_deg: 4.0  # |mech tilt| above this counts as off-forward
   forward_return_smooth_hz: 4.5
   wander_pan_amp_deg: 28.0    # smaller head glances — less base follow trigger
   wander_step_min_deg: 7.5 
   wander_step_max_deg: 18 
   wander_jump_chance: 0.0     # no sudden jumps
   wander_arrival_deg: 1.2
-  wander_tilt_step_max_deg: 4.0
-  wander_tilt_max_up_deg: 12.0
+  wander_tilt_step_max_deg: 3.0
+  wander_tilt_max_up_deg: 0.0
   wander_tilt_max_down_deg: 8.0
   wander_hold_min_sec: 1.0
   wander_hold_max_sec: 3.0

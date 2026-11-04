@@ -337,8 +337,9 @@ class OrganicWanderSearch:
         if tilt_span <= 0.001:
             self.tilt_goal = clamp(tilt_center, tilt_lo, tilt_hi)
         else:
-            # Step from current tilt so glances are visibly different each hold.
-            peek = random.triangular(-tilt_span, tilt_span, random.choice([-1.0, 1.0]) * tilt_span * 0.45)
+            # Step from current tilt with gentle pull toward tilt_center
+            pull = (tilt_center - tilt_current) * 0.35
+            peek = random.triangular(-tilt_span, tilt_span, random.choice([-1.0, 1.0]) * tilt_span * 0.45) + pull
             self.tilt_goal = clamp(tilt_current + peek, tilt_lo, tilt_hi)
 
     def _assign_pause_kind(

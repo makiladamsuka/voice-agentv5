@@ -163,9 +163,9 @@ class FaceTracker:
         self.rotate_180 = bool(_cfg(cam, "rotate_180", default=False))
         self.swap_rb = bool(_cfg(cam, "stream_swap_rb", default=True))
         self.stream_enabled = bool(_cfg(stream, "enabled", default=True))
-        self.vision_fps = int(_cfg(stream, "vision_fps", default=10))
-        self.vision_fps_voice = int(_cfg(stream, "vision_fps_voice", default=0))
-        self.vision_pause_on_audio = bool(_cfg(stream, "vision_pause_on_audio", default=True))
+        self.vision_fps = int(_cfg(stream, "vision_fps", default=15))
+        self.vision_fps_voice = int(_cfg(stream, "vision_fps_voice", default=15))
+        self.vision_pause_on_audio = bool(_cfg(stream, "vision_pause_on_audio", default=False))
         self.vision_pause_poll_hz = float(_cfg(stream, "vision_pause_poll_hz", default=2.0))
 
         # Person memory
@@ -547,9 +547,8 @@ class FaceTracker:
                 next_tick = time.perf_counter() + (1.0 / poll_hz)
                 continue
 
-            # optimize/cpu2: hard-cap at 12 FPS max on Pi to free CPU for
-            # hardware control and voice processing.
-            fps = min(12, self._effective_vision_fps(voice_state))
+            # Effective vision FPS (honors configured rate up to 30 FPS for silky-smooth tracking)
+            fps = min(30, self._effective_vision_fps(voice_state))
             next_tick = time.perf_counter() + (1.0 / max(1.0, fps))
 
             now = time.time()
@@ -750,9 +749,14 @@ class FaceTracker:
             hand_gesture = ""
             hand_gesture_side = ""
 
-            # if self._hand_fallback_enabled and hand_detector is not None:
-            if hand_detector is not None:
-                hands = hand_detector.process(frame, mirrored=False)
+            self._frame_count = getattr(self, "_frame_count", 0) + 1
+            if hand_detector is not None and self._bye_gesture_from_hand:
+                # OPTIMIZATION: When face is actively tracked, prioritize YuNet face tracking.
+                # MediaPipe hand detection takes 50-70ms; running it every 4th frame preserves
+                # bye-wave detection responsiveness while keeping face tracking at solid 30 FPS.
+                should_run_hands = (not face_detected) or (self._frame_count % 4 == 0)
+                if should_run_hands:
+                    hands = hand_detector.process(frame, mirrored=False)
 
                 # ── Gesture recognition (runs even when face IS detected) ──
                 if hands:

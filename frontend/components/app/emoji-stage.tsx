@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { getEmojiCue } from "@/lib/emoji-cues";
 
 interface EmojiStageProps {
@@ -13,7 +13,7 @@ interface EmojiStageProps {
   noFaceSec?: number;
 }
 
-export function EmojiStage({
+export const EmojiStage = memo(function EmojiStage({
   transcript,
   convState,
   emotion = "idle",
@@ -44,7 +44,7 @@ export function EmojiStage({
       setLocalNoFaceSec((s) => s + 1);
     }, 1000);
     return () => clearInterval(interval);
-  }, [noFaceSec, faceDetected]);
+  }, [faceDetected]);
 
   const effectiveNoFaceSec = noFaceSec > 0 ? noFaceSec : localNoFaceSec;
 
@@ -89,4 +89,4 @@ export function EmojiStage({
       </div>
     </div>
   );
-}
+});

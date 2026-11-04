@@ -194,7 +194,22 @@ export function useNluAdapter(options?: UseNluAdapterOptions): NluAdapter {
       setAgentState("idle");
     },
     onStatusUpdate: (status) => {
-      setRobotStatus(status);
+      setRobotStatus((prev) => {
+        const isFarPrev = prev.faceArea > 0 && prev.faceArea < 0.035;
+        const isFarNew = status.faceArea > 0 && status.faceArea < 0.035;
+        const isSleepyPrev = prev.noFaceSec >= 150;
+        const isSleepyNew = status.noFaceSec >= 150;
+        if (
+          prev.emotion === status.emotion &&
+          prev.faceDetected === status.faceDetected &&
+          prev.faceCount === status.faceCount &&
+          isFarPrev === isFarNew &&
+          isSleepyPrev === isSleepyNew
+        ) {
+          return prev;
+        }
+        return status;
+      });
     },
   });
 

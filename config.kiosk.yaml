@@ -34,9 +34,9 @@ stream:
   fps: 8
   jpeg_quality: 70
   render_fps: 24
-  vision_fps: 10
-  vision_fps_voice: 0        # fully pause vision during voice (saves ~50ms/frame CPU on Pi)
-  vision_pause_on_audio: true # skip camera+YuNet while user/agent audio is active
+  vision_fps: 15
+  vision_fps_voice: 15        # fully pause vision during voice (saves ~50ms/frame CPU on Pi)
+  vision_pause_on_audio: false # skip camera+YuNet while user/agent audio is active
   vision_pause_poll_hz: 2     # blackboard poll only while paused (no capture)
   res: [320, 180]
 

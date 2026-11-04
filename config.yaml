@@ -30,9 +30,9 @@ stream:
   fps: 8
   jpeg_quality: 70
   render_fps: 24
-  vision_fps: 10
-  vision_fps_voice: 0        # fully pause vision during voice (saves ~50ms/frame CPU on Pi)
-  vision_pause_on_audio: true # skip camera+YuNet while user/agent audio is active
+  vision_fps: 15
+  vision_fps_voice: 15        # fully pause vision during voice (saves ~50ms/frame CPU on Pi)
+  vision_pause_on_audio: false # skip camera+YuNet while user/agent audio is active
   res: [320, 180]
 
 debug_viz:
@@ -240,7 +240,7 @@ servo:
   deadzone_y: 0.03
   pan_center_norm_x: 0.05       # |norm_x| below this → face centered, hold pan
   tilt_center_norm_y: 0.04
-  loop_hz: 80.0
+  loop_hz: 35.0
   no_face_home_sec: 1.2
   debug_hz: 2.0
   face_alpha_x: 0.12 # tilt/velocity only
@@ -317,7 +317,7 @@ arms:
   min_spin_moved_deg: 2.0
   detach_on_shutdown: false
   turn_sign: 1.0
-  loop_hz: 50.0
+  loop_hz: 35.0
 
 bye_wave:
   enabled: true

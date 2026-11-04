@@ -423,7 +423,7 @@ proximity:
   enabled: true
   # Mirror L/R when side ToF sensors are swapped vs mux labels (set false if you
   # reflash firmware with TOF_MUX_CH {2,1,0} instead of {0,1,2})
-  swap_left_right: true
+  swap_left_right: false
   # Post-turn suppression: ignore PROX events for this long after a proximity turn
   post_turn_lockout_sec: 2.0
   # ESP32 approach confidence count before reacting
@@ -456,7 +456,7 @@ proximity:
   clear_return_sec: 5.0          # wait this long after scene clear before HOME return
   clear_return_tolerance_deg: 6.0
   # Min time between proximity turns
-  cooldown_sec: 5.0
+  cooldown_sec: 1.8
   # Counter-rotate neck to keep gaze during turn
   compensation_gain: 0.90
   # Ignore PROX after any base motion ends

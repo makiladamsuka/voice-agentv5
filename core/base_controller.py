@@ -205,8 +205,8 @@ class BaseController:
         self.prox_window_sec = float(prox.get("turn_window_sec", 30.0))
         self.prox_turn_step = float(prox.get("turn_step_deg", 35.0))
         self.prox_comp_gain = float(prox.get("compensation_gain", 0.90))
-        self.prox_cooldown_sec = float(prox.get("cooldown_sec", 5.0))
-        self.prox_post_motion_blanking_sec = float(prox.get("post_motion_blanking_sec", 1.5))
+        self.prox_cooldown_sec = float(prox.get("cooldown_sec", 1.8))
+        self.prox_post_motion_blanking_sec = float(prox.get("post_motion_blanking_sec", 0.5))
         inv = _cfg(prox, "investigate", default={}) or {}
         self.prox_investigate_enabled = bool(inv.get("enabled", True))
         self.prox_motion_fade_sec = float(inv.get("motion_fade_sec", 5.0))
@@ -717,7 +717,7 @@ class BaseController:
         zone = state.get("prox_approach_zone", "")
         pan = state["servo_pan"]
         world_yaw = self._prox_zone_yaw(zone, state["base_world_yaw_deg"])
-        tracking = state.get("face_detected", False) or state.get("body_detected", False)
+        tracking = state.get("face_detected", False)
 
         if tracking and self.prox_investigate_enabled:
             self._last_prox_ts = now
@@ -781,6 +781,7 @@ class BaseController:
         if abs(step) < self.min_step:
             return None, "", 0.0
 
+        print(f"[BaseController] PROX turn triggered: zone={zone} -> step={step:+.1f}°")
         self._last_prox_ts = now
         self._prox_turn_timestamps = [t for t in self._prox_turn_timestamps if now - t < self.prox_window_sec]
         self._prox_turn_timestamps.append(now)

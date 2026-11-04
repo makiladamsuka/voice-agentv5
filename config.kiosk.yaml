@@ -10,7 +10,7 @@ camera:
   exposure_value: 1.2        # EV compensation boost for low light (+1.2 stops)
   low_light: true            # allow longer shutter times up to 100ms in dark rooms
   full_sensor_fov: false     # use full sensor FOV for higher res
-  confidence_threshold: 0.5
+  confidence_threshold: 0.6
   nms_threshold: 0.3
   rotate_180: false
   stream_swap_rb: true
@@ -345,12 +345,12 @@ face_greeting:
   enabled: true
   cooldown_sec: 60.0
   hold_sec: 0.45
-  min_face_area_ratio: 0.008
+  min_face_area_ratio: 0.020
 
 face_greeting_arm:
   enabled: true
   memory_timeout_minutes: 30.0   # Remember faces for 30 minutes
-  min_face_area_ratio: 0.012     # Minimum face size to trigger greeting
+  min_face_area_ratio: 0.025     # Minimum face size to trigger greeting
   hold_sec: 0.5                  # Face must be stable this long before greeting
   cosine_threshold: 0.85         # Cosine similarity threshold (0.85 strict; lower = more lenient)
   cleanup_interval_sec: 60.0     # How often to prune expired cache entries

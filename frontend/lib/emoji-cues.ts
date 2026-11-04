@@ -78,6 +78,26 @@ export function getEmojiCue(
       return { emoji: "🤚", codePoint: "1f91a", animation: "wave", label: "Raised Back of Hand" };
     }
 
+    // 1c-2. Thumbs Up / Celebration
+    if (
+      lower.includes("awesome") ||
+      lower.includes("thumbs up") ||
+      lower.includes("great job") ||
+      lower.includes("you rock") ||
+      lower.includes("looking great")
+    ) {
+      return { emoji: "👍", codePoint: "1f44d", animation: "bounce", label: "Thumbs Up" };
+    }
+
+    // 1c-3. Love / Heart
+    if (
+      lower.includes("love you") ||
+      lower.includes("sending love") ||
+      lower.includes("so sweet")
+    ) {
+      return { emoji: "💖", codePoint: "1f496", animation: "pulse", label: "Sparkling Heart" };
+    }
+
     // 1d. Gratitude / Politeness
     if (
       lower.includes("thank") ||

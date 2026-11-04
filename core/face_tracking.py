@@ -38,7 +38,7 @@ except ImportError:
     yaml = None
 
 from core.blackboard import Blackboard
-from lib.hand_detector import HandDetector
+from lib.hand_detector import HandDetector, detect_thumbs_up, detect_love_gesture
 from lib.head_mech import signed_pan_mech_deg, signed_tilt_mech_deg
 from lib.person_memory import PersonMemory, angular_error_deg, wrap_degrees
 from lib.motion_memory import MotionMemory, MotionMemoryItem
@@ -779,14 +779,20 @@ class FaceTracker:
                     dw, dh = self.detect_res
                     side = best_hand.physical_side
                     
-                    # Bye gesture: hand near detected face, frontside
-                    if (
+                    # Gesture 1: Thumbs Up
+                    if detect_thumbs_up(best_hand) and not hand_gesture:
+                        hand_gesture = "thumbs_up"
+                        hand_gesture_side = best_hand.physical_side
+                    # Gesture 2: Love / Heart (Two-hand heart, Finger heart, or I-Love-You)
+                    elif detect_love_gesture(hands) and not hand_gesture:
+                        hand_gesture = "love_sign"
+                        hand_gesture_side = best_hand.physical_side
+                    # Gesture 3: Bye wave (hand near detected face, frontside)
+                    elif (
                         self._bye_gesture_from_hand
                         and best_hand.is_frontside
                         and not hand_gesture
                     ):
-                        # If face detected, check if hand is near face
-                        # If no face, trigger bye gesture from hand alone
                         trigger_bye = False
                         if face_detected:
                             face_px_x = int((face_norm_x + 1.0) * 0.5 * dw)

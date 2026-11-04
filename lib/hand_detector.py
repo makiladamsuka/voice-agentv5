@@ -163,3 +163,80 @@ def draw_motion_trail(frame: cv2.Mat, x_history: list[int], y_history: list[int]
         cv2.circle(overlay, pt2, radius, trail_color, -1, cv2.LINE_AA)
         
     cv2.addWeighted(overlay, 0.4, frame, 0.6, 0, frame)
+
+
+# ── Gesture Classifiers (Thumbs Up, Love/Heart) ──────────────────────────────
+
+def _dist_2d(p1: dict[str, float] | tuple[int, int], p2: dict[str, float] | tuple[int, int]) -> float:
+    if isinstance(p1, dict) and isinstance(p2, dict):
+        return ((p1['x'] - p2['x']) ** 2 + (p1['y'] - p2['y']) ** 2) ** 0.5
+    return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
+
+def is_finger_curled(landmarks: list[dict[str, float]], tip_idx: int, pip_idx: int) -> bool:
+    wrist = landmarks[0]
+    return _dist_2d(landmarks[tip_idx], wrist) < _dist_2d(landmarks[pip_idx], wrist) * 1.05
+
+def is_finger_extended(landmarks: list[dict[str, float]], tip_idx: int, pip_idx: int) -> bool:
+    wrist = landmarks[0]
+    return _dist_2d(landmarks[tip_idx], wrist) > _dist_2d(landmarks[pip_idx], wrist) * 1.15
+
+def detect_thumbs_up(detection: HandDetection) -> bool:
+    """Detect thumbs-up pose: thumb pointing upward, 4 fingers curled into fist."""
+    lms = detection.landmarks
+    if len(lms) < 21:
+        return False
+    # Thumb tip pointing upwards and higher than IP and MCP
+    thumb_up = lms[4]['y'] < lms[3]['y'] < lms[2]['y']
+    thumb_above_wrist = (lms[0]['y'] - lms[4]['y']) > 0.08
+    if not (thumb_up and thumb_above_wrist):
+        return False
+
+    # 4 fingers must be curled
+    curled = (
+        is_finger_curled(lms, 8, 6)
+        and is_finger_curled(lms, 12, 10)
+        and is_finger_curled(lms, 16, 14)
+        and is_finger_curled(lms, 20, 18)
+    )
+    return curled
+
+def detect_love_gesture(detections: list[HandDetection]) -> bool:
+    """Detect love gestures: Two-hand heart, Finger heart, or I-Love-You."""
+    if not detections:
+        return False
+
+    # 1. Two-hand heart
+    if len(detections) >= 2:
+        h1 = detections[0].landmarks
+        h2 = detections[1].landmarks
+        if len(h1) >= 21 and len(h2) >= 21:
+            d_index = _dist_2d(h1[8], h2[8])
+            d_thumb = _dist_2d(h1[4], h2[4])
+            if d_index < 0.20 and d_thumb < 0.20:
+                avg_idx_y = (h1[8]['y'] + h2[8]['y']) * 0.5
+                avg_thumb_y = (h1[4]['y'] + h2[4]['y']) * 0.5
+                if avg_thumb_y > avg_idx_y:
+                    return True
+
+    # 2. Single-hand love gestures
+    for d in detections:
+        lms = d.landmarks
+        if len(lms) < 21:
+            continue
+
+        # 2a. 'I Love You' sign: Thumb, Index, Pinky extended; Middle and Ring curled
+        thumb_ext = is_finger_extended(lms, 4, 2)
+        index_ext = is_finger_extended(lms, 8, 6)
+        pinky_ext = is_finger_extended(lms, 20, 18)
+        middle_curled = is_finger_curled(lms, 12, 10)
+        ring_curled = is_finger_curled(lms, 16, 14)
+        if thumb_ext and index_ext and pinky_ext and middle_curled and ring_curled:
+            return True
+
+        # 2b. Finger heart: Thumb tip & Index tip pinched together; other 3 fingers curled
+        d_thumb_idx = _dist_2d(lms[4], lms[8])
+        if d_thumb_idx < 0.08:
+            if middle_curled and ring_curled and is_finger_curled(lms, 20, 18):
+                return True
+
+    return False

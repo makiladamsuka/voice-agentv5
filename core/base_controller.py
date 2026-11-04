@@ -171,9 +171,12 @@ class BaseController:
 
         # ── Sustained head-on-base hold → base follows with neck lock ─────────
         self.sustained_follow_enabled = bool(b.get("sustained_head_follow_enabled", True))
-        self.sustained_hold_sec = float(b.get("sustained_head_hold_sec", 10.0))
+        self.sustained_hold_sec = float(b.get("sustained_head_hold_sec", 2.5))
+        self.sustained_hold_min_sec = float(b.get("sustained_head_hold_min_sec", 0.45))
         self.sustained_hold_min_mech = float(b.get("sustained_head_min_mech_deg", 12.0))
-        self.sustained_cooldown_sec = float(b.get("sustained_head_cooldown_sec", 4.0))
+        self.sustained_step_gain = float(b.get("sustained_head_step_gain", 0.70))
+        self.sustained_max_step = float(b.get("sustained_head_max_step_deg", 22.0))
+        self.sustained_cooldown_sec = float(b.get("sustained_head_cooldown_sec", 1.5))
         self.sustained_comp_gain = float(b.get("sustained_head_compensation_gain", 0.95))
 
         # ── Body-only base follow ─────────────────────────────────────────────
@@ -363,7 +366,13 @@ class BaseController:
             return step
         return step_sign * max(max_useful, self.min_step)
 
-    def _plan_base_follow_step(self, magnitude_deg: float, pan_cmd: float) -> Optional[float]:
+    def _plan_base_follow_step(
+        self,
+        magnitude_deg: float,
+        pan_cmd: float,
+        *,
+        max_step_override: Optional[float] = None,
+    ) -> Optional[float]:
         """Base follows only after the head has turned toward interest."""
         pan_offset = self._head_pan_offset(pan_cmd)
         if abs(pan_offset) < self.head_lead_min:
@@ -371,7 +380,8 @@ class BaseController:
         head_sign = head_lead_sign(pan_offset)
         if head_sign == 0.0:
             return None
-        mag = clamp(abs(magnitude_deg), self.min_step, self.max_step)
+        upper = float(max_step_override) if max_step_override is not None else self.max_step
+        mag = clamp(abs(magnitude_deg), self.min_step, upper)
         direction = head_sign if self.follow_head_direction else head_sign
         return direction * mag
 
@@ -614,6 +624,25 @@ class BaseController:
             self._sustained_since = now
             self._sustained_sign = sign
 
+    def _distance_factor(self, state: dict) -> float:
+        """Normalized distance factor u in [0.0 (close <=250mm), 1.0 (far >=1000mm)]."""
+        candidates: list[float] = []
+        dist_mm = int(state.get("prox_approach_distance", 0) or 0)
+        if 80 <= dist_mm <= self.prox_max_dist_mm:
+            span = max(1.0, float(self.prox_max_dist_mm - 250))
+            candidates.append(clamp((float(dist_mm) - 250.0) / span, 0.0, 1.0))
+        area = float(state.get("face_area_ratio", 0.0) or 0.0)
+        if state.get("face_detected", False) and area > 0.0:
+            candidates.append(clamp((0.060 - area) / (0.060 - 0.015), 0.0, 1.0))
+        return min(candidates) if candidates else 1.0
+
+    def _effective_sustained_hold_sec(self, state: dict) -> float:
+        """Distance-proportional hold duration: closer targets trigger faster."""
+        u = self._distance_factor(state)
+        lo = min(self.sustained_hold_min_sec, self.sustained_hold_sec)
+        hi = max(lo, self.sustained_hold_sec)
+        return lo + u * (hi - lo)
+
     def _plan_sustained_follow(self, now: float, state: dict) -> tuple[Optional[float], str, float]:
         """After sustained neck offset, rotate base and counter-rotate neck to lock gaze."""
         if not self.sustained_follow_enabled:
@@ -623,24 +652,30 @@ class BaseController:
         if self._sustained_since is None:
             return None, "", 0.0
         elapsed = now - self._sustained_since
-        if elapsed < self.sustained_hold_sec:
+        u_dist = self._distance_factor(state)
+        hold_req = self._effective_sustained_hold_sec(state)
+        if elapsed < hold_req:
             return None, "", 0.0
-        if (now - self._last_sustained_ts) < self.sustained_cooldown_sec:
+        cooldown_scale = 0.45 + 0.55 * u_dist
+        if (now - self._last_sustained_ts) < (self.sustained_cooldown_sec * cooldown_scale):
             return None, "", 0.0
-        if (now - self._last_nudge_ts) < self.cooldown_sec:
+        if (now - self._last_nudge_ts) < (self.cooldown_sec * cooldown_scale):
             return None, "", 0.0
 
         pan = state["servo_pan"]
         pan_mech = self._pan_mech(pan)
+        max_sustained = max(self.max_step, self.sustained_max_step)
         desired_mag = min(
             abs(pan_mech) * 0.85,
-            clamp(abs(pan_mech) * self.pan_offset_to_step, self.min_step, self.max_step),
+            clamp(abs(pan_mech) * self.sustained_step_gain, self.min_step, max_sustained),
         )
-        raw = self._plan_base_follow_step(desired_mag, pan)
+        raw = self._plan_base_follow_step(desired_mag, pan, max_step_override=max_sustained)
         if raw is None:
             return None, "", 0.0
         step = raw * self.base_sign
-        step = self._apply_gate(step, pan, state["base_encoder_deg"], state)
+        step = self._apply_gate(
+            step, pan, state["base_encoder_deg"], state, max_step_override=max_sustained,
+        )
         if step == 0.0:
             return None, "", 0.0
         self._last_sustained_ts = now
@@ -714,7 +749,9 @@ class BaseController:
             return None, "", 0.0
         if (now - self._last_base_motion_done_ts) < self.prox_post_motion_blanking_sec:
             return None, "", 0.0
-        if (now - self._last_prox_ts) < self.prox_cooldown_sec:
+        u_dist = self._distance_factor(state)
+        prox_scale = 0.45 + 0.55 * u_dist
+        if (now - self._last_prox_ts) < (self.prox_cooldown_sec * prox_scale):
             return None, "", 0.0
         if state.get("prox_approach_confidence", 0) < self.prox_min_confidence:
             return None, "", 0.0
@@ -746,7 +783,7 @@ class BaseController:
             return None, "", 0.0
 
         # Do not spin physical base wheels on blind ToF triggers when surrounded
-        # by a crowd (>= 2 zones occupied) or when someone is within < 320mm safety distance.
+        # by a crowd (>= 2 zones occupied) or when someone is within < 120mm safety distance.
         if state.get("tof_surrounded", False) or state.get("tof_too_close_safety", False):
             if approach_ts > 0.0:
                 self._last_prox_reaction_approach_ts = approach_ts
@@ -773,7 +810,7 @@ class BaseController:
             self._prox_turn_timestamps.append(now)
             if approach_ts > 0.0:
                 self._last_prox_reaction_approach_ts = approach_ts
-            self.bb.write(prox_post_turn_lockout_ts=now + self.prox_lockout_sec)
+            self.bb.write(prox_post_turn_lockout_ts=now + self.prox_lockout_sec * prox_scale)
             self._start_investigate(now, zone, world_yaw, "scan")
             return None, "", 0.0
 
@@ -798,7 +835,7 @@ class BaseController:
         self._prox_turn_timestamps.append(now)
         if approach_ts > 0.0:
             self._last_prox_reaction_approach_ts = approach_ts
-        self.bb.write(prox_post_turn_lockout_ts=now + self.prox_lockout_sec)
+        self.bb.write(prox_post_turn_lockout_ts=now + self.prox_lockout_sec * prox_scale)
         if self.prox_investigate_enabled:
             self._start_investigate(now, zone, world_yaw, "turn")
         else:

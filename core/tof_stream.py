@@ -98,7 +98,7 @@ class TofStreamHandler:
         zr = self._zone_streaks["R"] >= 2
         z_count = int(zl) + int(zc) + int(zr)
         surrounded = (zl and zr) or (z_count >= 3)
-        too_close = any(0 < zone_mm[z] < 300 for z in ("L", "C", "R"))
+        too_close = any(0 < zone_mm[z] < 120 for z in ("L", "C", "R"))
 
         self._bb.write(
             prox_zone_left=zl,
@@ -109,14 +109,15 @@ class TofStreamHandler:
             tof_too_close_safety=too_close,
         )
 
-        # Synthesize approach trigger for sustained presence within <= 1000mm
+        def _req_streak(d: int) -> int:
+            return 1 if d <= 400 else (2 if d <= 700 else 3)
         side_candidates = [
             z for z in ("L", "R")
-            if self._zone_streaks[z] >= 3 and 300 <= zone_mm[z] <= 1000
+            if 120 <= zone_mm[z] <= 1000 and self._zone_streaks[z] >= _req_streak(zone_mm[z])
         ]
         if side_candidates:
             best_zone = min(side_candidates, key=lambda z: zone_mm[z])
-        elif self._zone_streaks["C"] >= 3 and 300 <= zone_mm["C"] <= 1000:
+        elif 120 <= zone_mm["C"] <= 1000 and self._zone_streaks["C"] >= _req_streak(zone_mm["C"]):
             best_zone = "C"
         else:
             best_zone = ""
@@ -125,8 +126,11 @@ class TofStreamHandler:
         if best_zone:
             self._clear_streak = 0
             streak = self._zone_streaks[best_zone]
-            is_new_entry = (streak == 3) or (best_zone != self._last_synth_zone)
-            is_retrigger_due = (now - self._last_synth_ts) >= 2.2
+            req_s = _req_streak(zone_mm[best_zone])
+            u_dist = max(0.0, min(1.0, (zone_mm[best_zone] - 120.0) / 880.0))
+            retrigger_sec = 0.8 + u_dist * 1.4
+            is_new_entry = (streak == req_s) or (best_zone != self._last_synth_zone)
+            is_retrigger_due = (now - self._last_synth_ts) >= retrigger_sec
             if is_new_entry or is_retrigger_due:
                 self._last_synth_zone = best_zone
                 self._last_synth_ts = now

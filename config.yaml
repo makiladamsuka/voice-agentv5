@@ -164,9 +164,12 @@ base:
   cooldown_at_limit_sec: 1.5      # shorter pause between base nudges when head is stuck
   track_compensation_gain: 0.95   # counter-rotate neck ~1:1 with base during track
   sustained_head_follow_enabled: true   # after ~10s neck offset, base turns and neck locks gaze
-  sustained_head_hold_sec: 10.0
+  sustained_head_hold_sec: 2.5
+  sustained_head_hold_min_sec: 0.45
+  sustained_head_step_gain: 0.70
+  sustained_head_max_step_deg: 22.0
   sustained_head_min_mech_deg: 12.0
-  sustained_head_cooldown_sec: 4.0
+  sustained_head_cooldown_sec: 1.5
   sustained_head_compensation_gain: 0.95
   body_base_enabled: false
   body_trigger_norm_x: 0.08    # body bbox offset from frame center before base turns

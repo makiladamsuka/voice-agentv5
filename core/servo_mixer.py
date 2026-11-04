@@ -572,7 +572,7 @@ class ServoMixer:
                 prox_approach_confidence=conf,
                 prox_approach_active=True,
                 prox_approach_ts=time.time(),
-                tof_too_close_safety=(0 < dist_mm < 300),
+                tof_too_close_safety=(0 < dist_mm < 120),
             )
             print(f"[ServoMixer] PROX event: raw={raw_zone} -> zone={zone}, dist={dist_mm}mm, conf={conf}")
             return

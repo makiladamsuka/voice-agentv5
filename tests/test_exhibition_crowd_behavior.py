@@ -25,7 +25,7 @@ def test_servo_mixer_prox_sets_surrounded_and_too_close_safety():
     assert state["prox_zone_count"] == 1
     assert state["tof_surrounded"] is False
 
-    mixer._handle_prox_line("PROX A=C V=-180 D=280 C=4")
+    mixer._handle_prox_line("PROX A=C V=-180 D=100 C=4")
     assert bb.read("tof_too_close_safety")["tof_too_close_safety"] is True
 
     mixer._handle_prox_line("PROX CLEAR")
@@ -276,4 +276,56 @@ def test_tof_1m_orienting_reflex_eye_base_head():
     for _ in range(10):
         loop._tick_prox_investigate(now=500.2, dt=0.03, effective_tilt_center=loop.tilt_center)
     assert loop._pan > 105.0  # Head actively panning Left toward 116.0°
+
+
+def test_distance_proportional_sustained_head_follow_and_close_tof():
+    from core.tof_state import TofState
+    from core.tof_stream import TofStreamHandler
+
+    bb = Blackboard()
+    ctrl = BaseController(bb, None)
+    tof_state = TofState()
+    handler = TofStreamHandler(tof_state, bb)
+
+    # 1. Close ToF (220mm on Right) triggers in 1 tick and does NOT trip tof_too_close_safety (<120mm)
+    handler.handle_tof_line("TOF L=-1 C=-1 R=220 VL=0 VC=0 VR=-50")
+    s_tof = bb.read("prox_approach_active", "prox_approach_zone", "prox_approach_distance", "tof_too_close_safety")
+    assert s_tof["prox_approach_active"] is True
+    assert s_tof["prox_approach_zone"] == "R"
+    assert s_tof["prox_approach_distance"] == 220
+    assert s_tof["tof_too_close_safety"] is False
+
+    # 2. Close face (face_area_ratio=0.065) with head turned 28° mech left (pan=135°) triggers fast (~0.45s)
+    ctrl._sustained_since = 100.0
+    close_state = {
+        "face_detected": True,
+        "face_area_ratio": 0.065,
+        "prox_approach_distance": 240,
+        "track_kind": "face",
+        "hand_detected": False,
+        "servo_pan": 135.0,
+        "base_encoder_deg": 0.0,
+    }
+    step, source, comp_pan = ctrl._plan_sustained_follow(100.6, close_state)
+    assert source == "sustained_head"
+    assert step is not None and abs(step) > 15.0  # Unclamped >15° (28° mech * 0.70 = 19.6°)
+    assert comp_pan < 135.0  # Head counter-rotates back toward center (100°)
+
+    # 3. Far face (face_area_ratio=0.015, no close ToF) waits full 2.5s before turning base
+    ctrl._sustained_since = 200.0
+    ctrl._last_sustained_ts = 0.0
+    far_state = {
+        "face_detected": True,
+        "face_area_ratio": 0.015,
+        "prox_approach_distance": -1,
+        "track_kind": "face",
+        "hand_detected": False,
+        "servo_pan": 124.0,
+        "base_encoder_deg": 0.0,
+    }
+    step_early, _, _ = ctrl._plan_sustained_follow(201.0, far_state)
+    assert step_early is None
+    step_ready, src_ready, _ = ctrl._plan_sustained_follow(202.6, far_state)
+    assert src_ready == "sustained_head"
+    assert step_ready is not None
 

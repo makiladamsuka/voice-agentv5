@@ -272,9 +272,9 @@ export function CleanKioskView() {
   }, [activeCaption.text, agentState]);
 
   return (
-    <div className="relative w-screen h-screen bg-white dark:bg-neutral-950 text-neutral-900 dark:text-neutral-50 overflow-hidden flex flex-col justify-between p-6 md:p-8 select-none">
+    <div className="relative w-screen h-screen bg-white dark:bg-neutral-950 text-neutral-900 dark:text-neutral-50 overflow-hidden flex flex-col justify-between px-4 py-2 sm:py-3 md:p-6 select-none">
       {/* ── Top Navigation Bar ── */}
-      <header className="flex-shrink-0 w-full flex justify-between items-center h-14 z-20">
+      <header className="flex-shrink-0 w-full flex justify-between items-center h-10 md:h-12 z-20">
         <div className="flex items-center gap-3">
           <span className="text-3xl font-black tracking-tight">NEma</span>
         </div>
@@ -295,7 +295,7 @@ export function CleanKioskView() {
       </header>
 
       {/* ── Main Stage: Big Animated Emoji + Big Subtitles ── */}
-      <main className="flex-1 flex flex-col items-center justify-center max-w-4xl w-full mx-auto text-center px-4 -mt-2">
+      <main className="flex-1 min-h-0 flex flex-col items-center justify-center max-w-4xl w-full mx-auto text-center px-2 py-0.5">
         {/* Animated Emoji Stage */}
         <EmojiStage
           transcript={activeCaption.text}
@@ -308,7 +308,7 @@ export function CleanKioskView() {
         />
 
         {/* Hero Transcript Display */}
-        <div className="min-h-[140px] flex flex-col items-center justify-center mt-2">
+        <div className="min-h-[44px] sm:min-h-[60px] md:min-h-[90px] flex flex-col items-center justify-center mt-1">
           {activeCaption.text ? (
             <div className="space-y-3">
               {activeCaption.isUser && (
@@ -316,12 +316,12 @@ export function CleanKioskView() {
                   You asked
                 </span>
               )}
-              <h1 className="text-4xl md:text-6xl font-bold tracking-tight leading-snug">
+              <h1 className="text-2xl sm:text-3xl md:text-5xl font-bold tracking-tight leading-tight line-clamp-2">
                 {activeCaption.text}
               </h1>
             </div>
           ) : (
-            <h1 className="text-4xl md:text-6xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
+            <h1 className="text-2xl sm:text-3xl md:text-5xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
               Welcome to FIT EXPO
             </h1>
           )}
@@ -348,10 +348,10 @@ export function CleanKioskView() {
       </main>
 
       {/* ── Bottom Controls: Minimalist Mic & Single Status Line ── */}
-      <footer className="flex-shrink-0 w-full flex flex-col items-center justify-center pb-12 -translate-y-6 z-20">
-        <div className="relative flex items-center justify-center w-28 h-28">
+      <footer className="flex-shrink-0 w-full flex flex-col items-center justify-center pb-2 sm:pb-3 z-20">
+        <div className="relative flex items-center justify-center w-18 h-18 sm:w-20 sm:h-20 md:w-24 md:h-24">
           <GeminiMorphButton
-            size={96}
+            size={72}
             volume={agentState === "listening" ? maxVolume : 0}
             isAnimating={
               isAgentInitializing ||
@@ -364,7 +364,7 @@ export function CleanKioskView() {
         </div>
 
         {/* Clean, Single Status Label */}
-        <p className="text-xl md:text-2xl font-bold text-neutral-800 dark:text-neutral-100 mt-4 tracking-tight">
+        <p className="text-xs sm:text-sm md:text-base font-bold text-neutral-800 dark:text-neutral-100 mt-1 tracking-tight">
           {isConnected
             ? isThinking
               ? "Thinking..."

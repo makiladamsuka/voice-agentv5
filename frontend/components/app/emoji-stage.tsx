@@ -66,8 +66,8 @@ export function EmojiStage({
   const animatedUrl = `https://fonts.gstatic.com/s/e/notoemoji/latest/${cue.codePoint}/512.webp`;
 
   return (
-    <div className="flex flex-col items-center justify-center my-4 select-none">
-      <div className="relative flex items-center justify-center w-40 h-40 md:w-48 md:h-48">
+    <div className="flex flex-col items-center justify-center my-1 select-none shrink-0">
+      <div className="relative flex items-center justify-center w-24 h-24 sm:w-32 sm:h-32 md:w-40 md:h-40">
         {!isFailed ? (
           <img
             key={cue.codePoint}
@@ -79,7 +79,7 @@ export function EmojiStage({
           />
         ) : (
           <span
-            className={`text-[100px] md:text-[130px] leading-none anim-emoji-${cue.animation}`}
+            className={`text-[64px] sm:text-[80px] md:text-[100px] leading-none anim-emoji-${cue.animation}`}
             role="img"
             aria-label={cue.label}
           >

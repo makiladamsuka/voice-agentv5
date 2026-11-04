@@ -279,9 +279,9 @@ servo:
   wander_step_max_deg: 18 
   wander_jump_chance: 0.0     # no sudden jumps
   wander_arrival_deg: 1.2
-  wander_tilt_step_max_deg: 5.0
-  wander_tilt_max_up_deg: 4.0
-  wander_tilt_max_down_deg: 16.0
+  wander_tilt_step_max_deg: 4.0
+  wander_tilt_max_up_deg: 12.0
+  wander_tilt_max_down_deg: 8.0
   wander_hold_min_sec: 1.0
   wander_hold_max_sec: 3.0
   wander_thinking_hold_chance: 0.38

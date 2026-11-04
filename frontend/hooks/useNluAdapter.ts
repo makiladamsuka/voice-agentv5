@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNluVoice, type NluResponse } from "@/hooks/useNluVoice";
-import { useFaceGreeting } from "@/hooks/useFaceGreeting";
+import { useFaceGreeting, type RobotLiveStatus } from "@/hooks/useFaceGreeting";
 
 // ── Types mirroring LiveKit shape ─────────────────────────────────────────────
 
@@ -76,6 +76,9 @@ export interface NluAdapter {
   
   // method to simulate user voice input (e.g. from UI buttons)
   sendSimulatedVoice: (text: string) => void;
+
+  // Live robot presence & TFT eye emotion status
+  robotStatus: RobotLiveStatus;
 }
 
 // ── Helper ────────────────────────────────────────────────────────────────────
@@ -85,12 +88,23 @@ const nextId = () => `nlu-${++_msgId}`;
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
-export function useNluAdapter(): NluAdapter {
+export interface UseNluAdapterOptions {
+  autoGreetEnabled?: boolean;
+}
+
+export function useNluAdapter(options?: UseNluAdapterOptions): NluAdapter {
   const [agentState, setAgentState] = useState<AgentState>("disconnected");
   const [messages, setMessages] = useState<NluMessage[]>([]);
   const [transcriptions, setTranscriptions] = useState<NluTranscription[]>([]);
   const [lastAction, setLastAction] = useState<NluResponse["action"] | null>(null);
   const [maxVolume, setMaxVolume] = useState(0);
+  const [robotStatus, setRobotStatus] = useState<RobotLiveStatus>({
+    emotion: "idle",
+    faceDetected: false,
+    faceCount: 0,
+    faceArea: 0,
+    noFaceSec: 0,
+  });
 
   // Handle full NLU response
   const handleResponse = useCallback((response: NluResponse) => {
@@ -162,8 +176,26 @@ export function useNluAdapter(): NluAdapter {
 
   useFaceGreeting({
     nluServerUrl: process.env.NEXT_PUBLIC_NLU_SERVER_URL ?? "ws://localhost:8765",
-    enabled: true,
+    enabled: options?.autoGreetEnabled ?? true,
     isBusy,
+    onGreetingStart: (text: string) => {
+      setAgentState("speaking");
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextId(),
+          role: "assistant",
+          content: text,
+          timestamp: Date.now(),
+        },
+      ]);
+    },
+    onGreetingEnd: () => {
+      setAgentState("idle");
+    },
+    onStatusUpdate: (status) => {
+      setRobotStatus(status);
+    },
   });
 
   // Mirror the NLU transcript into the transcriptions array so the
@@ -220,5 +252,6 @@ export function useNluAdapter(): NluAdapter {
     maxVolume,
     lastAction,
     sendSimulatedVoice: nlu.sendSimulatedVoice,
+    robotStatus,
   };
 }

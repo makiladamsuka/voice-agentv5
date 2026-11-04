@@ -16,6 +16,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+export interface RobotLiveStatus {
+  emotion: string;
+  faceDetected: boolean;
+  faceCount: number;
+  faceArea: number;
+  noFaceSec: number;
+}
+
 interface FaceGreetingOptions {
   /** NLU server WebSocket base URL, e.g. "ws://127.0.0.1:8765" */
   nluServerUrl?: string;
@@ -23,10 +31,12 @@ interface FaceGreetingOptions {
   enabled?: boolean;
   /** Ref or state indicating whether the agent is currently speaking/thinking */
   isBusy?: () => boolean;
-  /** Called when greeting playback starts */
-  onGreetingStart?: () => void;
+  /** Called when greeting playback starts with the spoken text */
+  onGreetingStart?: (text: string) => void;
   /** Called when greeting playback ends */
   onGreetingEnd?: () => void;
+  /** Called when live presence / emotion status arrives from robot */
+  onStatusUpdate?: (status: RobotLiveStatus) => void;
 }
 
 export function useFaceGreeting({
@@ -35,6 +45,7 @@ export function useFaceGreeting({
   isBusy,
   onGreetingStart,
   onGreetingEnd,
+  onStatusUpdate,
 }: FaceGreetingOptions = {}) {
   const [isGreeting, setIsGreeting] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -92,9 +103,9 @@ export function useFaceGreeting({
         gainNode.connect(ctx.destination);
         currentAudioRef.current = source;
 
-        // Notify parent: greeting started
+        // Notify parent: greeting started with text
         setIsGreeting(true);
-        onGreetingStart?.();
+        onGreetingStart?.(text);
 
         source.onended = () => {
           setIsGreeting(false);
@@ -105,9 +116,32 @@ export function useFaceGreeting({
         source.start(0);
         console.log(`[FaceGreeting] 🎙️ Playing: "${text}"`);
       } catch (e) {
-        console.warn("[FaceGreeting] Audio playback failed:", e);
-        setIsGreeting(false);
-        onGreetingEnd?.();
+        console.warn("[FaceGreeting] Web Audio failed, trying HTML5 Audio fallback:", e);
+        try {
+          const audio = new Audio(resolvedUrl);
+          const masterVol = typeof (window as any)._masterVolume === "number" ? (window as any)._masterVolume : 1.0;
+          audio.volume = masterVol;
+          currentAudioRef.current = audio as any;
+          audio.onplay = () => {
+            setIsGreeting(true);
+            onGreetingStart?.(text);
+          };
+          audio.onended = () => {
+            setIsGreeting(false);
+            onGreetingEnd?.();
+            currentAudioRef.current = null;
+          };
+          audio.onerror = () => {
+            setIsGreeting(false);
+            onGreetingEnd?.();
+            currentAudioRef.current = null;
+          };
+          await audio.play();
+        } catch (e2) {
+          console.error("[FaceGreeting] Audio playback failed:", e2);
+          setIsGreeting(false);
+          onGreetingEnd?.();
+        }
       }
     },
     [enabled, isBusy, getAudioCtx, onGreetingStart, onGreetingEnd]
@@ -139,8 +173,15 @@ export function useFaceGreeting({
         const msg = JSON.parse(event.data);
         if (msg.type === "greeting") {
           void playGreeting(msg.text, msg.audio_url ?? null);
+        } else if (msg.type === "robot_status") {
+          onStatusUpdate?.({
+            emotion: String(msg.emotion || "idle"),
+            faceDetected: Boolean(msg.face_detected),
+            faceCount: Number(msg.face_count || 0),
+            faceArea: Number(msg.face_area || 0),
+            noFaceSec: Number(msg.no_face_sec || 0),
+          });
         }
-        // type === "ping" — ignore
       } catch (_) {}
     };
 

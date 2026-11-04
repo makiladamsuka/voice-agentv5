@@ -28,7 +28,7 @@ export function EmojiStage({
 
   return (
     <div className="flex flex-col items-center justify-center my-4 select-none">
-      <div className="relative flex items-center justify-center w-52 h-52 md:w-64 md:h-64">
+      <div className="relative flex items-center justify-center w-40 h-40 md:w-48 md:h-48">
         {!imgError ? (
           <img
             key={cue.codePoint}
@@ -40,7 +40,7 @@ export function EmojiStage({
           />
         ) : (
           <span
-            className={`text-[140px] md:text-[180px] leading-none anim-emoji-${cue.animation}`}
+            className={`text-[100px] md:text-[130px] leading-none anim-emoji-${cue.animation}`}
             role="img"
             aria-label={cue.label}
           >

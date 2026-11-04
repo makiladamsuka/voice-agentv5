@@ -329,7 +329,7 @@ export function CleanKioskView() {
       </main>
 
       {/* ── Bottom Controls: Minimalist Mic & Single Status Line ── */}
-      <footer className="flex-shrink-0 w-full flex flex-col items-center justify-center pb-12 z-20">
+      <footer className="flex-shrink-0 w-full flex flex-col items-center justify-center pb-12 -translate-y-6 z-20">
         <div className="relative flex items-center justify-center w-28 h-28">
           <GeminiMorphButton
             size={96}

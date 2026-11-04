@@ -26,6 +26,8 @@ const hudOrient = document.getElementById('hud-orient');
 const readout = document.getElementById('object-readout');
 
 const HUMAN_COL = 0x38bdf8;
+const VISION_COL = 0x10b981;
+const PREDICT_COL = 0xfbbf24;
 const OBSTACLE_COL = 0xf97316;
 const UNCERTAIN_COL = 0x6b7280;
 const ROBOT_COL = 0xc8d6e5;
@@ -35,7 +37,7 @@ const HEADING_COL = 0x111111;
 const FRONT_MARK_COL = 0xffffff;
 const HOME_COL = 0x94a3b8;
 const KIND_COL = { human: HUMAN_COL, obstacle: OBSTACLE_COL, uncertain: UNCERTAIN_COL };
-const ZONE_ANGLE = { L: -45, C: 0, R: 45 };
+const ZONE_ANGLE = { L: -65, C: 0, R: 65 };
 const deg = d => d * Math.PI / 180;
 const TRAIL_MAX = 28;
 const ROBOT_RADIUS = 0.275;
@@ -243,40 +245,59 @@ function addEye(x) {
 addEye(-EYE_GAP / 2);
 addEye(EYE_GAP / 2);
 
-// ── FOV wedges (from front sensor plane) ──
+// ── FOV wedges (mounted along the circular perimeter of the base) ──
 const fovGroup = new THREE.Group();
-fovGroup.position.set(0, 0, SENSOR_MOUNT_Z);
+fovGroup.position.set(0, 0, 0);
 robot.add(fovGroup);
+const sensorNodes = {};
+
+function positionSensorMount(key, angleDeg) {
+  const g = sensorNodes[key];
+  if (!g) return;
+  const rad = deg(angleDeg);
+  g.position.set(ROBOT_RADIUS * Math.sin(rad), 0, ROBOT_RADIUS * Math.cos(rad));
+  g.rotation.y = rad;
+}
 
 for (const [key, angle] of Object.entries(ZONE_ANGLE)) {
   const g = new THREE.Group();
-  g.rotation.y = deg(angle);
+  const halfCone = 14;
   const wedge = new THREE.Mesh(
-    new THREE.CircleGeometry(1.9, 48, -deg(11), deg(22)),
-    new THREE.MeshBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.04, side: THREE.DoubleSide })
+    new THREE.CircleGeometry(1.9, 48, -deg(halfCone), deg(halfCone * 2)),
+    new THREE.MeshBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.05, side: THREE.DoubleSide })
   );
   wedge.rotation.x = -Math.PI / 2;
-  wedge.position.set(0, 0.003, 0.02);
+  wedge.position.set(0, 0.003, 0.01);
   g.add(wedge);
   for (const sign of [-1, 1]) {
-    const edgeAngle = sign * 11;
+    const edgeAngle = sign * halfCone;
     const pts = [
       new THREE.Vector3(0, 0.004, 0),
       new THREE.Vector3(Math.sin(deg(edgeAngle)) * 1.9, 0.004, Math.cos(deg(edgeAngle)) * 1.9),
     ];
     const line = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints(pts),
-      new THREE.LineBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.12 })
+      new THREE.LineBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.14 })
     );
     g.add(line);
   }
-  // Zone label at beam tip
+  // Sensor emitter housing on base perimeter
+  const emitterCol = key === 'C' ? 0xa855f7 : (key === 'L' ? 0x3b82f6 : 0x22c55e);
+  const emitter = new THREE.Mesh(
+    new THREE.BoxGeometry(0.032, 0.022, 0.018),
+    new THREE.MeshBasicMaterial({ color: emitterCol })
+  );
+  emitter.position.set(0, BASE_THICKNESS * 0.65, 0.004);
+  g.add(emitter);
+  // Zone label dot along beam
   const tip = new THREE.Mesh(
     new THREE.SphereGeometry(0.018, 8, 8),
-    new THREE.MeshBasicMaterial({ color: key === 'C' ? 0xa855f7 : (key === 'L' ? 0x3b82f6 : 0x22c55e), transparent: true, opacity: 0.5 })
+    new THREE.MeshBasicMaterial({ color: emitterCol, transparent: true, opacity: 0.55 })
   );
   tip.position.set(0, 0.02, 0.35);
   g.add(tip);
+  sensorNodes[key] = g;
+  positionSensorMount(key, angle);
   fovGroup.add(g);
 }
 
@@ -401,9 +422,37 @@ function getEntity(kind) {
   return makeUncertain();
 }
 
+function makeVisionPerson(isPredicted) {
+  const col = isPredicted ? PREDICT_COL : VISION_COL;
+  const g = new THREE.Group();
+  const glow = new THREE.Mesh(
+    new THREE.RingGeometry(0.13, 0.23, 32),
+    new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: isPredicted ? 0.22 : 0.28, side: THREE.DoubleSide })
+  );
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.y = 0.005;
+  g.add(glow);
+  const mat = new THREE.MeshBasicMaterial({
+    color: col,
+    transparent: true,
+    opacity: isPredicted ? 0.65 : 0.92,
+  });
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.16, 6, 12), mat);
+  torso.rotation.x = Math.PI / 2;
+  torso.position.y = 0.1;
+  g.add(torso);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.046, 14, 14), mat);
+  head.position.y = 0.225;
+  g.add(head);
+  g.userData.isPredicted = isPredicted;
+  return g;
+}
+
 // ── State ──
 let mainEntity = null;
 const trackEntities = {};
+const visionEntities = {};
+const visionTrails = {};
 const hitMarkers = {};
 const trailDots = [];
 const trailHistory = [];
@@ -470,7 +519,23 @@ function updateScene3d(data) {
   try {
   latest3d = data;
   const yawRad = updateRobotPose(data);
+  if (Array.isArray(data.sensor_angles_deg) && data.sensor_angles_deg.length === 3) {
+    const [aL, aC, aR] = data.sensor_angles_deg.map(Number);
+    if (Number.isFinite(aL) && Math.abs(aL - ZONE_ANGLE.L) > 0.1) {
+      ZONE_ANGLE.L = aL;
+      positionSensorMount('L', aL);
+    }
+    if (Number.isFinite(aC) && Math.abs(aC - ZONE_ANGLE.C) > 0.1) {
+      ZONE_ANGLE.C = aC;
+      positionSensorMount('C', aC);
+    }
+    if (Number.isFinite(aR) && Math.abs(aR - ZONE_ANGLE.R) > 0.1) {
+      ZONE_ANGLE.R = aR;
+      positionSensorMount('R', aR);
+    }
+  }
   const hits = data.hits || [];
+  const personSnaps = data.person_snapshots || [];
   const t = performance.now() * 0.001;
   const bodyYawDeg = Number(data.from_home_imu_deg ?? data.body_yaw_deg ?? 0);
   const encYaw = Number(data.from_home_enc_deg ?? data.encoder_yaw_deg ?? 0);
@@ -482,7 +547,6 @@ function updateScene3d(data) {
   const stationary = data.fusion_stationary;
   const tickDelta = Number(data.encoder_count_delta ?? 0);
   const baseRotating = Boolean(data.base_rotating);
-  const sensorWorld = bodyLocalToWorld(0, SENSOR_MOUNT_Z, yawRad);
 
   // HUD
   if (hudLeft) {
@@ -520,7 +584,7 @@ function updateScene3d(data) {
   }
   if (hudRight) {
     const ntracks = (data.tracks || []).length;
-    hudRight.innerHTML = `TRACKS <span class="val">${ntracks}</span> · HITS <span class="val">${hits.length}</span>`;
+    hudRight.innerHTML = `TOF <span class="val">${ntracks}</span> · VISION <span class="val">${personSnaps.length}</span> · HITS <span class="val">${hits.length}</span>`;
   }
 
   // Per-zone hit dots (world floor — body mm → world so targets stay put while base spins)
@@ -542,6 +606,76 @@ function updateScene3d(data) {
     hitMarkers[key].position.set(world.x, 0.018, world.z);
     hitMarkers[key].rotation.y = t * 2;
     hitMarkers[key].visible = true;
+  }
+
+  // Vision & Optimistic Predicted Person Memory Entities (world frame)
+  const liveVisionIds = new Set();
+  for (const p of personSnaps) {
+    const vid = `v_${p.id}`;
+    liveVisionIds.add(vid);
+    const age = Number(p.age_sec ?? 0);
+    const isLiveVision = age <= 0.45 && Boolean(data.face_detected || data.body_detected);
+    const isPredicted = !isLiveVision;
+    const distMm = Math.max(350, Math.min(2200, Number(p.distance_mm || 950)));
+    const rawYawDeg = Number(p.world_yaw_deg ?? 0);
+    const predYawDeg = Number(p.predicted_world_yaw_deg ?? rawYawDeg);
+    const relPredRad = deg(predYawDeg - bodyYawDeg);
+    const rMm = ROBOT_RADIUS * 1000 + distMm;
+    const world = bodyMmToWorld(rMm * Math.sin(relPredRad), rMm * Math.cos(relPredRad), yawRad);
+
+    const stateTag = isLiveVision ? 'live' : (p.is_predicted || age <= 3.5 ? 'pred' : 'mem');
+    if (!visionEntities[vid] || visionEntities[vid].userData.stateTag !== stateTag) {
+      if (visionEntities[vid]) entityGroup.remove(visionEntities[vid]);
+      const ent = makeVisionPerson(isPredicted);
+      const label = stateTag === 'live'
+        ? `FACE #${p.id}`
+        : (stateTag === 'pred' ? `PREDICT #${p.id}` : `MEM #${p.id}`);
+      const lCol = stateTag === 'live' ? '#34d399' : '#fbbf24';
+      ent.add(makeLabelSprite(label, lCol));
+      ent.userData.stateTag = stateTag;
+      visionEntities[vid] = ent;
+      entityGroup.add(ent);
+    }
+    const vEnt = visionEntities[vid];
+    vEnt.position.set(world.x, 0, world.z);
+    vEnt.visible = true;
+    const pulseScale = isPredicted ? (0.92 + 0.08 * Math.sin(t * 6.0)) : 1.0;
+    vEnt.scale.setScalar(pulseScale);
+
+    // Draw velocity extrapolation trail on floor when predicting a moving lost face
+    const leadDeg = predYawDeg - rawYawDeg;
+    if (Math.abs(leadDeg) >= 1.5) {
+      const pts = [];
+      const steps = 10;
+      for (let i = 0; i <= steps; i++) {
+        const interpYaw = rawYawDeg + (leadDeg * i) / steps;
+        const relRad = deg(interpYaw - bodyYawDeg);
+        const ptW = bodyMmToWorld(rMm * Math.sin(relRad), rMm * Math.cos(relRad), yawRad);
+        pts.push(new THREE.Vector3(ptW.x, 0.015, ptW.z));
+      }
+      if (!visionTrails[vid]) {
+        visionTrails[vid] = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(pts),
+          new THREE.LineBasicMaterial({ color: PREDICT_COL, transparent: true, opacity: 0.75 })
+        );
+        entityGroup.add(visionTrails[vid]);
+      } else {
+        visionTrails[vid].geometry.setFromPoints(pts);
+        visionTrails[vid].visible = true;
+      }
+    } else if (visionTrails[vid]) {
+      visionTrails[vid].visible = false;
+    }
+  }
+  for (const vid of Object.keys(visionEntities)) {
+    if (!liveVisionIds.has(vid)) {
+      entityGroup.remove(visionEntities[vid]);
+      delete visionEntities[vid];
+      if (visionTrails[vid]) {
+        entityGroup.remove(visionTrails[vid]);
+        delete visionTrails[vid];
+      }
+    }
   }
 
   // Per-track entities (world frame)
@@ -599,9 +733,17 @@ function updateScene3d(data) {
   if (fused && !baseRotating) {
     const kind = fused.kind || 'uncertain';
     const world = bodyMmToWorld(fused.x_mm, fused.z_mm, yawRad);
+    const mountAngleRad = fused.zone && ZONE_ANGLE[fused.zone] != null
+      ? deg(ZONE_ANGLE[fused.zone])
+      : Math.atan2(fused.x_mm || 0, fused.z_mm || 1);
+    const mountWorld = bodyLocalToWorld(
+      ROBOT_RADIUS * Math.sin(mountAngleRad),
+      ROBOT_RADIUS * Math.cos(mountAngleRad),
+      yawRad
+    );
 
     bearingLine.geometry.setFromPoints([
-      new THREE.Vector3(sensorWorld.x, 0.02, sensorWorld.z),
+      new THREE.Vector3(mountWorld.x, 0.02, mountWorld.z),
       new THREE.Vector3(world.x, 0.02, world.z),
     ]);
     bearingLine.material.color.setHex(KIND_COL[kind] || UNCERTAIN_COL);
@@ -612,7 +754,7 @@ function updateScene3d(data) {
     }
 
     // Readout
-    const dist = Math.round(fused.dist_mm || Math.hypot(fused.x_mm, fused.z_mm - SENSOR_MOUNT_Z * 1000));
+    const dist = Math.round(fused.dist_mm || Math.hypot(fused.x_mm, fused.z_mm) - ROBOT_RADIUS * 1000);
     const bearing = Math.round(fused.bearing_deg ?? Math.atan2(fused.x_mm, fused.z_mm) * 180 / Math.PI);
     const tag = kind === 'human' ? 'PERSON' : kind === 'obstacle' ? 'OBSTACLE' : 'UNCERTAIN';
     const cls = kind === 'human' ? 'readout-human' : kind === 'obstacle' ? 'readout-obstacle' : 'readout-uncertain';
@@ -627,8 +769,21 @@ function updateScene3d(data) {
         entityGroup.remove(trackEntities[id]);
         delete trackEntities[id];
       }
-      readout.className = 'object-readout';
-      readout.textContent = 'Clear — no object in sensor field';
+      if (personSnaps.length > 0) {
+        const p0 = personSnaps[0];
+        const age = Number(p0.age_sec ?? 0);
+        const isLive = age <= 0.45 && Boolean(data.face_detected || data.body_detected);
+        const tag = isLive ? 'VISION FACE' : 'PREDICTED FACE';
+        const rawY = Math.round(Number(p0.world_yaw_deg ?? 0));
+        const predY = Math.round(Number(p0.predicted_world_yaw_deg ?? rawY));
+        const velY = Math.round(Number(p0.vel_yaw_dps ?? 0));
+        const dist = Math.round(Number(p0.distance_mm || 950));
+        readout.className = 'object-readout readout-human';
+        readout.innerHTML = `<strong>${tag}</strong> #${p0.id} · ~${dist} mm · yaw ${fmtDeg(rawY)} → pred ${fmtDeg(predY)} (${velY >= 0 ? '+' : ''}${velY}°/s) · age ${age.toFixed(1)}s`;
+      } else {
+        readout.className = 'object-readout';
+        readout.textContent = 'Clear — no object in sensor field';
+      }
     }
   } else {
     bearingLine.visible = false;

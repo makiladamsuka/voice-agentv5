@@ -116,6 +116,9 @@ def build_merged_state(
     merged["base_motion_busy"] = bool(bb_state.get("base_motion_busy", False))
     merged["manual_control_enabled"] = bool(bb_state.get("manual_control_enabled", False))
     merged["head_step_deg"] = float(bb_state.get("debug_head_step_deg", 5.0))
+    merged["person_snapshots"] = list(bb_state.get("person_snapshots") or [])
+    merged["motion_snapshots"] = list(bb_state.get("motion_snapshots") or [])
+    merged["last_seen_world_yaw"] = bb_state.get("last_seen_world_yaw")
     merged["live_tune"] = merge_tune_values(
         bb_state.get("debug_live_tune"),
         servo_cfg=servo_cfg,

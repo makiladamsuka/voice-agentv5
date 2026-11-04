@@ -693,17 +693,31 @@ class BaseController:
             return None, "", 0.0
         pan = state["servo_pan"]
         pan_mech = self._pan_mech(pan)
-        world_yaw = state["base_world_yaw_deg"]
-        best = min(snapshots, key=lambda s: abs(angular_error_deg(s["world_yaw_deg"], world_yaw)))
-        err = angular_error_deg(best["world_yaw_deg"], world_yaw)
+        base_only_yaw = float(state["base_world_yaw_deg"]) - float(state.get("head_yaw_on_body_deg", 0.0) or 0.0)
+        best = min(
+            snapshots,
+            key=lambda s: abs(
+                angular_error_deg(float(s.get("predicted_world_yaw_deg", s["world_yaw_deg"])), base_only_yaw)
+            ),
+        )
+        target_yaw = float(best.get("predicted_world_yaw_deg", best["world_yaw_deg"]))
+        err = angular_error_deg(target_yaw, base_only_yaw)
         if abs(err) < self.pm_base_min_yaw_err:
             return None, "", 0.0
-        if not yaw_error_agrees_with_head(err, pan_mech, head_lead_min_deg=self.head_lead_min):
+        # Reject only if head is actively turned in the opposite direction
+        if pan_mech * err < 0.0 and abs(pan_mech) > 6.0:
             return None, "", 0.0
         step = clamp(err * self.pm_base_gain, -self.pm_base_max, self.pm_base_max)
         if abs(step) < self.pm_base_min:
             return None, "", 0.0
-        step = self._apply_gate(step * self.base_sign, pan, state["base_encoder_deg"], state)
+        step = self._apply_gate(
+            step * self.base_sign,
+            pan,
+            state["base_encoder_deg"],
+            state,
+            require_head_lead=False,
+            max_step_override=self.pm_base_max,
+        )
         if step == 0.0:
             return None, "", 0.0
         comp_pan = self._comp_pan_for_step(step, pan, self.pm_base_comp)
@@ -719,16 +733,23 @@ class BaseController:
             return None, "", 0.0
         pan = state["servo_pan"]
         pan_mech = self._pan_mech(pan)
-        world_yaw = state["base_world_yaw_deg"]
-        err = angular_error_deg(last_yaw, world_yaw)
+        base_only_yaw = float(state["base_world_yaw_deg"]) - float(state.get("head_yaw_on_body_deg", 0.0) or 0.0)
+        err = angular_error_deg(float(last_yaw), base_only_yaw)
         if abs(err) < self.lss_base_min_yaw_err:
             return None, "", 0.0
-        if not yaw_error_agrees_with_head(err, pan_mech, head_lead_min_deg=self.head_lead_min):
+        if pan_mech * err < 0.0 and abs(pan_mech) > 6.0:
             return None, "", 0.0
         step = clamp(err * self.lss_base_gain, -self.lss_base_max, self.lss_base_max)
         if abs(step) < self.lss_base_min:
             return None, "", 0.0
-        step = self._apply_gate(step * self.base_sign, pan, state["base_encoder_deg"], state)
+        step = self._apply_gate(
+            step * self.base_sign,
+            pan,
+            state["base_encoder_deg"],
+            state,
+            require_head_lead=False,
+            max_step_override=self.lss_base_max,
+        )
         if step == 0.0:
             return None, "", 0.0
         comp_pan = self._comp_pan_for_step(step, pan, self.lss_base_comp)
@@ -789,7 +810,7 @@ class BaseController:
                 self._last_prox_reaction_approach_ts = approach_ts
             return None, "", 0.0
 
-        if state.get("voice_session_active", False):
+        if state.get("user_speaking", False) or state.get("agent_speaking", False):
             if zone in ("L", "R"):
                 sign = 1.0 if zone == "L" else -1.0
                 pan_offset = sign * self.prox_turn_step * 0.4
@@ -907,7 +928,7 @@ class BaseController:
                 "arm_greeting_active", "bye_wave_active",
                 "servo_pan", "servo_mode",
                 "wander_moving", "wander_last_step_deg",
-                "base_encoder_deg", "base_world_yaw_deg", "base_motion_busy",
+                "base_encoder_deg", "base_world_yaw_deg", "head_yaw_on_body_deg", "base_motion_busy",
                 "base_encoder_synced",
                 "base_motion_allowed",
                 "person_snapshots", "last_seen_world_yaw",
@@ -919,7 +940,7 @@ class BaseController:
                 "prox_approach_ts", "prox_investigate_active",
                 "prox_verified_priority_yaw",
                 "tof_surrounded", "tof_too_close_safety",
-                "voice_session_active",
+                "voice_session_active", "user_speaking", "agent_speaking",
             )
 
             pan_offset = self._head_pan_offset(state["servo_pan"])
@@ -968,7 +989,10 @@ class BaseController:
                 continue
 
             arm_gesture_running = state.get("arm_greeting_active", False) or state.get("bye_wave_active", False)
-            if arm_gesture_running or (voice_active and self.freeze_base_during_voice):
+            actively_speaking = bool(state.get("user_speaking", False)) or (
+                bool(state.get("agent_speaking", False)) and bool(state.get("face_detected", False))
+            )
+            if arm_gesture_running or (actively_speaking and self.freeze_base_during_voice):
                 if self.bb.read("base_step_ready")["base_step_ready"]:
                     self.bb.write(base_step_ready=False, base_comp_pan_deg=0.0)
                 time.sleep(loop_delay)
@@ -987,6 +1011,10 @@ class BaseController:
                 step, source, comp_pan = self._plan_track_step(now, state)
             elif mode == "track":
                 step, source, comp_pan = self._plan_body_step(now, state)
+                if step is None:
+                    step, source, comp_pan = self._plan_last_seen_step(now, state)
+                if step is None:
+                    step, source, comp_pan = self._plan_memory_step(now, state)
             elif mode == "last_seen":
                 step, source, comp_pan = self._plan_last_seen_step(now, state)
                 if step is None:

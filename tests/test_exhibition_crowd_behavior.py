@@ -234,7 +234,7 @@ def test_tof_1m_orienting_reflex_eye_base_head():
     ctrl = BaseController(bb, None)
     loop = ServoLoop(bb)
     tof_state = TofState()
-    handler = TofStreamHandler(tof_state, bb)
+    handler = TofStreamHandler(tof_state, bb, swap_left_right=False)
 
     # 1. Above 1m (1250mm) PROX and TOF lines are strictly ignored
     mixer._handle_prox_line("PROX A=L V=-150 D=1250 C=5")
@@ -285,7 +285,7 @@ def test_distance_proportional_sustained_head_follow_and_close_tof():
     bb = Blackboard()
     ctrl = BaseController(bb, None)
     tof_state = TofState()
-    handler = TofStreamHandler(tof_state, bb)
+    handler = TofStreamHandler(tof_state, bb, swap_left_right=False)
 
     # 1. Close ToF (220mm on Right) triggers in 1 tick and does NOT trip tof_too_close_safety (<120mm)
     handler.handle_tof_line("TOF L=-1 C=-1 R=220 VL=0 VC=0 VR=-50")
@@ -328,4 +328,85 @@ def test_distance_proportional_sustained_head_follow_and_close_tof():
     step_ready, src_ready, _ = ctrl._plan_sustained_follow(202.6, far_state)
     assert src_ready == "sustained_head"
     assert step_ready is not None
+
+
+def test_optimistic_lost_face_tracking_and_swapped_side_tof():
+    from core.tof_state import TofState
+    from core.tof_stream import TofStreamHandler
+    from lib.person_memory import PersonMemory
+
+    bb = Blackboard()
+    ctrl = BaseController(bb, None)
+    loop = ServoLoop(bb)
+    tof_state = TofState()
+    handler = TofStreamHandler(tof_state, bb)  # uses config swap_left_right: true
+
+    # 1. Physical Right sensor (wired to firmware L channel) at close 95mm:
+    #    - Swaps to R zone in both TofState snapshot and Blackboard
+    #    - Places hit on right perimeter (+65° -> x_mm > 0)
+    #    - Triggers right base turn even when voice_session_active=True (idle listening)
+    handler.handle_tof_line("TOF L=95 C=-1 R=-1 VL=-40 VC=0 VR=0")
+    snap = tof_state.snapshot()
+    assert snap["mm"][2] == 95
+    assert snap["sensor_angles_deg"] == [-65.0, 0.0, 65.0]
+    r_hit = next(h for h in snap["hits"] if h["zone"] == "R")
+    assert r_hit["x_mm"] > 250  # Mounted on right perimeter at +65°
+
+    bb.write(voice_session_active=True, user_speaking=False, agent_speaking=False)
+    state = bb.read(
+        "face_detected", "face_count", "body_detected", "servo_pan",
+        "base_world_yaw_deg", "base_encoder_deg", "prox_approach_active",
+        "prox_approach_zone", "prox_approach_distance", "prox_approach_confidence",
+        "prox_approach_ts", "prox_post_turn_lockout_ts", "tof_surrounded",
+        "tof_too_close_safety", "voice_session_active", "user_speaking", "agent_speaking",
+    )
+    assert state["prox_approach_active"] is True
+    assert state["prox_approach_zone"] == "R"
+    assert state["tof_too_close_safety"] is False
+    step, src, _ = ctrl._plan_proximity_step(300.0, state)
+    assert src == "proximity"
+    assert step is not None and abs(step) == ctrl.prox_turn_step
+
+    # 2. Optimistic lost-face velocity extrapolation & base assist:
+    mem = PersonMemory(timeout_sec=20.0, merge_angle_deg=12.0, camera_hfov_deg=62.0)
+    # Person moves rapidly toward the right edge of the frame (norm_x: 0.0 -> +0.30 -> +0.60)
+    mem.observe(norm_x=0.0, base_world_yaw_deg=0.0, pan_mech_deg=0.0, kind="face", area_ratio=0.03, now=100.0)
+    mem.observe(norm_x=0.30, base_world_yaw_deg=0.0, pan_mech_deg=5.0, kind="face", area_ratio=0.03, now=100.15)
+    item = mem.observe(norm_x=0.60, base_world_yaw_deg=0.0, pan_mech_deg=10.0, kind="face", area_ratio=0.03, now=100.30)
+    assert item.vel_yaw_dps > 25.0
+    pred_yaw = item.predicted_world_yaw(100.80)
+    assert pred_yaw > item.world_yaw_deg + 8.0  # Extrapolates further right!
+
+    # ServoLoop coasts in exit direction immediately when face disappears during track
+    loop._mode = "track"
+    loop._pan = 85.0  # already panned 15° right (pan_center=100, pan_sign=-1)
+    loop._last_face_ts = 100.30
+    loop._last_exit_norm_x = 0.60
+    loop._last_exit_vel_x = 2.0
+    bb.write(
+        face_detected=False,
+        body_detected=False,
+        hand_detected=False,
+        base_world_yaw_deg=15.0,
+        head_yaw_on_body_deg=15.0,
+        last_seen_world_yaw=pred_yaw,
+        person_snapshots=mem.snapshots(100.40),
+    )
+    pan_before = loop._pan
+    loop._tick_track(now=100.40, dt=0.03, effective_tilt_center=loop.tilt_center)
+    assert loop._pan < pan_before  # Continues coasting right (< 85.0°), does not freeze!
+
+    # BaseController plans a >= 8° step toward predicted yaw relative to base_only_yaw (0°),
+    # even though camera world yaw is already 15° and head lead is < 12° if needed
+    lss_state = {
+        "servo_pan": 85.0,
+        "base_world_yaw_deg": 15.0,
+        "head_yaw_on_body_deg": 15.0,
+        "base_encoder_deg": 0.0,
+        "last_seen_world_yaw": pred_yaw,
+    }
+    lss_step, lss_src, _ = ctrl._plan_last_seen_step(100.50, lss_state)
+    assert lss_src == "last_seen"
+    assert lss_step is not None and abs(lss_step) >= ctrl.min_step
+
 

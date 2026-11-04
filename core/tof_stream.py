@@ -22,11 +22,13 @@ class TofStreamHandler:
         *,
         spin_settle_sec: float = 0.65,
         gyro_settle_dps: float = 8.0,
+        swap_left_right: bool | None = None,
     ) -> None:
         self._state = tof_state if tof_state is not None else STATE
         self._bb = bb
         self.tof_spin_settle_sec = float(spin_settle_sec)
         self.tof_gyro_settle_dps = float(gyro_settle_dps)
+        self._swap_lr = SWAP_LEFT_RIGHT if swap_left_right is None else bool(swap_left_right)
         self._tof_ignore_until = 0.0
         self._last_base_busy = False
         self._zone_streaks: dict[str, int] = {"L": 0, "C": 0, "R": 0}
@@ -81,8 +83,8 @@ class TofStreamHandler:
     ) -> None:
         if self._bb is None:
             return
-        idx_l = 2 if SWAP_LEFT_RIGHT else 0
-        idx_r = 0 if SWAP_LEFT_RIGHT else 2
+        idx_l = 2 if self._swap_lr else 0
+        idx_r = 0 if self._swap_lr else 2
         zone_mm = {"L": mm[idx_l], "C": mm[1], "R": mm[idx_r]}
         zone_vel = {"L": vel[idx_l], "C": vel[1], "R": vel[idx_r]}
 
@@ -98,7 +100,7 @@ class TofStreamHandler:
         zr = self._zone_streaks["R"] >= 2
         z_count = int(zl) + int(zc) + int(zr)
         surrounded = (zl and zr) or (z_count >= 3)
-        too_close = any(0 < zone_mm[z] < 120 for z in ("L", "C", "R"))
+        too_close = 0 < zone_mm["C"] < 120
 
         self._bb.write(
             prox_zone_left=zl,
@@ -113,7 +115,7 @@ class TofStreamHandler:
             return 1 if d <= 400 else (2 if d <= 700 else 3)
         side_candidates = [
             z for z in ("L", "R")
-            if 120 <= zone_mm[z] <= 1000 and self._zone_streaks[z] >= _req_streak(zone_mm[z])
+            if 80 <= zone_mm[z] <= 1000 and self._zone_streaks[z] >= _req_streak(zone_mm[z])
         ]
         if side_candidates:
             best_zone = min(side_candidates, key=lambda z: zone_mm[z])
@@ -127,7 +129,7 @@ class TofStreamHandler:
             self._clear_streak = 0
             streak = self._zone_streaks[best_zone]
             req_s = _req_streak(zone_mm[best_zone])
-            u_dist = max(0.0, min(1.0, (zone_mm[best_zone] - 120.0) / 880.0))
+            u_dist = max(0.0, min(1.0, (zone_mm[best_zone] - 80.0) / 920.0))
             retrigger_sec = 0.8 + u_dist * 1.4
             is_new_entry = (streak == req_s) or (best_zone != self._last_synth_zone)
             is_retrigger_due = (now - self._last_synth_ts) >= retrigger_sec

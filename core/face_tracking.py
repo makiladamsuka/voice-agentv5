@@ -405,14 +405,34 @@ class FaceTracker:
 
     # ── Person memory update ──────────────────────────────────────────────────
 
-    def _update_memory(self, norm_x: float, norm_y: float, kind: str, now: float, confidence: float) -> None:
+    def _update_memory(
+        self,
+        norm_x: float,
+        norm_y: float,
+        kind: str,
+        now: float,
+        confidence: float,
+        *,
+        area_ratio: float = 0.0,
+    ) -> None:
         if self._person_memory is None:
             return
-        state = self.bb.read("base_world_yaw_deg", "head_yaw_on_body_deg", "servo_pan")
+        state = self.bb.read(
+            "base_world_yaw_deg",
+            "head_yaw_on_body_deg",
+            "servo_pan",
+            "prox_approach_zone",
+            "prox_approach_distance",
+        )
         base_only_yaw = float(state["base_world_yaw_deg"]) - float(state.get("head_yaw_on_body_deg", 0.0) or 0.0)
         pan = float(state["servo_pan"])
         # Calculate mechanical pan offset using asymmetric servo config mapping
         pan_mech = signed_pan_mech_deg(pan, self._servo_cfg)
+        tof_dist = (
+            int(state.get("prox_approach_distance", -1) or -1)
+            if state.get("prox_approach_zone") == "C" and abs(pan_mech) <= 15.0
+            else -1
+        )
         self._person_memory.observe(
             norm_x=norm_x,
             norm_y=norm_y,
@@ -420,6 +440,8 @@ class FaceTracker:
             pan_mech_deg=pan_mech,
             kind=kind,
             confidence=confidence,
+            area_ratio=area_ratio,
+            tof_dist_mm=tof_dist,
             now=now,
         )
 
@@ -733,7 +755,14 @@ class FaceTracker:
                     self._last_face_area = face_area
                     for idx, cand in enumerate(face_candidates[:4]):
                         conf = self.pm_face_conf if idx == 0 else self.pm_face_conf * 0.85
-                        self._update_memory(cand["norm_x"], cand["norm_y"], "face", now, confidence=conf)
+                        self._update_memory(
+                            cand["norm_x"],
+                            cand["norm_y"],
+                            "face",
+                            now,
+                            confidence=conf,
+                            area_ratio=float(cand.get("area_ratio", 0.0) or 0.0),
+                        )
 
                     # Update ROI tracking box as the union of all valid detected faces
                     # so secondary group members are not cropped out while preserving
@@ -952,14 +981,14 @@ class FaceTracker:
                 face_norm_y=face_norm_y,
             )
 
-            # ── Last-seen-at-edge tracking ──────────────────────────────────
+            # ── Last-seen-at-edge tracking (with optimistic velocity extrapolation) ──
             last_seen_yaw = None
             if self.lss_enabled and not face_detected and self._person_memory is not None:
                 state = self.bb.read("base_world_yaw_deg")
                 world_yaw = state["base_world_yaw_deg"]
                 best = self._person_memory.best_for_current_view(current_world_yaw_deg=world_yaw, now=now)
                 if best is not None:
-                    last_seen_yaw = best.world_yaw_deg
+                    last_seen_yaw = best.predicted_world_yaw(now)
 
             # ── Publish hand gesture (increment seq on new gesture) ────────
             gesture_seq_delta = {}

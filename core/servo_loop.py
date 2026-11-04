@@ -990,9 +990,59 @@ class ServoLoop:
             self._no_face_since = None
             self._lss_active = False
             self._forward_return_active = False
+            self._coasting_logged = False
 
         if not tracking_active:
-            # Hold pose until main loop drops track after no_face_home_sec.
+            # Optimistic velocity coasting when a tracked face/person exits the frame
+            loss_dt = now - self._last_face_ts
+            if not getattr(self, "_coasting_logged", False):
+                if abs(self._prev_face_x) > 1e-4 or abs(self._face_vel_x) > 1e-4:
+                    self._last_exit_norm_x = self._prev_face_x
+                    self._last_exit_vel_x = self._face_vel_x
+                self._coasting_logged = True
+
+            exit_x = getattr(self, "_last_exit_norm_x", 0.0)
+            exit_vel = getattr(self, "_last_exit_vel_x", 0.0)
+            pred_st = self.bb.read("last_seen_world_yaw", "base_world_yaw_deg", "head_yaw_on_body_deg")
+            pred_yaw = pred_st.get("last_seen_world_yaw")
+            should_coast = (
+                loss_dt <= max(self.no_face_home_sec, self.predict_hold_sec)
+                and (
+                    abs(exit_x) >= self.lss_edge_norm * 0.75
+                    or abs(exit_vel) >= 0.25
+                    or pred_yaw is not None
+                )
+            )
+            if should_coast:
+                pan_max_step = min(self.pan_max_step_deg, self.pan_track_slew_dps * max(dt, 0.001))
+                if pred_yaw is not None:
+                    base_only_yaw = float(pred_st.get("base_world_yaw_deg", 0.0) or 0.0) - float(
+                        pred_st.get("head_yaw_on_body_deg", 0.0) or 0.0
+                    )
+                    camera_yaw = base_only_yaw + self._pan_mech_offset()
+                    yaw_err = angular_error_deg(float(pred_yaw), camera_yaw)
+                    pan_step = clamp(
+                        yaw_err * self.predict_gain * self.pan_sign,
+                        -self.lss_max_step,
+                        self.lss_max_step,
+                    )
+                    pan_target = clamp(self._pan + pan_step, self.pan_min, self.pan_max)
+                else:
+                    # Fallback image-space velocity coasting in exit direction
+                    decay = math.exp(-loss_dt / max(0.2, self.predict_hold_sec))
+                    coast_err = clamp(exit_x + exit_vel * 0.25 * decay, -1.0, 1.0)
+                    pan_step = coast_err * self.pan_track_range * self.pan_track_sign * self.predict_gain * 0.35
+                    pan_target = clamp(self._pan + pan_step, self.pan_min, self.pan_max)
+
+                self._pan = _smooth_toward_stepped(
+                    self._pan,
+                    pan_target,
+                    dt,
+                    smooth_hz=self.pan_smooth_hz,
+                    lo=self.pan_min,
+                    hi=self.pan_max,
+                    max_step=pan_max_step,
+                )
             return "track"
 
         # Smooth face bearing for tilt / velocity (pan uses raw frame-center error).
@@ -1362,8 +1412,13 @@ class ServoLoop:
             "prox_approach_distance",
         )
         last_yaw = state["last_seen_world_yaw"]
-        recently_tracked = (now - max(self._last_face_ts, self._last_body_ts)) < self.no_face_home_sec * 2.0
-        exited_at_edge = abs(self._last_exit_norm_x) >= self.lss_edge_norm
+        recently_tracked = (now - max(self._last_face_ts, self._last_body_ts)) < (
+            self.no_face_home_sec + self.wander_track_loss_hold_max + 2.0
+        )
+        exited_at_edge = (
+            abs(self._last_exit_norm_x) >= self.lss_edge_norm
+            or abs(getattr(self, "_last_exit_vel_x", 0.0)) >= 0.25
+        )
         post_track_hold_done = now >= self._wander.hold_until
         if (
             last_yaw is not None
@@ -1489,7 +1544,7 @@ class ServoLoop:
         base_only_yaw = state["base_world_yaw_deg"] - float(state.get("head_yaw_on_body_deg", 0.0) or 0.0)
         camera_yaw = base_only_yaw + self._pan_mech_offset()
         yaw_err = angular_error_deg(last_yaw, camera_yaw)
-        pan_step = clamp(yaw_err * self.lss_track_gain * -self.pan_sign, -self.lss_max_step, self.lss_max_step)
+        pan_step = clamp(yaw_err * self.lss_track_gain * self.pan_sign, -self.lss_max_step, self.lss_max_step)
         pan_target = clamp(self._pan + pan_step, self.pan_min, self.pan_max)
         self._pan = smooth_toward(self._pan, pan_target, dt, smooth_hz=self.pan_smooth_hz, lo=self.pan_min, hi=self.pan_max)
 
@@ -1595,7 +1650,17 @@ class ServoLoop:
                 body_gone = (now - self._last_body_ts) > self.no_face_home_sec
                 hand_active = vision["hand_detected"]
                 if face_gone and body_gone and not hand_active:
-                    next_mode = "wander"
+                    last_yaw = self.bb.read("last_seen_world_yaw")["last_seen_world_yaw"]
+                    exited_moving_or_edge = (
+                        abs(self._last_exit_norm_x) >= self.lss_edge_norm * 0.8
+                        or abs(getattr(self, "_last_exit_vel_x", 0.0)) >= 0.25
+                    )
+                    if last_yaw is not None and exited_moving_or_edge:
+                        self._lss_active = True
+                        self._lss_start_ts = now
+                        next_mode = "last_seen"
+                    else:
+                        next_mode = "wander"
             elif old_mode == "last_seen":
                 next_mode = self._tick_last_seen(now, dt, effective_tilt_center)
             else:

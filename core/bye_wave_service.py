@@ -559,7 +559,7 @@ class ByeWaveService:
                 text = random.choice([
                     "Awesome! Thank you!",
                     "Two thumbs up! Looking great!",
-                    "Great job! You rock!"
+                    "Great job!"
                 ])
                 self._bb.write(
                     face_greeting_seq=f_seq + 1,

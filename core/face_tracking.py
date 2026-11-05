@@ -762,13 +762,14 @@ class FaceTracker:
             skin_blob_norm_y = 0.0
             hand_gesture = ""
             hand_gesture_side = ""
+            hands = []
 
             self._frame_count = getattr(self, "_frame_count", 0) + 1
             if hand_detector is not None and self._bye_gesture_from_hand:
                 # OPTIMIZATION: When face is actively tracked, prioritize YuNet face tracking.
                 # MediaPipe hand detection takes 50-70ms; running it every 4th frame preserves
                 # bye-wave detection responsiveness while keeping face tracking at solid 30 FPS.
-                should_run_hands = (not face_detected) or (self._frame_count % 4 == 0)
+                should_run_hands = (not face_detected) or (self._frame_count % 2 == 0)
                 if should_run_hands:
                     hands = hand_detector.process(frame, mirrored=False)
 
@@ -787,26 +788,14 @@ class FaceTracker:
                     elif detect_love_gesture(hands) and not hand_gesture:
                         hand_gesture = "love_sign"
                         hand_gesture_side = best_hand.physical_side
-                    # Gesture 3: Bye wave (hand near detected face, frontside)
+                    # Gesture 3: Bye wave (frontside hand anywhere in frame)
                     elif (
                         self._bye_gesture_from_hand
                         and best_hand.is_frontside
                         and not hand_gesture
                     ):
-                        trigger_bye = False
-                        if face_detected:
-                            face_px_x = int((face_norm_x + 1.0) * 0.5 * dw)
-                            face_px_y = int((face_norm_y + 1.0) * 0.5 * dh)
-                            dist = ((px - face_px_x) ** 2 + (py - face_px_y) ** 2) ** 0.5
-                            if dist < 300:  # Hand near face threshold
-                                trigger_bye = True
-                        else:
-                            # No face detected, trigger on hand wave alone
-                            trigger_bye = True
-                        
-                        if trigger_bye:
-                            hand_gesture = "bye_wave"
-                            hand_gesture_side = best_hand.physical_side
+                        hand_gesture = "bye_wave"
+                        hand_gesture_side = best_hand.physical_side
 
             #         # Hi gesture: frontside hand away from face (with 30s cooldown)
             #         hi_cooldown_until = float(self.bb.read("hi_wave_cooldown_until").get("hi_wave_cooldown_until", 0.0))
@@ -970,6 +959,7 @@ class FaceTracker:
             # ── Publish hand gesture (increment seq on new gesture) ────────
             gesture_seq_delta = {}
             if hand_gesture:
+                print(f"[FaceTracker] >>> Hand gesture detected: '{hand_gesture}' ({hand_gesture_side})")
                 prev_seq = int(self.bb.read("hand_gesture_seq")["hand_gesture_seq"])
                 gesture_seq_delta = {"hand_gesture_seq": prev_seq + 1}
                 if hand_gesture == "hi_wave":

@@ -18,6 +18,7 @@ run_laptop.ps1
 run_laptop.bat
 .env.laptop
 config.laptop.local.yaml
+tests/test_laptop_hand_gestures.py
 
 # Frontend (native Next.js kiosk)
 frontend/node_modules/

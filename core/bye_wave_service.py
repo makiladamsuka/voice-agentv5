@@ -713,6 +713,7 @@ class ByeWaveService:
             if self._hand_gesture_enabled and seq != last_gesture_seq:
                 last_gesture_seq = seq
                 gesture = bb_state.get("hand_gesture")
+                print(f"[ByeWaveService] Detected gesture: '{gesture}', cooldown in {max(0.0, cooldown_until - now):.1f}s")
                 if gesture in ("bye_wave", "thumbs_up", "love_sign") and now > cooldown_until:
                     announcement_hand = bb_state.get("hand_gesture_side", "")
                     announcement_gesture = gesture

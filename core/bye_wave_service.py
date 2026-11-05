@@ -379,15 +379,18 @@ class _ByeSequenceRunner:
         else:
             return 1 - pow(-2 * t + 2, power) / pow(2, power - 1)
 
-    def trigger(self, side):
+    def trigger(self, side, anim_key=None):
         with self._lock:
             if self._running:
                 return
             try:
                 data = json.loads(self._presets_path.read_text(encoding="utf-8"))
                 animations = data["animations"]
-                key = random.choice(["bye1", "bye2", "bye3"])
-                frames = animations[key]["frames"]
+                if anim_key and anim_key in animations:
+                    key = anim_key
+                else:
+                    key = random.choice(["bye1", "bye2", "bye3"])
+                frames = list(animations[key]["frames"])
                 if not frames:
                     raise ValueError(f"Animation '{key}' has no frames")
                 
@@ -488,7 +491,7 @@ class _ByeSequenceRunner:
             self._thread.join(timeout=timeout)
 
 
-def _draw_hud(frame, announcement_hand, announcement_end_time,
+def _draw_hud(frame, announcement_hand, announcement_end_time, announcement_gesture,
               cooldown_until, fps, now, arm_positions=None, animation_state=None,
               talking_active=False, track_kind="none"):
     fh, fw = frame.shape[:2]
@@ -527,7 +530,7 @@ def _draw_hud(frame, announcement_hand, announcement_end_time,
                     (255, 200, 0), 1, cv2.LINE_AA)
     
     if now < announcement_end_time:
-        msg = f"BYE WAVE! ({announcement_hand})"
+        msg = f"{announcement_gesture.upper().replace('_', ' ')}! ({announcement_hand})"
         ts = cv2.getTextSize(msg, cv2.FONT_HERSHEY_DUPLEX, 0.5, 2)[0]
         tx = max(0, (fw - ts[0]) // 2)
         ty = fh // 2 + ts[1] // 2 - 20
@@ -546,6 +549,48 @@ class ByeWaveService:
     Arm animations write to arm_a0..arm_a3 on the Blackboard so ServoMixer
     sends them to the ESP32 through the normal path.
     """
+
+    def _trigger_reaction_speech(self, gesture: str) -> None:
+        """Trigger spoken voice reaction and emotion for gestures."""
+        import random
+        try:
+            f_seq = int(self._bb.read("face_greeting_seq").get("face_greeting_seq", 0))
+            if gesture == "thumbs_up":
+                text = random.choice([
+                    "Awesome! Thank you!",
+                    "Two thumbs up! Looking great!",
+                    "Great job! You rock!"
+                ])
+                self._bb.write(
+                    face_greeting_seq=f_seq + 1,
+                    face_greeting_text=text,
+                    conv_emotion="excited"
+                )
+            elif gesture == "love_sign":
+                text = random.choice([
+                    "Aww, love you too!",
+                    "Sending love right back to you!",
+                    "You are so sweet!"
+                ])
+                self._bb.write(
+                    face_greeting_seq=f_seq + 1,
+                    face_greeting_text=text,
+                    conv_emotion="happy"
+                )
+            elif gesture in ("bye_wave", "wave"):
+                text = random.choice([
+                    "Bye bye! See you soon!",
+                    "Bye bye! Have a wonderful day!",
+                    "Bye bye! Take care!",
+                    "Goodbye! It was great seeing you!"
+                ])
+                self._bb.write(
+                    face_greeting_seq=f_seq + 1,
+                    face_greeting_text=text,
+                    conv_emotion="happy"
+                )
+        except Exception as exc:
+            print(f"[ByeWaveService] Reaction speech error: {exc}")
 
     def __init__(self, bb: Blackboard, config: dict) -> None:
         self._bb = bb
@@ -640,6 +685,7 @@ class ByeWaveService:
 
         announcement_end_time = 0.0
         announcement_hand = ""
+        announcement_gesture = "bye_wave"
 
         print("[ByeWaveService] Running -- waiting for 'bye_wave' hand_gesture from BB.")
         if not self._hand_gesture_enabled:
@@ -679,10 +725,20 @@ class ByeWaveService:
             if self._hand_gesture_enabled and seq != last_gesture_seq:
                 last_gesture_seq = seq
                 gesture = bb_state.get("hand_gesture")
-                if gesture == "bye_wave" and now > cooldown_until:
+                print(f"[ByeWaveService] Detected gesture: '{gesture}', cooldown in {max(0.0, cooldown_until - now):.1f}s")
+                if gesture in ("bye_wave", "thumbs_up", "love_sign") and now > cooldown_until:
                     announcement_hand = bb_state.get("hand_gesture_side", "")
+                    announcement_gesture = gesture
                     announcement_end_time = now + 3.0
-                    bye_runner.trigger(announcement_hand)
+                    if gesture == "thumbs_up":
+                        bye_runner.trigger(announcement_hand, anim_key="thumbs_up")
+                        self._trigger_reaction_speech("thumbs_up")
+                    elif gesture == "love_sign":
+                        bye_runner.trigger(announcement_hand, anim_key="heart_love")
+                        self._trigger_reaction_speech("love_sign")
+                    else:
+                        bye_runner.trigger(announcement_hand)
+                        self._trigger_reaction_speech("bye_wave")
 
             # Read arm positions and animation state for overlay
             arm_data = self._bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")
@@ -708,7 +764,7 @@ class ByeWaveService:
             prev_time = fps_now
 
             _draw_hud(
-                annotated, announcement_hand, announcement_end_time,
+                annotated, announcement_hand, announcement_end_time, announcement_gesture,
                 cooldown_until, fps, now,
                 arm_positions=arm_data,
                 animation_state=animation_state,

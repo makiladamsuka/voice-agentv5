@@ -10,6 +10,7 @@ export interface EmojiCueOptions {
   faceArea?: number;       // Ratio: < 0.035 is distant/aisle, > 0.035 is near
   noFaceSec?: number;      // Seconds since a face was last seen
   idleCycleTick?: number;  // Rotates 0, 1, 2 every 18 seconds
+  handGesture?: string;    // "thumbs_up" | "love_sign" | "bye_wave" | "hi_wave"
 }
 
 /**
@@ -29,6 +30,18 @@ export function getEmojiCue(
   const noFaceSec = extra?.noFaceSec ?? 0;
   const idleTick = extra?.idleCycleTick ?? 0;
   const emo = (emotion || "idle").toLowerCase();
+
+  // ── 0. REAL-TIME PHYSICAL HAND GESTURES (Immediate Visual Display Feedback) ──
+  const gesture = (extra?.handGesture || "").trim().toLowerCase();
+  if (gesture === "thumbs_up") {
+    return { emoji: "👍", codePoint: "1f44d", animation: "bounce", label: "Thumbs Up" };
+  }
+  if (gesture === "love_sign") {
+    return { emoji: "💖", codePoint: "1f496", animation: "pulse", label: "Love Heart" };
+  }
+  if (gesture === "bye_wave") {
+    return { emoji: "👋", codePoint: "1f44b", animation: "wave", label: "Goodbye Wave" };
+  }
 
   // ── 1. ACTIVE DIALOGUE & TRANSCRIPTS (Highest Priority) ──
   if (transcript && transcript.length > 0) {
@@ -76,6 +89,26 @@ export function getEmojiCue(
       lower.includes("take care")
     ) {
       return { emoji: "🤚", codePoint: "1f91a", animation: "wave", label: "Raised Back of Hand" };
+    }
+
+    // 1c-2. Thumbs Up / Celebration
+    if (
+      lower.includes("awesome") ||
+      lower.includes("thumbs up") ||
+      lower.includes("great job") ||
+      lower.includes("you rock") ||
+      lower.includes("looking great")
+    ) {
+      return { emoji: "👍", codePoint: "1f44d", animation: "bounce", label: "Thumbs Up" };
+    }
+
+    // 1c-3. Love / Heart
+    if (
+      lower.includes("love you") ||
+      lower.includes("sending love") ||
+      lower.includes("so sweet")
+    ) {
+      return { emoji: "💖", codePoint: "1f496", animation: "pulse", label: "Sparkling Heart" };
     }
 
     // 1d. Gratitude / Politeness

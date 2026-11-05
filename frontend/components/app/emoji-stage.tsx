@@ -11,6 +11,7 @@ interface EmojiStageProps {
   faceDetected?: boolean;
   faceArea?: number;
   noFaceSec?: number;
+  handGesture?: string;
 }
 
 export const EmojiStage = memo(function EmojiStage({
@@ -21,6 +22,7 @@ export const EmojiStage = memo(function EmojiStage({
   faceDetected = false,
   faceArea = 0,
   noFaceSec = 0,
+  handGesture,
 }: EmojiStageProps) {
   // Baseline idle cycle tick (advances every 18 seconds)
   const [idleCycleTick, setIdleCycleTick] = useState(0);
@@ -55,8 +57,9 @@ export const EmojiStage = memo(function EmojiStage({
         faceArea,
         noFaceSec: effectiveNoFaceSec,
         idleCycleTick,
+        handGesture,
       }),
-    [transcript, convState, emotion, faceCount, faceDetected, faceArea, effectiveNoFaceSec, idleCycleTick]
+    [transcript, convState, emotion, faceCount, faceDetected, faceArea, effectiveNoFaceSec, idleCycleTick, handGesture]
   );
 
   const [failedCodePoints, setFailedCodePoints] = useState<Record<string, boolean>>({});

@@ -915,11 +915,11 @@ export function CleanKioskView() {
 
                   <div className="flex flex-col max-w-[78%]">
 
-                    <span className="font-semibold text-sm">Base Home Spin</span>
+                    <span className="font-semibold text-sm">Base Rotation</span>
 
                     <span className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-tight">
 
-                      Rotate base plate back to center when returning home or exiting
+                      Rotate base plate for face tracking, wandering, and returning home
 
                     </span>
 
@@ -935,7 +935,7 @@ export function CleanKioskView() {
 
                     }`}
 
-                    aria-label="Toggle Base Home Spin"
+                    aria-label="Toggle Base Rotation"
 
                   >
 

@@ -101,6 +101,7 @@ class ServoMixer:
         self.loop_hz = float(s.get("loop_hz", 100.0))
         self.base_busy_check_hz = 5.0
 
+        self.base_enabled = bool(b.get("enabled", True))
         self.use_imu_validation = bool(b.get("use_imu_move_validation", False))
         self.spin_tolerance_deg = float(b.get("spin_stop_tolerance_deg", 1.5))
         self.spin_timeout_sec = float(b.get("spin_timeout_sec", 12.0))
@@ -482,6 +483,9 @@ class ServoMixer:
                 tilt = raw_tilt
 
             if state["base_step_ready"] and not state["base_motion_busy"]:
+                if not self.base_enabled:
+                    self.bb.write(base_step_ready=False)
+                    continue
                 step = state["base_step_deg"]
                 source = state["base_step_source"]
                 self.bb.write(base_step_ready=False)
@@ -680,7 +684,9 @@ class ServoMixer:
         self._refresh_during_spin()
 
     def _execute_base_step(self, pan: float, tilt: float, step: float, source: str, now: float) -> None:
-        if self._link is None:
+        if not self.base_enabled or self._link is None:
+            if not self.base_enabled:
+                self.bb.write(base_step_ready=False, base_motion_busy=False)
             return
         try:
             enc = self._encoder_deg

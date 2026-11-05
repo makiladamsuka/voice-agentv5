@@ -145,9 +145,10 @@ def generate_random_face_greeting(
     if is_crowd_growth:
         return _choose_non_repeating(
             [
+                "Oh, so many people are here now! Welcome everyone to FIT EXPO 2026!",
                 "Oh, more friends joined! Hi everyone!",
                 "Look at this crowd! Welcome to FIT EXPO everyone!",
-                "Whoa, more people! Welcome everyone!",
+                "Whoa, so many people! Welcome to the Faculty of IT, everyone!",
                 "Hey, the whole crew is here! Hi everyone!",
                 "More visitors! Welcome to our 25th anniversary expo!",
             ],
@@ -157,6 +158,8 @@ def generate_random_face_greeting(
     time_of_day = get_time_of_day()
     if face_count >= 3:
         pool = [
+            "Oh, so many people are here! Hi everyone, welcome to FIT EXPO 2026!",
+            "Wow, look at all of you! Welcome to FIT EXPO 2026, everyone!",
             "Hi everyone!",
             "Hello everyone! Welcome to FIT EXPO!",
             "Whoa, a whole group! Hi everyone!",

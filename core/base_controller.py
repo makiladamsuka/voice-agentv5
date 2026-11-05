@@ -812,8 +812,18 @@ class BaseController:
             return None, "", 0.0
 
         # Do not spin physical base wheels on blind ToF triggers when surrounded
-        # by a crowd (>= 2 zones occupied) or when someone is within < 120mm safety distance.
+        # by a crowd (>= 2 zones occupied) or when someone is within < 120mm safety distance,
+        # but DO allow the head to pan/scan toward the active ToF gathering zone so the camera locks faces.
         if state.get("tof_surrounded", False) or state.get("tof_too_close_safety", False):
+            if (
+                state.get("tof_surrounded", False)
+                and not state.get("tof_too_close_safety", False)
+                and not tracking
+                and self.prox_investigate_enabled
+                and zone in ("L", "R", "C")
+            ):
+                self._last_prox_ts = now
+                self._start_investigate(now, zone, world_yaw, "scan")
             if approach_ts > 0.0:
                 self._last_prox_reaction_approach_ts = approach_ts
             return None, "", 0.0

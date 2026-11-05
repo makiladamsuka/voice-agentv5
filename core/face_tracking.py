@@ -109,10 +109,12 @@ class MultiFaceAttention:
 
         if now >= self.hold_until and now - self.stable_since >= MULTI_FACE_DEBOUNCE_SEC:
             r = random.random()
-            if r < MULTI_FACE_CENTER_CHANCE:
+            center_chance = 0.55 if count >= 3 else MULTI_FACE_CENTER_CHANCE
+            alt_chance = 0.25 if count >= 3 else MULTI_FACE_ALTERNATE_CHANCE
+            if r < center_chance:
                 self.mode = "center"
                 self.index = 0
-            elif r < MULTI_FACE_CENTER_CHANCE + MULTI_FACE_ALTERNATE_CHANCE:
+            elif r < center_chance + alt_chance:
                 self.mode = "alternate"
                 self.index = random.randrange(1, count)
             else:
@@ -121,7 +123,7 @@ class MultiFaceAttention:
             self._next_hold(now)
 
         if self.mode == "center" and count >= 2:
-            return (ranked[0], ranked[1]), "center", -1
+            return tuple(ranked[:5]), "center", -1
 
         self.index = min(max(0, self.index), count - 1)
         kind = "multi" if self.index > 0 else "face"
@@ -734,15 +736,17 @@ class FaceTracker:
                     selected_face, kind, active_face_index = self._attention.select(valid, now)
 
                     if kind == "center" and isinstance(selected_face, tuple):
-                        f1, f2 = selected_face
-                        cx1, cy1 = self._face_center_norm(f1)
-                        cx2, cy2 = self._face_center_norm(f2)
-                        face_norm_x = (cx1 + cx2) * 0.5
-                        face_norm_y = (cy1 + cy2) * 0.5
-                        face_area = (
-                            self._face_area_ratio(f1, self.detect_res)
-                            + self._face_area_ratio(f2, self.detect_res)
-                        ) * 0.5
+                        # Crowd-density weighted centroid: guide head toward where the most people gather
+                        centers = [self._face_center_norm(f) for f in selected_face]
+                        areas = [max(1e-4, self._face_area_ratio(f, self.detect_res)) for f in selected_face]
+                        weights = []
+                        for i, (cxi, _cyi) in enumerate(centers):
+                            local_density = sum(1.0 / (0.25 + abs(cxi - cxj)) for cxj, _cyj in centers)
+                            weights.append(math.sqrt(areas[i]) * local_density)
+                        w_sum = sum(weights) or 1.0
+                        face_norm_x = sum(c[0] * w for c, w in zip(centers, weights)) / w_sum
+                        face_norm_y = sum(c[1] * w for c, w in zip(centers, weights)) / w_sum
+                        face_area = sum(areas) / len(areas)
                         face_roll = 0.0
                         track_kind = "center"
                     else:

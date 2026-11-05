@@ -818,14 +818,16 @@ def main():
         VALID_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
         CATEGORIES = ("events", "competitions", "posts")
 
-        # Check if any posters exist on disk
-        has_posters = any(
-            f.suffix.lower() in VALID_EXTS
-            for cat in CATEGORIES
-            for f in (assets_dir / cat).iterdir()
-            if (assets_dir / cat).is_dir()
-        )
-        if not has_posters:
+        # Check if any posters exist on disk safely
+        disk_files = set()
+        for cat in CATEGORIES:
+            cat_dir = assets_dir / cat
+            if cat_dir.is_dir():
+                for f in cat_dir.iterdir():
+                    if f.suffix.lower() in VALID_EXTS:
+                        disk_files.add(f.name)
+
+        if not disk_files:
             return
 
         # Check if extracted_events.json is empty or missing entries for existing posters
@@ -837,12 +839,6 @@ def main():
                 pass
 
         existing_files = {e.get("source_file") for e in existing}
-        disk_files = {
-            f.name
-            for cat in CATEGORIES
-            for f in (assets_dir / cat).iterdir()
-            if (assets_dir / cat).is_dir() and f.suffix.lower() in VALID_EXTS
-        }
         unindexed = disk_files - existing_files
 
         if unindexed:

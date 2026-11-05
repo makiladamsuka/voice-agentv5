@@ -174,18 +174,22 @@ def _dist_2d(p1: dict[str, float] | tuple[int, int], p2: dict[str, float] | tupl
 
 def is_finger_curled(landmarks: list[dict[str, float]], tip_idx: int, pip_idx: int) -> bool:
     wrist = landmarks[0]
-    # Check 1: tip closer to wrist than pip (with 1.15 tolerance)
-    if _dist_2d(landmarks[tip_idx], wrist) < _dist_2d(landmarks[pip_idx], wrist) * 1.15:
+    # Check 1: tip closer to wrist than pip (with 1.18 tolerance)
+    if _dist_2d(landmarks[tip_idx], wrist) < _dist_2d(landmarks[pip_idx], wrist) * 1.18:
         return True
     # Check 2: in upright hand, curled fingertip is at or below pip
-    if landmarks[tip_idx]['y'] > landmarks[pip_idx]['y'] - 0.03:
+    if landmarks[tip_idx]['y'] > landmarks[pip_idx]['y'] - 0.04:
+        return True
+    # Check 3: tip is close to MCP joint (finger folded into palm)
+    mcp_idx = pip_idx - 1 if pip_idx > 1 else 0
+    if _dist_2d(landmarks[tip_idx], landmarks[mcp_idx]) < 0.12:
         return True
     return False
 
 def is_finger_extended(landmarks: list[dict[str, float]], tip_idx: int, pip_idx: int) -> bool:
     wrist = landmarks[0]
     higher = landmarks[tip_idx]['y'] < landmarks[pip_idx]['y']
-    further = _dist_2d(landmarks[tip_idx], wrist) > _dist_2d(landmarks[pip_idx], wrist) * 1.08
+    further = _dist_2d(landmarks[tip_idx], wrist) > _dist_2d(landmarks[pip_idx], wrist) * 1.05
     return higher and further
 
 def detect_thumbs_up(detection: HandDetection) -> bool:
@@ -193,11 +197,11 @@ def detect_thumbs_up(detection: HandDetection) -> bool:
     lms = detection.landmarks
     if len(lms) < 21:
         return False
-    # Thumb tip pointing upwards: tip is higher than MCP and higher than index MCP
+    # Thumb tip pointing upwards: tip is higher than IP(3) or MCP(2)
+    thumb_higher_than_ip = lms[4]['y'] < lms[3]['y']
     thumb_higher_than_mcp = lms[4]['y'] < lms[2]['y']
-    thumb_higher_than_index_mcp = lms[4]['y'] < lms[5]['y']
-    thumb_above_wrist = (lms[0]['y'] - lms[4]['y']) > 0.05
-    if not (thumb_higher_than_mcp and thumb_higher_than_index_mcp and thumb_above_wrist):
+    thumb_above_wrist = (lms[0]['y'] - lms[4]['y']) > 0.04
+    if not ((thumb_higher_than_ip or thumb_higher_than_mcp) and thumb_above_wrist):
         return False
 
     # Count curled fingers among Index(8), Middle(12), Ring(16), Pinky(20)
@@ -206,7 +210,7 @@ def detect_thumbs_up(detection: HandDetection) -> bool:
         if is_finger_curled(lms, tip, pip):
             curled_count += 1
 
-    # Neither index nor middle should be extended upwards
+    # Neither index nor middle should be pointing straight up
     index_not_extended = not is_finger_extended(lms, 8, 6)
     middle_not_extended = not is_finger_extended(lms, 12, 10)
 
@@ -225,11 +229,8 @@ def detect_love_gesture(detections: list[HandDetection]) -> bool:
         if len(h1) >= 21 and len(h2) >= 21:
             d_index = _dist_2d(h1[8], h2[8])
             d_thumb = _dist_2d(h1[4], h2[4])
-            if d_index < 0.25 and d_thumb < 0.25:
-                avg_idx_y = (h1[8]['y'] + h2[8]['y']) * 0.5
-                avg_thumb_y = (h1[4]['y'] + h2[4]['y']) * 0.5
-                if avg_thumb_y > avg_idx_y - 0.05:
-                    return True
+            if d_index < 0.28 and d_thumb < 0.28:
+                return True
 
     # 2. Single-hand love gestures
     for d in detections:
@@ -237,20 +238,22 @@ def detect_love_gesture(detections: list[HandDetection]) -> bool:
         if len(lms) < 21:
             continue
 
-        # 2a. 'I Love You' sign (🤟): Thumb, Index, Pinky extended; Middle and Ring curled
-        thumb_ext = is_finger_extended(lms, 4, 2)
-        index_ext = is_finger_extended(lms, 8, 6)
-        pinky_ext = is_finger_extended(lms, 20, 18)
         middle_curled = is_finger_curled(lms, 12, 10)
         ring_curled = is_finger_curled(lms, 16, 14)
-        if thumb_ext and index_ext and pinky_ext and middle_curled and ring_curled:
+
+        # 2a. 'I Love You' sign (🤟): Index and Pinky extended; Middle and Ring curled
+        index_ext = is_finger_extended(lms, 8, 6)
+        pinky_ext = is_finger_extended(lms, 20, 18)
+        thumb_out = (_dist_2d(lms[4], lms[2]) > 0.06) or (lms[4]['y'] < lms[2]['y'])
+        if index_ext and pinky_ext and middle_curled and ring_curled and thumb_out:
             return True
 
         # 2b. Finger heart (🫰): Thumb tip & Index tip pinched together; other fingers curled
         d_thumb_idx = _dist_2d(lms[4], lms[8])
-        if d_thumb_idx < 0.12:
-            # Thumb tip is near index finger level
-            if middle_curled and (ring_curled or is_finger_curled(lms, 20, 18)):
-                return True
+        if d_thumb_idx < 0.16:
+            # Thumb tip is above wrist
+            if lms[4]['y'] < lms[0]['y']:
+                if middle_curled or ring_curled:
+                    return True
 
     return False

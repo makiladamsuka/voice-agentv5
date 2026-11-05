@@ -100,6 +100,14 @@ class ServoMixer:
         self.pan_send_smooth_hz = float(s.get("pan_send_smooth_hz", 2.5))
         self.loop_hz = float(s.get("loop_hz", 100.0))
         self.base_busy_check_hz = 5.0
+        self.config_path = Path(config_path)
+        self._last_cfg_mtime = 0.0
+        self._last_cfg_check_ts = 0.0
+        try:
+            if self.config_path.exists():
+                self._last_cfg_mtime = self.config_path.stat().st_mtime
+        except Exception:
+            pass
 
         self.base_enabled = bool(b.get("enabled", True))
         self.use_imu_validation = bool(b.get("use_imu_move_validation", False))
@@ -410,6 +418,31 @@ class ServoMixer:
             return True
         return False
 
+    def _check_config_reload(self) -> None:
+        try:
+            if not self.config_path.exists():
+                return
+            mtime = self.config_path.stat().st_mtime
+            if mtime > self._last_cfg_mtime:
+                self._last_cfg_mtime = mtime
+                cfg = _load_yaml(self.config_path)
+                if not cfg:
+                    return
+                b = _cfg(cfg, "base", default={}) or {}
+                new_enabled = bool(b.get("enabled", True))
+                if new_enabled != self.base_enabled:
+                    print(f"[ServoMixer] Dynamic reload: base.enabled changed to {new_enabled}")
+                    self.base_enabled = new_enabled
+                    if not new_enabled:
+                        self.bb.write(base_step_ready=False, base_motion_busy=False)
+                        if self._link is not None:
+                            try:
+                                self._link.write_base_stop()
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+
     def run(self) -> None:
         if self._link is None or not self._link.connected:
             print("[ServoMixer] No servo link — running in dry-run mode.")
@@ -445,6 +478,9 @@ class ServoMixer:
             )
             send_hz = self.voice_send_hz if voice_active else self.send_hz
             now = time.time()
+            if (now - self._last_cfg_check_ts) >= 0.5:
+                self._last_cfg_check_ts = now
+                self._check_config_reload()
             if self._handle_debug_commands(now):
                 time.sleep(loop_delay)
                 continue

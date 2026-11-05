@@ -604,8 +604,8 @@ async def _monitor_face_greetings_loop() -> None:
 
                     loop = asyncio.get_running_loop()
                     audio_file = await loop.run_in_executor(None, _generate_dynamic_tts, text)
+                    audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
                     if audio_file:
-                        audio_url = f"/assets/audio_cache/{audio_file}"
                         audio_path = APP_DIR / "assets" / "audio_cache" / audio_file
 
                         greet_uid = ""
@@ -624,20 +624,20 @@ async def _monitor_face_greetings_loop() -> None:
                         # Let EyeRenderer (24 Mbaud SPI) & FaceTracker pause before audio DMA starts
                         await asyncio.sleep(0.08)
 
-                        if _greet_ws_clients:
-                            # Fix double voices: send audio_url only to primary active client (last connected).
-                            # Other clients receive audio_url=None to update subtitles without duplicate playback.
-                            primary_ws = list(_greet_ws_clients)[-1]
-                            for ws in list(_greet_ws_clients):
-                                try:
-                                    url = audio_url if ws is primary_ws else None
-                                    payload = json.dumps({"type": "greeting", "text": text, "audio_url": url})
-                                    await ws.send_text(payload)
-                                except Exception:
-                                    pass
-                        else:
-                            from voice.offline_voice.runtime import play_audio
-                            await loop.run_in_executor(None, play_audio, audio_path)
+                    if _greet_ws_clients:
+                        # Fix double voices: send audio_url only to primary active client (last connected).
+                        # Other clients receive audio_url=None to update subtitles without duplicate playback.
+                        primary_ws = list(_greet_ws_clients)[-1]
+                        for ws in list(_greet_ws_clients):
+                            try:
+                                url = audio_url if (ws is primary_ws and audio_url) else None
+                                payload = json.dumps({"type": "greeting", "text": text, "audio_url": url})
+                                await ws.send_text(payload)
+                            except Exception:
+                                pass
+                    elif audio_file:
+                        from voice.offline_voice.runtime import play_audio
+                        await loop.run_in_executor(None, play_audio, audio_path)
 
                         word_count = len(text.split())
                         clear_delay = max(2.2, (duration_ms / 1000.0) + 0.6 if duration_ms else word_count * 0.35 + 0.8)

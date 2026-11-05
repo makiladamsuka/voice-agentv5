@@ -817,14 +817,23 @@ class FaceTracker:
                     elif detect_love_gesture(hands) and not hand_gesture:
                         hand_gesture = "love_sign"
                         hand_gesture_side = best_hand.physical_side
-                    # Gesture 3: Bye wave (frontside hand anywhere in frame)
+                    # Gesture 3: Bye wave (frontside hand with open palm, NOT curled fingers/fist)
                     elif (
                         self._bye_gesture_from_hand
                         and best_hand.is_frontside
                         and not hand_gesture
                     ):
-                        hand_gesture = "bye_wave"
-                        hand_gesture_side = best_hand.physical_side
+                        # Ensure fingers are open, not a fist or curled fingers
+                        lms = best_hand.landmarks
+                        is_curled_fist = False
+                        if len(lms) >= 21:
+                            from lib.hand_detector import is_finger_curled
+                            curled_count = sum(1 for t, p in [(8, 6), (12, 10), (16, 14)] if is_finger_curled(lms, t, p))
+                            if curled_count >= 2:
+                                is_curled_fist = True
+                        if not is_curled_fist:
+                            hand_gesture = "bye_wave"
+                            hand_gesture_side = best_hand.physical_side
 
             #         # Hi gesture: frontside hand away from face (with 30s cooldown)
             #         hi_cooldown_until = float(self.bb.read("hi_wave_cooldown_until").get("hi_wave_cooldown_until", 0.0))
@@ -988,11 +997,21 @@ class FaceTracker:
             # ── Publish hand gesture (increment seq on new gesture) ────────
             gesture_seq_delta = {}
             if hand_gesture:
+                self._gesture_latched = hand_gesture
+                self._gesture_latched_side = hand_gesture_side
+                self._gesture_latched_until = now + 2.5
                 print(f"[FaceTracker] >>> Hand gesture detected: '{hand_gesture}' ({hand_gesture_side})")
                 prev_seq = int(self.bb.read("hand_gesture_seq")["hand_gesture_seq"])
                 gesture_seq_delta = {"hand_gesture_seq": prev_seq + 1}
                 if hand_gesture == "hi_wave":
                     gesture_seq_delta["hi_wave_cooldown_until"] = now + HI_WAVE_COOLDOWN_SEC
+
+            # Latch active gesture for 2.5s so display & services reliably catch it
+            active_gesture = hand_gesture
+            active_gesture_side = hand_gesture_side
+            if not active_gesture and getattr(self, "_gesture_latched_until", 0.0) > now:
+                active_gesture = getattr(self, "_gesture_latched", "")
+                active_gesture_side = getattr(self, "_gesture_latched_side", "")
 
             # ── Publish to Blackboard ────────────────────────────────────────
             snapshots = self._person_memory.snapshots(now) if self._person_memory else []
@@ -1022,8 +1041,8 @@ class FaceTracker:
                 # skin_blob_detected=skin_blob_detected,
                 # skin_blob_norm_x=skin_blob_norm_x,
                 # skin_blob_norm_y=skin_blob_norm_y,
-                hand_gesture=hand_gesture,
-                hand_gesture_side=hand_gesture_side,
+                hand_gesture=active_gesture,
+                hand_gesture_side=active_gesture_side,
                 person_snapshots=snapshots,
                 motion_snapshots=motion_snapshots,
                 last_seen_world_yaw=last_seen_yaw,

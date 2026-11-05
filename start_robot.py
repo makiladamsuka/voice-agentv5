@@ -283,7 +283,15 @@ def _shutdown_home_base(
     *,
     servo_cfg: dict,
     base_cfg: dict,
+    config_path: Path | None = None,
 ) -> None:
+    if config_path is not None and config_path.exists():
+        try:
+            fresh_cfg = _load_yaml(config_path)
+            if fresh_cfg:
+                base_cfg = fresh_cfg.get("base", {}) or base_cfg
+        except Exception:
+            pass
     """IMU closed-loop spin back to startup forward before exit (like approach HOME)."""
     if not base_cfg.get("enabled", True):
         print("[Bootstrap] Base rotation disabled (base.enabled: false) - skipping shutdown HOME spin.", flush=True)
@@ -885,6 +893,7 @@ def main():
                 tracker,
                 servo_cfg=servo_cfg,
                 base_cfg=base_cfg,
+                config_path=config_path,
             )
         if voice_thread is not None and voice_thread.is_alive():
             print("[Bootstrap] Stopping NLU voice server...")

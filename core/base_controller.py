@@ -81,6 +81,14 @@ class BaseController:
     ) -> None:
         self.bb = bb
         self._link = link
+        self.config_path = Path(config_path)
+        self._last_cfg_mtime = 0.0
+        self._last_cfg_check_ts = 0.0
+        try:
+            if self.config_path.exists():
+                self._last_cfg_mtime = self.config_path.stat().st_mtime
+        except Exception:
+            pass
         cfg = _load_yaml(config_path)
         b = _cfg(cfg, "base", default={}) or {}
         s = _cfg(cfg, "servo", default={}) or {}
@@ -903,17 +911,46 @@ class BaseController:
         comp_pan = 0.0 if self.prox_investigate_enabled else self._comp_pan_for_step(step, pan, self.prox_comp_gain)
         return step, "prox_revisit", comp_pan
 
+    def _check_config_reload(self) -> None:
+        try:
+            if not self.config_path.exists():
+                return
+            mtime = self.config_path.stat().st_mtime
+            if mtime > self._last_cfg_mtime:
+                self._last_cfg_mtime = mtime
+                cfg = _load_yaml(self.config_path)
+                if not cfg:
+                    return
+                b = _cfg(cfg, "base", default={}) or {}
+                new_enabled = bool(b.get("enabled", False))
+                if new_enabled != self.enabled:
+                    print(f"[BaseController] Dynamic reload: base.enabled changed to {new_enabled}")
+                    self.enabled = new_enabled
+                self.wander_base_enabled = bool(b.get("wander_enabled", True))
+                self.body_base_enabled = bool(b.get("body_base_enabled", True))
+                prox = _cfg(cfg, "proximity", default={}) or {}
+                self.prox_enabled = bool(prox.get("enabled", True))
+        except Exception:
+            pass
+
     # ── Main loop ──────────────────────────────────────────────────────────────
 
     def run(self) -> None:
-        if not self.enabled:
-            print("[BaseController] Base rotation disabled in config.")
-            return
-
         loop_delay = 1.0 / max(1.0, self.loop_hz)
         self._gate.clear_backoff()
+        print(f"[BaseController] Monitoring loop started (base.enabled: {self.enabled}).")
 
         while self.bb.read("running")["running"]:
+            now = time.time()
+            if (now - self._last_cfg_check_ts) >= 0.5:
+                self._last_cfg_check_ts = now
+                self._check_config_reload()
+
+            if not self.enabled:
+                if self.bb.read("base_step_ready")["base_step_ready"]:
+                    self.bb.write(base_step_ready=False, base_comp_pan_deg=0.0)
+                time.sleep(loop_delay)
+                continue
             voice_active = self.bb.read("voice_session_active")["voice_session_active"]
             loop_delay = 1.0 / (
                 self.voice_loop_hz if voice_active else self.loop_hz

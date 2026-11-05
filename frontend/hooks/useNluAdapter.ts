@@ -204,7 +204,8 @@ export function useNluAdapter(options?: UseNluAdapterOptions): NluAdapter {
           prev.faceDetected === status.faceDetected &&
           prev.faceCount === status.faceCount &&
           isFarPrev === isFarNew &&
-          isSleepyPrev === isSleepyNew
+          isSleepyPrev === isSleepyNew &&
+          prev.handGesture === status.handGesture
         ) {
           return prev;
         }

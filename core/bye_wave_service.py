@@ -577,6 +577,18 @@ class ByeWaveService:
                     face_greeting_text=text,
                     conv_emotion="happy"
                 )
+            elif gesture in ("bye_wave", "wave"):
+                text = random.choice([
+                    "Bye bye! See you soon!",
+                    "Bye bye! Have a wonderful day!",
+                    "Bye bye! Take care!",
+                    "Goodbye! It was great seeing you!"
+                ])
+                self._bb.write(
+                    face_greeting_seq=f_seq + 1,
+                    face_greeting_text=text,
+                    conv_emotion="happy"
+                )
         except Exception as exc:
             print(f"[ByeWaveService] Reaction speech error: {exc}")
 
@@ -726,6 +738,7 @@ class ByeWaveService:
                         self._trigger_reaction_speech("love_sign")
                     else:
                         bye_runner.trigger(announcement_hand)
+                        self._trigger_reaction_speech("bye_wave")
 
             # Read arm positions and animation state for overlay
             arm_data = self._bb.read("arm_a0", "arm_a1", "arm_a2", "arm_a3")

@@ -555,6 +555,7 @@ async def _monitor_face_greetings_loop() -> None:
                     "face_count",
                     "face_area_ratio",
                     "no_face_elapsed_sec",
+                    "hand_gesture",
                 )
                 face_detected = bool(bb_data.get("face_detected", False))
                 if face_detected:
@@ -574,6 +575,7 @@ async def _monitor_face_greetings_loop() -> None:
                     "face_count": int(bb_data.get("face_count", 0)),
                     "face_area": float(bb_data.get("face_area_ratio", 0.0) or 0.0),
                     "no_face_sec": float(no_face_sec),
+                    "hand_gesture": str(bb_data.get("hand_gesture") or ""),
                 })
                 for ws in list(_greet_ws_clients):
                     try:

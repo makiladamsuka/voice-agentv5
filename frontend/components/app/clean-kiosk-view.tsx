@@ -612,6 +612,8 @@ export function CleanKioskView() {
 
           noFaceSec={nluAdapter.robotStatus?.noFaceSec ?? 0}
 
+          handGesture={nluAdapter.robotStatus?.handGesture}
+
         />
 
 

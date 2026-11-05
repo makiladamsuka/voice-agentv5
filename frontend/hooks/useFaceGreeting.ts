@@ -23,6 +23,7 @@ export interface RobotLiveStatus {
   faceCount: number;
   faceArea: number;
   noFaceSec: number;
+  handGesture?: string;
 }
 
 interface FaceGreetingOptions {
@@ -220,6 +221,7 @@ export function useFaceGreeting({
             faceCount: Number(msg.face_count || 0),
             faceArea: Number(msg.face_area || 0),
             noFaceSec: Number(msg.no_face_sec || 0),
+            handGesture: String(msg.hand_gesture || ""),
           });
         }
       } catch (_) {}

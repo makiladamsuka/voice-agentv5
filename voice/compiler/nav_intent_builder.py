@@ -20,6 +20,7 @@ sys.path.insert(0, str(APP_DIR))
 from voice.wayfinding import Wayfinder  # noqa: E402
 
 UTTERANCE_TEMPLATES = [
+    "{room}",
     "Where is {room}?",
     "Where is the {room}?",
     "Take me to {room}",
@@ -34,11 +35,21 @@ UTTERANCE_TEMPLATES = [
 ]
 
 # Rooms with no useful spoken label (auto-generated map furniture)
-SKIP_LABELS = {"staircase"}
+SKIP_LABELS = {"staircase", "staircase 1", "staircase 2", "you are here"}
 
 
 def _slug(label: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", label.lower().strip()).strip("_")
+
+
+def _spelling_variants(label: str) -> list[str]:
+    """Return surface-form variants for map labels with non-standard spelling."""
+    variants = [label]
+    norm = re.sub(r"\blabratory\b", "Laboratory", label, flags=re.IGNORECASE)
+    norm = re.sub(r"\blecturehall\b", "Lecture hall", norm, flags=re.IGNORECASE)
+    if norm not in variants:
+        variants.append(norm)
+    return variants
 
 
 def build_navigate_intents() -> list[dict]:
@@ -55,10 +66,24 @@ def build_navigate_intents() -> list[dict]:
             continue
         seen.add(slug)
 
+        utterances: list[str] = []
+        seen_utts: set[str] = set()
+        for var in _spelling_variants(clean):
+            for t in UTTERANCE_TEMPLATES:
+                u = t.format(room=var)
+                if u.lower() not in seen_utts:
+                    seen_utts.add(u.lower())
+                    utterances.append(u)
+
+        display_label = _spelling_variants(clean)[-1]
+        if display_label and display_label[0].islower():
+            display_label = display_label[0].upper() + display_label[1:]
+
         intents.append({
             "id": f"navigate_{slug}",
-            "utterances": [t.format(room=clean) for t in UTTERANCE_TEMPLATES],
-            "response_text": f"Let me show you the way to {clean}.",
+            "button_label": display_label,
+            "utterances": utterances,
+            "response_text": f"Let me show you the way to {display_label}.",
             "audio_file": None,
             "action": {"action": "navigate", "destination": clean},
         })

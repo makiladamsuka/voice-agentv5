@@ -51,11 +51,19 @@ export async function POST(req: NextRequest) {
     // Save the YAML file
     fs.writeFileSync(KB_PATH, yaml, "utf-8");
 
-    // Run the compiler
+    // Run the compiler (prefer project venv python if available)
+    const venvWin = path.join(backendDir, "venv", "Scripts", "python.exe");
+    const venvUnix = path.join(backendDir, "venv", "bin", "python");
+    const pythonBin = fs.existsSync(venvWin)
+      ? `"${venvWin}"`
+      : fs.existsSync(venvUnix)
+      ? `"${venvUnix}"`
+      : "python";
+
     let compilerOutput = "";
     try {
       compilerOutput = execSync(
-        `python "${COMPILER_PATH}"`,
+        `${pythonBin} "${COMPILER_PATH}"`,
         { cwd: backendDir, timeout: 15000 },
       ).toString();
     } catch (compErr: any) {

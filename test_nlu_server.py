@@ -1,7 +1,9 @@
 """
 Smoke-test for the NLU WebSocket server.
 
-Starts the NLU server, sends a fake transcript, and checks for a valid response.
+Starts the NLU server, sends transcripts covering greetings, FIT EXPO 2026,
+25th Anniversary, Team Nema, navigation disambiguation, and General Q&A,
+and checks for valid responses and buttons.
 Run from the project root: python test_nlu_server.py
 
 Usage:
@@ -37,7 +39,6 @@ def _start_server(bb):
     """Connect to existing NLU server on :8765 if running, or start one in a background thread."""
     import urllib.request
 
-    # Check if run_laptop.py or start_robot.py is already running on port 8765
     try:
         with urllib.request.urlopen("http://127.0.0.1:8765/health", timeout=1) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -85,14 +86,11 @@ async def _run_test():
     try:
         from websockets.asyncio.client import connect
     except ImportError:
-        # Older websockets compat
         from websockets.client import connect  # type: ignore
 
     uri = "ws://127.0.0.1:8765/ws/voice"
     print(f"\nConnecting to {uri} ...")
 
-    # Send Origin header so FastAPI/CORS middleware accepts the connection
-    # (browsers send this automatically; CLI websocket clients don't)
     async with connect(uri, additional_headers={"Origin": "http://localhost:3000"}) as ws:
         print("✅ Connected!\n")
 
@@ -102,21 +100,22 @@ async def _run_test():
         assert pong["type"] == "pong", f"Expected pong, got {pong}"
         print("✅ Ping/Pong OK")
 
-        # Test 2: send a transcript
+        # Test 2: send transcripts covering all new capabilities
         test_queries = [
-            "Where is the library?",
-            "What events are happening today?",
-            "Tell me about the robotics competition",
-            "this is complete gibberish xyzzy foobar",
+            "Hello",
+            "What is FIT EXPO 2026?",
+            "Tell me about the 25th anniversary of FIT",
+            "Who is Team Nema?",
+            "Where is the auditorium?",
+            "What is the capital of Sri Lanka?",
         ]
 
         for query in test_queries:
             print(f"\n🎙️  Sending: '{query}'")
             await ws.send(json.dumps({"type": "transcript", "text": query}))
 
-            # Collect messages until we get a response
-            for _ in range(5):
-                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            for _ in range(8):
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=15))
                 print(f"   ← {msg['type']}: ", end="")
                 if msg["type"] == "response":
                     print(f"\n   Reply: {msg['reply_text']}")

@@ -4,9 +4,23 @@ from __future__ import annotations
 
 import random
 from datetime import datetime
-from typing import Dict
+from typing import Dict, List
 
 _last_seen: Dict[str, datetime] = {}
+_last_picked_by_bucket: Dict[str, str] = {}
+
+
+def _choose_non_repeating(pool: List[str], bucket: str = "default") -> str:
+    """Pick a random greeting from *pool* without repeating the last pick in *bucket*."""
+    if not pool:
+        return "Hello! Welcome to FIT EXPO!"
+    if len(pool) == 1:
+        return pool[0]
+    last = _last_picked_by_bucket.get(bucket)
+    candidates = [g for g in pool if g != last] or pool
+    chosen = random.choice(candidates)
+    _last_picked_by_bucket[bucket] = chosen
+    return chosen
 
 
 def get_time_of_day() -> str:
@@ -41,31 +55,34 @@ def generate_greeting(name: str, is_known: bool = True) -> str:
 
     if not is_known or name == "Unknown":
         unknown_greetings = [
-            "Hi there! I don't think we've met. What's your name?",
-            "Hey! I don't recognize you yet. Mind introducing yourself?",
-            "Hello! I'm not sure we've been introduced. What should I call you?",
+            "Hi there! Welcome to FIT EXPO 2026! I'm Nema!",
+            "Hey! Welcome to the Faculty of IT! Come say hi!",
+            "Hello! I'm Nema—welcome to FIT EXPO 2026!",
+            "Hi there! I don't think we've met yet. Welcome to FIT EXPO!",
         ]
-        return random.choice(unknown_greetings)
+        return _choose_non_repeating(unknown_greetings, "unknown")
 
     context = get_context(name)
     mark_seen(name)
 
     if context == "same_session":
-        return random.choice(
+        return _choose_non_repeating(
             [
                 f"Oh, {name}! Back again?",
                 f"Hey {name}, you're back!",
                 f"Welcome back, {name}!",
-            ]
+            ],
+            f"same_{name}",
         )
 
     if context == "short_break":
-        return random.choice(
+        return _choose_non_repeating(
             [
                 f"Hey {name}! How's it going?",
                 f"Oh, {name}! Good to see you again.",
                 f"{name}! What's up?",
-            ]
+            ],
+            f"short_{name}",
         )
 
     if context == "returning":
@@ -77,7 +94,7 @@ def generate_greeting(name: str, is_known: bool = True) -> str:
             pool = [f"Good evening, {name}!", f"Hey {name}! Still around this evening?"]
         else:
             pool = [f"Hey {name}! Working late?", f"{name}! You're here late."]
-        return random.choice(pool)
+        return _choose_non_repeating(pool, f"ret_{name}")
 
     if time_of_day == "morning":
         pool = [f"Good morning, {name}!", f"Hey {name}! Good morning!"]
@@ -87,7 +104,7 @@ def generate_greeting(name: str, is_known: bool = True) -> str:
         pool = [f"Good evening, {name}!", f"Hey {name}! Nice to see you!"]
     else:
         pool = [f"Hey {name}!", f"{name}! What brings you here?"]
-    return random.choice(pool)
+    return _choose_non_repeating(pool, f"first_{name}")
 
 
 def generate_presence_greeting() -> str:
@@ -95,29 +112,29 @@ def generate_presence_greeting() -> str:
     time_of_day = get_time_of_day()
     if time_of_day == "morning":
         pool = [
-            "Oh! Good morning! I didn't expect you — hi!",
+            "Oh! Good morning! Welcome to FIT EXPO!",
             "Hey there! Good morning! Come say hi!",
-            "Morning! I see you over there!",
+            "Morning! I see you over there—welcome!",
         ]
     elif time_of_day == "afternoon":
         pool = [
-            "Hey! Good afternoon! I'm so happy you're here!",
+            "Hey! Good afternoon! Welcome to FIT EXPO 2026!",
             "Oh hi! I see you — come talk to me!",
-            "Hello there! Good afternoon!",
+            "Hello there! Good afternoon and welcome!",
         ]
     elif time_of_day == "evening":
         pool = [
             "Hey! Good evening! Want to chat?",
-            "Oh, hi! I see you — good evening!",
+            "Oh, hi! I see you — welcome to FIT EXPO!",
             "Hello! Evening's a great time to talk!",
         ]
     else:
         pool = [
             "Hey! You're here late — hi!",
-            "Oh hi! I didn't expect anyone this late!",
-            "Hello there! Working late too?",
+            "Oh hi! Welcome to the Faculty of IT!",
+            "Hello there! Come say hi to Nema!",
         ]
-    return random.choice(pool)
+    return _choose_non_repeating(pool, "presence")
 
 
 def generate_random_face_greeting(
@@ -126,39 +143,44 @@ def generate_random_face_greeting(
 ) -> str:
     """Short generic hello when 1 or more faces appear (static strings for 100% TTS WAV cache hits)."""
     if is_crowd_growth:
-        return random.choice(
+        return _choose_non_repeating(
             [
                 "Oh, more friends joined! Hi everyone!",
-                "Look at this crowd! Hello everyone!",
+                "Look at this crowd! Welcome to FIT EXPO everyone!",
                 "Whoa, more people! Welcome everyone!",
                 "Hey, the whole crew is here! Hi everyone!",
-            ]
+                "More visitors! Welcome to our 25th anniversary expo!",
+            ],
+            "crowd_growth",
         )
 
     time_of_day = get_time_of_day()
     if face_count >= 3:
         pool = [
             "Hi everyone!",
-            "Hello everyone! Welcome!",
+            "Hello everyone! Welcome to FIT EXPO!",
             "Whoa, a whole group! Hi everyone!",
-            "Hey everyone! Come say hi!",
+            "Hey everyone! Come say hi to Nema!",
             "Hello friends! Good to see you all!",
+            "Welcome to the Faculty of IT, everyone!",
+            "Hi everyone! Welcome to FIT EXPO 2026!",
         ]
         if time_of_day == "morning":
-            pool.append("Good morning everyone!")
+            pool.append("Good morning everyone! Welcome to FIT EXPO!")
         elif time_of_day == "afternoon":
-            pool.append("Good afternoon everyone!")
+            pool.append("Good afternoon everyone! Welcome to FIT EXPO!")
         elif time_of_day == "evening":
             pool.append("Good evening everyone!")
-        return random.choice(pool)
+        return _choose_non_repeating(pool, "group")
 
     if face_count == 2:
         pool = [
             "Hey you two!",
-            "Hi both of you!",
+            "Hi both of you! Welcome to FIT EXPO!",
             "Hello there, you two!",
             "Oh, hi you two! Welcome!",
-            "Hey there, friends!",
+            "Hey there, friends! Come say hi!",
+            "Welcome to the Faculty of IT, you two!",
         ]
         if time_of_day == "morning":
             pool.append("Good morning, you two!")
@@ -166,7 +188,7 @@ def generate_random_face_greeting(
             pool.append("Good afternoon, you two!")
         elif time_of_day == "evening":
             pool.append("Good evening, you two!")
-        return random.choice(pool)
+        return _choose_non_repeating(pool, "pair")
 
     pool = [
         "Hi!",
@@ -174,15 +196,18 @@ def generate_random_face_greeting(
         "Hey there!",
         "Oh, hi!",
         "Hello there!",
-        "Hi there!",
+        "Hi there! Welcome to FIT EXPO!",
         "Hey! Good to see you!",
+        "Hi! I'm Nema, come say hello!",
+        "Welcome to the Faculty of IT!",
+        "Hey there! Welcome to FIT EXPO 2026!",
     ]
     if time_of_day == "morning":
-        pool.extend(["Good morning!", "Morning! Hi!"])
+        pool.extend(["Good morning!", "Morning! Welcome to FIT EXPO!"])
     elif time_of_day == "afternoon":
         pool.extend(["Good afternoon!", "Hey! Good afternoon!"])
     elif time_of_day == "evening":
         pool.extend(["Good evening!", "Hey! Good evening!"])
     else:
         pool.extend(["Hey! You're up late!", "Hi! Working late?"])
-    return random.choice(pool)
+    return _choose_non_repeating(pool, "single")

@@ -21,8 +21,10 @@ type Status = "idle" | "loading" | "saving" | "success" | "error";
 
 type Topic = {
   topic: string;
+  button_label?: string;
   aliases: string[];
   reply: string;
+  replies?: string[];
 };
 
 function parseTopicsFromYaml(yaml: string): Topic[] {
@@ -32,7 +34,10 @@ function parseTopicsFromYaml(yaml: string): Topic[] {
     const topicMatch = block.match(/^\s*(\S+)/);
     const topic = topicMatch ? topicMatch[1].trim() : "";
 
-    const aliasBlock = block.match(/aliases:\s*\n([\s\S]*?)(?=\n\s*\w)/);
+    const btnMatch = block.match(/button_label:\s*(.+)/);
+    const button_label = btnMatch ? btnMatch[1].trim().replace(/^['"]|['"]$/g, "") : undefined;
+
+    const aliasBlock = block.match(/aliases:\s*\n([\s\S]*?)(?=\n\s*\w+:)/);
     const aliases: string[] = [];
     if (aliasBlock) {
       const lines = aliasBlock[1].split("\n");
@@ -42,7 +47,7 @@ function parseTopicsFromYaml(yaml: string): Topic[] {
       }
     }
 
-    const replyMatch = block.match(/reply:\s*[>|]?\s*\n([\s\S]*?)(?=\n- topic:|\n$|$)/);
+    const replyMatch = block.match(/reply:\s*[>|]?\s*\n([\s\S]*?)(?=\n\s*replies:|\n- topic:|\n$|$)/);
     const reply = replyMatch
       ? replyMatch[1]
           .split("\n")
@@ -51,7 +56,17 @@ function parseTopicsFromYaml(yaml: string): Topic[] {
           .join(" ")
       : "";
 
-    if (topic) topics.push({ topic, aliases, reply });
+    const repliesBlock = block.match(/replies:\s*\n([\s\S]*?)(?=\n- topic:|\n$|$)/);
+    const replies: string[] = [];
+    if (repliesBlock) {
+      const lines = repliesBlock[1].split("\n");
+      for (const l of lines) {
+        const m = l.match(/^\s*-\s*(.+)/);
+        if (m) replies.push(m[1].trim().replace(/^['"]|['"]$/g, ""));
+      }
+    }
+
+    if (topic) topics.push({ topic, button_label, aliases, reply, replies });
   }
   return topics;
 }
@@ -59,10 +74,15 @@ function parseTopicsFromYaml(yaml: string): Topic[] {
 function topicsToYaml(topics: Topic[]): string {
   return topics
     .map((t) => {
+      const btnLine = t.button_label ? `  button_label: ${t.button_label}\n` : "";
       const aliases = t.aliases
         .map((a) => `    - ${a}`)
         .join("\n");
-      return `- topic: ${t.topic}\n  aliases:\n${aliases}\n  reply: >\n    ${t.reply}\n`;
+      const repliesBlock =
+        t.replies && t.replies.length > 0
+          ? `  replies:\n${t.replies.map((r) => `    - ${r}`).join("\n")}\n`
+          : "";
+      return `- topic: ${t.topic}\n${btnLine}  aliases:\n${aliases}\n  reply: >\n    ${t.reply}\n${repliesBlock}`;
     })
     .join("\n");
 }

@@ -62,8 +62,10 @@ class Wayfinder:
                 nid  = f"{floor_name}::{orig}"
                 bld  = buildings.get(node["building"], {})
                 bpos = bld.get("position", [0, 0, 0])
+                clean_lbl = str(node.get("label", "")).strip()
                 self.nodes[nid] = {
                     **node,
+                    "label":       clean_lbl,
                     "id":          nid,
                     "original_id": orig,
                     "floor":       floor_name,
@@ -199,53 +201,97 @@ class Wayfinder:
 
     def find_room(self, query: str, floor: str = None) -> dict | None:
         q = query.lower().strip()
+        if not q:
+            return None
         cands = [n for n in self.nodes.values()
                  if n.get("type") != "waypoint"
                  and (floor is None or n.get("floor") == floor)]
         for n in cands:
-            if n["label"].lower() == q: return n
+            if n["label"].strip().lower() == q:
+                return n
         for n in cands:
-            if q in n["label"].lower() or n["label"].lower() in q: return n
+            lbl = n["label"].strip().lower()
+            if q in lbl or lbl in q:
+                return n
         best, best_r = None, 0.0
         for n in cands:
-            r = SequenceMatcher(None, q, n["label"].lower()).ratio()
-            if r > best_r and r > 0.5: best_r, best = r, n
+            lbl = n["label"].strip().lower()
+            r = SequenceMatcher(None, q, lbl).ratio()
+            if r > best_r and r > 0.5:
+                best_r, best = r, n
         return best
 
-    def find_rooms(self, query: str, floor: str = None, min_ratio: float = 0.55) -> list[dict]:
-        """Return ALL rooms that are plausible matches for *query*, ordered by score.
+    def find_rooms(self, query: str, floor: str = None, min_ratio: float = 0.65) -> list[dict]:
+        """Return rooms that are genuinely ambiguous matches for *query*.
 
-        Used to populate disambiguation buttons when a destination name is ambiguous
-        (e.g. "auditorium" matches Auditorium 1, 2, 3 …).  Returns every node whose
-        label contains the query term, or whose fuzzy-match score exceeds *min_ratio*.
-        Results are de-duplicated by label and capped at 4 (enough for one row of buttons).
+        Rules to prevent false buttons:
+        1. If *query* matches a room label exactly (or with very high similarity >= 0.84
+           to a single specific room), return only that 1 room (no disambiguation).
+        2. If one or more rooms contain *query* as a substring (e.g. "auditorium" in
+           "Auditorium 1", "Auditorium 2"), return ONLY those substring matches — never
+           pad with unrelated fuzzy matches.
+        3. Skip non-destination markers ("You are here", "EXIT", staircases) unless
+           explicitly queried.
         """
         q = query.lower().strip()
-        cands = [n for n in self.nodes.values()
-                 if n.get("type") != "waypoint"
-                 and (floor is None or n.get("floor") == floor)]
+        if not q:
+            return []
 
-        seen_labels: set[str] = set()
-        scored: list[tuple[float, dict]] = []
+        skip_internal = {"you are here", "exit", "staircase 1", "staircase 2"}
+        cands = [
+            n for n in self.nodes.values()
+            if n.get("type") != "waypoint"
+            and (floor is None or n.get("floor") == floor)
+            and (n["label"].strip().lower() not in skip_internal or q in n["label"].strip().lower())
+        ]
 
+        # 1. Exact label match -> unambiguous single room
         for n in cands:
-            label_lc = n["label"].lower()
+            if n["label"].strip().lower() == q:
+                return [{**n, "label": n["label"].strip()}]
+
+        # 2. Substring matches (e.g. "auditorium" -> Auditorium 1, Auditorium 2)
+        seen_labels: set[str] = set()
+        substring_hits: list[dict] = []
+        for n in cands:
+            label_clean = n["label"].strip()
+            label_lc = label_clean.lower()
             if label_lc in seen_labels:
                 continue
-            # Exact substring match scores 1.0; fuzzy otherwise
-            if q in label_lc or label_lc in q:
-                score = 1.0
-            else:
-                score = SequenceMatcher(None, q, label_lc).ratio()
+            if q in label_lc:
+                seen_labels.add(label_lc)
+                substring_hits.append({**n, "label": label_clean})
+
+        if substring_hits:
+            substring_hits.sort(key=lambda item: item["label"])
+            return substring_hits[:4]
+
+        # 3. High-confidence single typo match (e.g. "labratory 1" -> "Laboratory 1")
+        scored: list[tuple[float, dict]] = []
+        for n in cands:
+            label_clean = n["label"].strip()
+            label_lc = label_clean.lower()
+            if label_lc in seen_labels:
+                continue
+            score = SequenceMatcher(None, q, label_lc).ratio()
             if score >= min_ratio:
                 seen_labels.add(label_lc)
-                scored.append((score, n))
+                scored.append((score, {**n, "label": label_clean}))
 
         scored.sort(key=lambda x: x[0], reverse=True)
+        if scored and scored[0][0] >= 0.84:
+            import re as _re
+            top_lbl = scored[0][1]["label"].lower()
+            missing_num = bool(_re.search(r"\d", top_lbl)) and not bool(_re.search(r"\d", q))
+            missing_gender = bool(_re.search(r"\b(male|female)\b", top_lbl)) and not bool(_re.search(r"\b(male|female)\b", q))
+            if not missing_num and not missing_gender:
+                if len(scored) == 1 or (scored[0][0] - scored[1][0]) >= 0.08:
+                    return [scored[0][1]]
+
         return [n for _, n in scored[:4]]
 
     def list_rooms(self) -> list[str]:
-        return sorted({n["label"] for n in self.nodes.values() if n.get("type") != "waypoint"})
+        return sorted({n["label"].strip() for n in self.nodes.values() if n.get("type") != "waypoint" and n.get("label", "").strip()})
 
     # ── Dijkstra ───────────────────────────────────────────────────────────
 

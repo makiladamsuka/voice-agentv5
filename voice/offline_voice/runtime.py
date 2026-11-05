@@ -10,6 +10,7 @@ import time
 import json
 import os
 import re
+import random
 import urllib.request
 import threading
 from collections import OrderedDict
@@ -38,14 +39,29 @@ load_dotenv(APP_DIR / ".env")
 
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 
+_last_variant_idx: dict[str, int] = {}
+
+
+def pick_non_repeating_variant(intent_id: str, options: list[str]) -> tuple[int, str]:
+    """Pick a random index/string from *options* without repeating the last pick for *intent_id*."""
+    if not options:
+        return 0, ""
+    if len(options) == 1:
+        return 0, options[0]
+    last_idx = _last_variant_idx.get(intent_id, -1)
+    candidates = [i for i in range(len(options)) if i != last_idx] or list(range(len(options)))
+    idx = random.choice(candidates)
+    _last_variant_idx[intent_id] = idx
+    return idx, options[idx]
+
 
 # ── Domain router ─────────────────────────────────────────────────────────────
 # Routes a transcript to one domain BEFORE vector retrieval so that, e.g.,
 # "what is the time right now" never competes with event utterances like
 # "what time is the sports meeting".
 
-# Clock questions only — deliberately narrow so "what time is the meeting"
-# still routes to events.
+# Clock & Date questions only — deliberately narrow so "what time is the meeting"
+# still routes to events/knowledge.
 _TIME_RE = re.compile(
     r"\b("
     r"what time is it"
@@ -55,6 +71,16 @@ _TIME_RE = re.compile(
     r"|time (?:right )?now"
     r"|do you have the time"
     r"|what does the clock say"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_DATE_RE = re.compile(
+    r"\b("
+    r"what(?:'s| is) (?:today's |the )?date"
+    r"|what day is (?:it|today)"
+    r"|today's date"
+    r"|what is today"
     r")\b",
     re.IGNORECASE,
 )
@@ -78,15 +104,19 @@ _NAVIGATE_RE = re.compile(
 
 _SMALLTALK_RE = re.compile(
     r"\b("
-    r"hi|hello|hey|yo|sup|what's up"
+    r"hi|hello|hey|yo|sup|what's up|whats up|ayubowan|greetings"
     r"|good (?:morning|afternoon|evening|night)"
     r"|who are you|what are you|your name|introduce yourself|who am i talking to"
-    r"|are you (?:a robot|an ai|ok|okay|there|listening|working)"
-    r"|how are you|how(?:'s| is) it going|how do you feel|you good|how have you been"
+    r"|are you (?:a robot|an ai|ok|okay|there|listening|working|tired|smart)"
+    r"|how are you|how(?:'s| is) (?:it going|your day)|how do you feel|you good|how have you been"
     r"|what can you do|how can you help|what do you know|help me|can you help"
     r"|what can i ask|your features"
+    r"|nice to meet you|pleased to meet you|glad to meet you"
+    r"|tell (?:me )?a joke|say a joke|make me laugh|something funny|another joke"
+    r"|fun fact|surprise me|something interesting"
+    r"|you(?:'re| are) (?:cool|awesome|smart|cute|great|amazing)|good job|great job|well done|nice robot|good robot|i like you"
     r"|thank you|thanks|appreciate it|cheers"
-    r"|bye|goodbye|see you|talk to you later|catch you later"
+    r"|bye|goodbye|see you|talk to you later|catch you later|have a nice day"
     r"|can you hear me|is anyone there|you there|testing|test test"
     r"|nice|cool|awesome|great|interesting|okay|ok|alright"
     r")\b",
@@ -96,12 +126,18 @@ _SMALLTALK_RE = re.compile(
 
 _KNOWLEDGE_RE = re.compile(
     r"\b("
-    r"what is|what are|tell me about|explain|describe"
+    r"fit expo|expo 2026|this exhibition|the expo|second time|first fit expo"
+    r"|25th anniversary|twenty fifth anniversary|silver jubilee|25 years|anniversary"
+    r"|team nema|who made you|who built you|who created you|who designed you|who developed you|your creators"
+    r"|how do you work|how does nema work|how were you built|what sensors|track faces"
+    r"|university of moratuwa|uom|faculty of it|faculty of information technology|fit"
+    r"|departments? in fit|computational mathematics|interdisciplinary studies"
+    r"|undergraduate|postgraduate|admission|research|z-score|bsc|msc|phd|itm"
+    r"|courses|programs|degrees|contact|location|address|library|canteen|cafeteria"
+    r"|artificial intelligence|robotics|machine learning"
+    r"|what is|what are|tell me about|explain|describe"
     r"|who is|who are|how old is|when was"
     r"|history of|about the|about this"
-    r"|university of moratuwa|uom|faculty of it|fit"
-    r"|undergraduate|postgraduate|admission|research"
-    r"|courses|programs|degrees|contact|location|address"
     r")\b",
     re.IGNORECASE,
 )
@@ -118,19 +154,23 @@ _EVENTS_RE = re.compile(
 
 
 def route_domain(text: str) -> str:
-    """Route a transcript to: 'tool_time', 'knowledge', 'navigate', 'smalltalk', or 'events'."""
+    """Route a transcript to: 'tool_time', 'tool_date', 'knowledge', 'navigate', 'smalltalk', or 'events'."""
     if _TIME_RE.search(text):
         return "tool_time"
+    if _DATE_RE.search(text):
+        return "tool_date"
+    # Let explicit knowledge queries about library/canteen hours or university location route to knowledge
+    if re.search(r"\b(when is the library|library hours|is the library open|where is (?:the )?(?:university|uom)|where are we|where can i get food|where to eat)\b", text, re.IGNORECASE):
+        return "knowledge"
     if _NAVIGATE_RE.search(text):
         return "navigate"
-    # Explicit event words win over generic "what are / tell me about" knowledge phrasing.
-    if _EVENTS_RE.search(text):
-        return "events"
     if _KNOWLEDGE_RE.search(text):
         return "knowledge"
     if _SMALLTALK_RE.search(text):
         return "smalltalk"
-    return "events"
+    if _EVENTS_RE.search(text):
+        return "knowledge"
+    return "knowledge"
 
 
 def get_time_reply() -> str:
@@ -139,14 +179,22 @@ def get_time_reply() -> str:
     return f"It's {now} right now."
 
 
+def get_date_reply() -> str:
+    """Dynamic reply for the get_date tool."""
+    now = datetime.now()
+    day_name = now.strftime("%A")
+    date_str = now.strftime("%B %d, %Y").replace(" 0", " ")
+    return f"Today is {day_name}, {date_str}."
+
+
 # Per-domain acceptance thresholds (L2 distance — lower is better) and the
 # minimum top-1/top-2 margin required when the two nearest hits belong to
 # DIFFERENT intents (ambiguity rejection).
 DOMAIN_THRESHOLDS = {
     "events": 0.8,
-    "smalltalk": 0.9,
+    "smalltalk": 0.85,
     "navigate": 0.75,
-    "knowledge": 0.85,
+    "knowledge": 0.72,
 }
 AMBIGUITY_MARGIN = 0.15
 
@@ -216,6 +264,13 @@ class IntentMatcher:
         stripped = re.sub(r"^(hi|hey|hello|okay|ok|robot|nema|please)[,.\s]+", "", norm_text).strip(" \t\r\n.,?!;:")
         if stripped and stripped != norm_text:
             match = self.exact_match_map.get(stripped)
+            if match:
+                return match
+
+        # Also try stripping filler articles ("the", "a", "an") for natural phrasing variance
+        no_articles = " ".join(re.sub(r"\b(the|a|an)\b", " ", stripped or norm_text).split())
+        if no_articles:
+            match = self.exact_match_map.get(no_articles)
             if match:
                 return match
         return None
@@ -391,6 +446,9 @@ class IntentMatcher:
         self.exact_match_map = {}
         for _, intent in pairs:
             self.intents_map[intent["id"]] = intent
+            btn_label = str(intent.get("button_label") or "").lower().strip(" \t\r\n.,?!;:")
+            if btn_label:
+                self.exact_match_map[btn_label] = intent
             for utt in intent.get("utterances") or []:
                 norm_utt = utt.lower().strip(" \t\r\n.,?!;:")
                 if norm_utt:
@@ -452,19 +510,25 @@ class IntentMatcher:
             idx0 = int(domain_indices[0])
             return float(dists[0]), float(dists[0]) + 1.0, self._np_meta[idx0]["intent_id"], ""
 
-        if len(dists) == 2:
-            top2_local = np.argsort(dists)
-        else:
-            top2_local = np.argpartition(dists, 2)[:2]
-            top2_local = top2_local[np.argsort(dists[top2_local])]
-        idx0 = int(domain_indices[int(top2_local[0])])
-        idx1 = int(domain_indices[int(top2_local[1])])
-        return (
-            float(dists[top2_local[0]]),
-            float(dists[top2_local[1]]),
-            self._np_meta[idx0]["intent_id"],
-            self._np_meta[idx1]["intent_id"],
-        )
+        # Find the best distance for each distinct intent_id so top-2 compares different intents
+        order = np.argsort(dists)
+        top_local = int(order[0])
+        idx0 = int(domain_indices[top_local])
+        top_intent_id = self._np_meta[idx0]["intent_id"]
+        d1 = float(dists[top_local])
+
+        d2 = d1 + 1.0
+        second_intent_id = top_intent_id
+        for loc in order[1:]:
+            loc_int = int(loc)
+            cand_idx = int(domain_indices[loc_int])
+            cand_id = self._np_meta[cand_idx]["intent_id"]
+            if cand_id != top_intent_id:
+                d2 = float(dists[loc_int])
+                second_intent_id = cand_id
+                break
+
+        return d1, d2, top_intent_id, second_intent_id
 
     def match(self, text: str, domain: str | None = None) -> dict | None:
         """Match a transcript against ONE domain's intents with a confidence gate.
@@ -478,7 +542,7 @@ class IntentMatcher:
 
         if domain is None:
             domain = route_domain(text)
-        if domain == "tool_time":
+        if domain in ("tool_time", "tool_date"):
             # Tools are handled by the caller, not by retrieval.
             return None
         if os.getenv("NLU_LIGHTWEIGHT", "").strip().lower() in ("1", "true", "yes"):
@@ -547,6 +611,8 @@ class IntentMatcher:
                                     return "lecture hall"
                                 if "washroom" in dl or "toilet" in dl or "bathroom" in dl:
                                     return "washroom"
+                                if "department" in dl or "departement" in dl:
+                                    return "department"
                                 if "office" in dl:
                                     return "office"
                                 return "location"
@@ -555,10 +621,10 @@ class IntentMatcher:
                             cat2 = get_dest_category(dest2)
                             category = cat1 if cat1 == cat2 else "location"
 
-                            clean_dest1 = dest1.replace("floor_", "Floor ")
-                            clean_dest2 = dest2.replace("floor_", "Floor ")
+                            label1 = intent1.get("button_label") or dest1.strip()
+                            label2 = intent2.get("button_label") or dest2.strip()
 
-                            # Find all matching destinations for this category
+                            # Find all matching valid destinations for this category
                             matching_dests = []
                             if category != "location":
                                 for item in self.intents_map.values():
@@ -566,7 +632,7 @@ class IntentMatcher:
                                     if action.get("action") == "navigate":
                                         d = action.get("destination")
                                         if d and get_dest_category(d) == category:
-                                            clean_d = d.replace("floor_", "Floor ")
+                                            clean_d = item.get("button_label") or d.strip()
                                             if clean_d and clean_d[0].islower():
                                                 clean_d = clean_d[0].upper() + clean_d[1:]
                                             if clean_d not in matching_dests:
@@ -583,18 +649,19 @@ class IntentMatcher:
                                     else:
                                         options = f"{matching_dests[0]}, {matching_dests[1]}, {matching_dests[2]}, or {matching_dests[3]}"
                                     response_text = f"Which {category} would you like to go to? {options}?"
+                                    buttons = matching_dests
                                 else:
-                                    c1 = clean_dest1[0].upper() + clean_dest1[1:] if clean_dest1 else ""
-                                    c2 = clean_dest2[0].upper() + clean_dest2[1:] if clean_dest2 else ""
+                                    c1 = label1[0].upper() + label1[1:] if label1 else ""
+                                    c2 = label2[0].upper() + label2[1:] if label2 else ""
                                     response_text = f"Which {category} would you like to go to? {c1} or {c2}?"
+                                    buttons = [b for b in (c1, c2) if b]
                             else:
-                                c1 = clean_dest1[0].upper() + clean_dest1[1:] if clean_dest1 else ""
-                                c2 = clean_dest2[0].upper() + clean_dest2[1:] if clean_dest2 else ""
+                                c1 = label1[0].upper() + label1[1:] if label1 else ""
+                                c2 = label2[0].upper() + label2[1:] if label2 else ""
                                 response_text = f"Did you mean {c1} or {c2}?"
+                                buttons = [b for b in (c1, c2) if b]
 
-                            buttons = matching_dests if len(matching_dests) > 0 and len(matching_dests) <= 4 else ([c1, c2] if c1 and c2 else [])
-                            
-                            print(f"  [Matcher] Ambiguity clarification: {response_text}")
+                            print(f"  [Matcher] Navigation ambiguity clarification: {response_text}")
                             return {
                                 "id": "ambiguous_clarification",
                                 "response_text": response_text,
@@ -604,8 +671,35 @@ class IntentMatcher:
                                     "text": response_text,
                                     "suggested_buttons": buttons
                                 },
-                                "ambiguity_category": category
+                                "ambiguity_category": category if category != "location" else None
                             }
+
+                        # ── Knowledge & Smalltalk domain close candidates ──
+                        if domain in ("knowledge", "smalltalk"):
+                            lbl1 = intent1.get("button_label")
+                            lbl2 = intent2.get("button_label")
+                            if d1 <= 0.55:
+                                # Good hit on intent1: return intent1 and offer intent2's valid button as a follow-up suggestion
+                                result = dict(intent1)
+                                act = dict(result.get("action") or {"action": "speak"})
+                                if lbl2 and not act.get("suggested_buttons"):
+                                    act["suggested_buttons"] = [lbl2]
+                                result["action"] = act
+                                return result
+                            elif lbl1 and lbl2 and lbl1 != lbl2:
+                                response_text = f"Would you like to know about {lbl1.rstrip('?')} or {lbl2.rstrip('?')}?"
+                                print(f"  [Matcher] Knowledge ambiguity clarification: {response_text}")
+                                return {
+                                    "id": "ambiguous_clarification",
+                                    "response_text": response_text,
+                                    "audio_file": None,
+                                    "action": {
+                                        "action": "speak",
+                                        "text": response_text,
+                                        "suggested_buttons": [lbl1, lbl2],
+                                    },
+                                    "ambiguity_category": None,
+                                }
                 # ── Events domain ambiguity: show all events instead of rejecting ──
                 if domain == "events" and d1 < threshold:
                     print(f"  [Matcher] Events ambiguous → returning top match + show_events hint")
@@ -757,10 +851,11 @@ class OfflineVoiceRuntime:
         self.bb.write(conv_state="thinking", user_text=text)
         write_conv_emotion(self.bb, text, is_agent=False, log_prefix="Vader NLU")
 
-        # Tool routes (e.g. clock) bypass retrieval entirely
-        if route_domain(text) == "tool_time":
-            reply = get_time_reply()
-            print(f"\n🕐 Tool: get_time → {reply}")
+        # Tool routes (e.g. clock / date) bypass retrieval entirely
+        dom = route_domain(text)
+        if dom in ("tool_time", "tool_date"):
+            reply = get_time_reply() if dom == "tool_time" else get_date_reply()
+            print(f"\n🕐 Tool: {dom} → {reply}")
             write_conv_emotion(self.bb, reply, is_agent=True, log_prefix="Vader NLU")
             self.bb.write(
                 conv_state="speaking",
@@ -830,16 +925,13 @@ class OfflineVoiceRuntime:
         except Exception:
             pass
 
-        # 1. Match Intent instantly via ChromaDB
-        intent = self.matcher.match(text)
+        # 1. Match Intent instantly via exact hashmap or embeddings
+        intent = self.matcher.match_exact(text) or self.matcher.match(text)
         
-        # 1b. Fallback for STT mishearings (e.g. heard "Jerry's" instead of "Where is")
-        # If the strict regex router sent it to the wrong domain, the vector database
-        # will return no matches. In that case, we trust the ChromaDB AI embeddings 
-        # to find it in the other domains.
+        # 1b. Fallback for STT mishearings
         if not intent:
             original_domain = route_domain(text)
-            for fallback_domain in ["navigate", "events", "smalltalk"]:
+            for fallback_domain in ["knowledge", "navigate", "smalltalk", "events"]:
                 if fallback_domain != original_domain:
                     intent = self.matcher.match(text, domain=fallback_domain)
                     if intent:
@@ -852,6 +944,8 @@ class OfflineVoiceRuntime:
         if intent:
             print(f"\n✅ Match Found! Action: {intent['action']}")
             reply_text = intent.get("response_text", "")
+            if isinstance(reply_text, list) and reply_text:
+                _, reply_text = pick_non_repeating_variant(intent.get("id", "default"), reply_text)
             action = intent.get("action", {})
             
             # Dynamic wayfinding integration for offline runtime
@@ -899,6 +993,8 @@ class OfflineVoiceRuntime:
             
             # 3. Play Pre-Recorded Audio (Zero latency) - only if not navigate (since navigate has dynamic speech)
             audio_file = intent.get("audio_file")
+            if isinstance(audio_file, list):
+                audio_file = None
             audio_path = APP_DIR / "assets" / "audio_cache" / audio_file if (audio_file and action.get("action") != "navigate") else None
             
             from voice.local_speaker import is_enabled as local_speaker_enabled
@@ -910,7 +1006,7 @@ class OfflineVoiceRuntime:
                 
         else:
             print("\n❌ No match found. (Out of Domain)")
-            fallback_text = "I'm a campus guide! Try asking me about events or locations."
+            fallback_text = "I'm Nema, your FIT EXPO 2026 guide! Ask me about the exhibition, Team Nema, or directions."
             write_conv_emotion(self.bb, fallback_text, is_agent=True, log_prefix="Vader NLU")
             self.bb.write(
                 conv_state="speaking",
@@ -926,7 +1022,7 @@ class OfflineVoiceRuntime:
                 print("🔊 Playing local speaker fallback audio...")
                 play_audio(audio_path)
             else:
-                print("🔊 [Audio Playback] I'm a campus guide! Try asking me about events or locations.")
+                print(f"🔊 [Audio Playback] {fallback_text}")
             
         self.bb.write(conv_state="waiting", agent_speaking=False, user_speaking=False)
 

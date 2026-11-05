@@ -1,19 +1,123 @@
 [
   {
     "id": "smalltalk_greeting",
+    "button_label": "Hello Nema!",
     "utterances": [
       "hi",
       "hello",
       "hey",
       "hey there",
+      "hi there",
+      "hello there",
       "good morning",
       "good afternoon",
       "good evening",
       "yo",
+      "sup",
+      "what's up",
+      "whats up",
       "hi robot",
-      "hello nema"
+      "hello robot",
+      "hey robot",
+      "hi nema",
+      "hello nema",
+      "hey nema",
+      "ayubowan",
+      "greetings"
     ],
-    "response_text": "Hello there! Welcome to FIT EXPO. How can I help you today?",
+    "response_text": [
+      "Hello there! Welcome to FIT EXPO 2026 at the Faculty of IT! I'm Nema—how can I help you today?",
+      "Hey! Welcome to FIT EXPO 2026! Ask me about directions, our 25th anniversary, or Team Nema!",
+      "Hi there! So glad to see you at the Faculty of Information Technology! What can I help you find?",
+      "Greetings and welcome to the second edition of FIT EXPO! I'm Nema, your robot guide. Ask me anything!",
+      "Hello! Welcome to the University of Moratuwa and FIT EXPO 2026! Looking for a lab, auditorium, or project?",
+      "Hey there! Happy 25th anniversary to the Faculty of IT! How can I assist your visit today?",
+      "Hi! I'm Nema from Team Nema! Welcome to FIT EXPO 2026—what would you like to explore first?"
+    ],
+    "audio_file": null,
+    "action": {
+      "action": "speak",
+      "suggested_buttons": []
+    }
+  },
+  {
+    "id": "smalltalk_how_are_you",
+    "button_label": "How are you?",
+    "utterances": [
+      "how are you",
+      "how are you doing",
+      "how is it going",
+      "how's it going",
+      "how do you feel",
+      "you good",
+      "are you okay",
+      "are you ok",
+      "how have you been",
+      "how is your day",
+      "how's your day going",
+      "are you tired"
+    ],
+    "response_text": [
+      "I'm doing fantastic! My servos are warmed up and I'm super excited to welcome everyone to FIT EXPO 2026!",
+      "I'm feeling great, thank you for asking! Celebrating the 25th anniversary of the Faculty of IT keeps my batteries full of energy!",
+      "I'm doing wonderful! Meeting so many visitors at FIT EXPO 2026 is the best part of my day. How can I help you?",
+      "All my systems are running at one hundred percent! Team Nema tuned me up nicely for FIT EXPO 2026!",
+      "Never tired! I'm having an amazing time guiding visitors around the Faculty of IT today!"
+    ],
+    "audio_file": null,
+    "action": {
+      "action": "speak"
+    }
+  },
+  {
+    "id": "smalltalk_identity",
+    "button_label": "Who are you?",
+    "utterances": [
+      "who are you",
+      "what are you",
+      "what is your name",
+      "what's your name",
+      "whats your name",
+      "who am i talking to",
+      "introduce yourself",
+      "are you a robot",
+      "are you an ai",
+      "tell me your name"
+    ],
+    "response_text": [
+      "I am Nema, your interactive robot guide built by Team Nema for FIT EXPO 2026 at the Faculty of IT, University of Moratuwa!",
+      "My name is Nema! I was created by Team Nema here at the Faculty of Information Technology to welcome and guide you during FIT EXPO 2026!",
+      "Hi, I'm Nema! Team Nema from the University of Moratuwa built me as we celebrate the 25th anniversary of the Faculty of IT and the second FIT EXPO!",
+      "I'm Nema, a friendly campus guide robot developed by Team Nema at the Faculty of IT! Ask me for room directions or anything about FIT EXPO 2026.",
+      "I am Nema! Think of me as your smart companion at FIT EXPO 2026, proudly crafted by Team Nema at the University of Moratuwa."
+    ],
+    "audio_file": null,
+    "action": {
+      "action": "speak"
+    }
+  },
+  {
+    "id": "smalltalk_what_can_you_do",
+    "button_label": "What can you do?",
+    "utterances": [
+      "what can you do",
+      "how can you help",
+      "how can you help me",
+      "what do you know",
+      "what features do you have",
+      "your features",
+      "what can i ask",
+      "what can i ask you",
+      "help me",
+      "can you help",
+      "can you help me"
+    ],
+    "response_text": [
+      "I can give you directions to any lab, lecture hall, or auditorium in the building, tell you about FIT EXPO 2026 and Team Nema, or answer general questions!",
+      "Ask me how to get to any room in the Faculty of IT, learn about our 25th anniversary and degree programs, or ask me any general question!",
+      "I can guide you around the faculty floors, share facts about the University of Moratuwa and FIT EXPO 2026, or even tell you a joke!",
+      "Need directions to an auditorium or lab? Or curious about FIT EXPO 2026, our 25th anniversary, and Team Nema? Just ask me out loud or tap a button!"
+    ],
     "audio_file": null,
     "action": {
       "action": "speak",
@@ -22,65 +126,150 @@
   },
   {
     "id": "smalltalk_mic_check",
+    "button_label": "Can you hear me?",
     "utterances": [
       "can you hear me",
       "can you hear my voice",
       "is the mic working",
       "are you listening",
+      "are you working",
       "can you hear me robot",
       "is anyone there",
+      "you there",
+      "are you there",
+      "testing",
       "testing testing",
       "test test"
     ],
-    "response_text": "Yes, I can hear you loud and clear! How can I assist you?",
+    "response_text": [
+      "Yes, I can hear you loud and clear! What would you like to know about FIT EXPO 2026?",
+      "Loud and clear! My microphones are wide awake. How can I help you today?",
+      "I hear you perfectly! Ask me for directions or anything about the Faculty of IT!",
+      "Yes, I'm listening! Go ahead and ask me your question."
+    ],
     "audio_file": null,
     "action": {
       "action": "speak"
     }
   },
   {
-    "id": "smalltalk_identity",
+    "id": "smalltalk_nice_to_meet_you",
+    "button_label": "Nice to meet you",
     "utterances": [
-      "who are you",
-      "what is your name",
-      "what's your name",
-      "who am i talking to",
-      "introduce yourself",
-      "are you a robot"
+      "nice to meet you",
+      "pleased to meet you",
+      "good to meet you",
+      "glad to meet you",
+      "happy to meet you",
+      "nice meeting you"
     ],
-    "response_text": "I am NEma, your FIT EXPO robot guide! Ask me anything about the exhibition stalls, projects, or directions.",
+    "response_text": [
+      "It's wonderful to meet you too! Welcome to FIT EXPO 2026 and our 25th anniversary celebration!",
+      "Nice to meet you as well! I hope you have an amazing time exploring the Faculty of IT today!",
+      "The pleasure is all mine! Let me know if you need directions or want to learn about Team Nema and FIT EXPO!"
+    ],
     "audio_file": null,
     "action": {
       "action": "speak"
     }
   },
   {
-    "id": "smalltalk_what_can_you_do",
+    "id": "smalltalk_compliment",
+    "button_label": "You are awesome!",
     "utterances": [
-      "what can you do",
-      "how can you help me",
-      "what do you know",
-      "what features do you have",
-      "help me",
-      "can you help"
+      "you are cool",
+      "you're cool",
+      "you are awesome",
+      "you're awesome",
+      "good job",
+      "great job",
+      "well done",
+      "nice robot",
+      "good robot",
+      "cute robot",
+      "you are smart",
+      "you're smart",
+      "i like you",
+      "i love you",
+      "awesome",
+      "amazing"
     ],
-    "response_text": "I can guide you through FIT EXPO, help you find stalls and projects, or answer your questions!",
+    "response_text": [
+      "Aww, thank you so much! Team Nema worked really hard to get me ready for FIT EXPO 2026!",
+      "You just made my circuits glow! Thank you, and enjoy exploring the Faculty of IT!",
+      "Thanks a ton! I'll pass that compliment straight to my creators on Team Nema!",
+      "That's so kind of you! I'm happy to help make FIT EXPO 2026 special for you!"
+    ],
     "audio_file": null,
     "action": {
-      "action": "speak",
-      "suggested_buttons": []
+      "action": "speak"
+    }
+  },
+  {
+    "id": "smalltalk_joke",
+    "button_label": "Tell me a joke",
+    "utterances": [
+      "tell me a joke",
+      "say a joke",
+      "do you know any jokes",
+      "make me laugh",
+      "say something funny",
+      "tell a joke",
+      "another joke"
+    ],
+    "response_text": [
+      "Why do programmers always mix up Halloween and Christmas? Because Oct 31 equals Dec 25!",
+      "Why did the robot go back to the Faculty of IT? To improve its artificial intelligence!",
+      "There are 10 types of people at FIT EXPO 2026: those who understand binary, and those who don't!",
+      "Why do software engineers prefer dark mode? Because light attracts bugs!",
+      "What is a robot's favorite type of music? Heavy metal, of course!"
+    ],
+    "audio_file": null,
+    "action": {
+      "action": "speak"
+    }
+  },
+  {
+    "id": "smalltalk_fun_fact",
+    "button_label": "Tell me a fun fact",
+    "utterances": [
+      "tell me a fun fact",
+      "fun fact",
+      "do you know a fun fact",
+      "tell me something interesting",
+      "surprise me",
+      "interesting fact"
+    ],
+    "response_text": [
+      "Here's a fun fact: The Faculty of IT at the University of Moratuwa was founded in 2001, making 2026 our milestone 25th Silver Jubilee anniversary!",
+      "Did you know? This is the second time in history that the Faculty of IT is hosting FIT EXPO, showcasing our students' best innovations!",
+      "Fun fact: The first computer bug was an actual real moth found inside the Harvard Mark Two computer back in 1947!",
+      "Did you know I can track faces in real time, show emotions with my eyes, and guide you to any room across all four floors of this building?"
+    ],
+    "audio_file": null,
+    "action": {
+      "action": "speak"
     }
   },
   {
     "id": "smalltalk_thanks",
+    "button_label": "Thank you!",
     "utterances": [
       "thank you",
       "thanks",
       "thanks a lot",
       "thank you so much",
-      "appreciate it"
+      "thank you very much",
+      "appreciate it",
+      "cheers",
+      "thanks nema"
     ],
-    "response_text": "You're very welcome! Have a wonderful time exploring FIT EXPO.",
+    "response_text": [
+      "You're very welcome! Have a wonderful time exploring FIT EXPO 2026!",
+      "Happy to help! Enjoy the 25th anniversary celebrations here at the Faculty of IT!",
+      "Anytime! From all of us on Team Nema, enjoy the rest of FIT EXPO 2026!",
+      "My pleasure! Feel free to come back if you need directions to any other room or stall!"
+    ],
     "audio_file": null,
     "action": {
       "action": "speak"
@@ -88,14 +277,25 @@
   },
   {
     "id": "smalltalk_bye",
+    "button_label": "Goodbye!",
     "utterances": [
       "bye",
       "goodbye",
+      "bye bye",
+      "see you",
       "see you later",
       "talk to you later",
-      "catch you later"
+      "catch you later",
+      "good night",
+      "have a nice day",
+      "bye nema"
     ],
-    "response_text": "Goodbye! Enjoy the rest of FIT EXPO!",
+    "response_text": [
+      "Goodbye! Enjoy the rest of FIT EXPO 2026!",
+      "See you later! Thanks for visiting the Faculty of IT's 25th anniversary exhibition!",
+      "Bye for now! Have a fantastic time exploring all the stalls and projects!",
+      "Take care and goodbye from Team Nema! Come say hi again before you leave!"
+    ],
     "audio_file": null,
     "action": {
       "action": "speak"

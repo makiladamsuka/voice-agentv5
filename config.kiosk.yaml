@@ -8,7 +8,7 @@ camera:
   main_res: [640, 360]     # optimized camera sensor resolution
   detect_res: [640, 360]     # optimized detection resolution for kiosk CPU
   exposure_value: 1.2        # EV compensation boost for low light (+1.2 stops)
-  low_light: false            # allow longer shutter times up to 100ms in dark rooms
+  low_light: true            # allow longer shutter times up to 100ms in dark rooms
   full_sensor_fov: false     # use full sensor FOV for higher res
   confidence_threshold: 0.6
   nms_threshold: 0.3

@@ -311,7 +311,7 @@
     "response_text": [
       "Visit Level 1 and Company stalls here on Floor 4, the 3rd floor Game Zone, and 2nd floor Software and Research projects!",
       "Check out Level 1 and Student projects here on Floor 4, or head down to Floor 2 for Software and Research projects!",
-      "Explore Company stalls here on Floor 4, the 3rd floor Game Zone, 2nd floor Software and Research projects, and 1st floor Photo Booth!"
+      "Explore Company stalls on Floor 4, the 3rd floor Game Zone, Floor 2 Software projects, and Floor 1 Photo Booth!"
     ],
     "audio_file": null,
     "action": {
@@ -495,8 +495,8 @@
       "tell me more about which floor am i on"
     ],
     "response_text": [
-      "You are on the 4th floor! There are other halls here for Level 1 and Student projects, Company stalls in the Lunch Area, and the Auditorium.",
-      "You are on the 4th floor with me! Visit the other halls on this floor for Level 1 projects, Student projects, and Company stalls."
+      "You are on the 4th floor! Other halls here have Level 1 projects, Student projects, Company stalls, and the Auditorium.",
+      "You are on the 4th floor with me! Visit other halls here for Level 1 projects, Student projects, and Company stalls."
     ],
     "audio_file": null,
     "action": {
@@ -956,7 +956,7 @@
       "tell me more about where can i play games"
     ],
     "response_text": [
-      "You are on the 4th floor. Go down one floor to the 3rd floor for the Game Zone halls near Lab 3 and FYP Lab!",
+      "You are on the 4th floor. Go down one floor to the 3rd floor for Game Zone stalls near Lab 3!",
       "The 3rd floor hosts the Game Zone with three gaming stalls just one floor down from here!"
     ],
     "audio_file": null,
@@ -1138,8 +1138,8 @@
       "tell me more about fourth floor stalls"
     ],
     "response_text": [
-      "You are on the 4th floor! Visit the halls on this floor for Level 1 projects, Student projects, the Auditorium, and Company stalls in the Lunch Area.",
-      "Right here on the 4th floor, there are halls for Level 1 projects, Student projects near Lab 6, and Company stalls in the Lunch Area!"
+      "You are on the 4th floor! Visit other halls here for Level 1 projects, Student projects, the Auditorium, and Company stalls.",
+      "Right here on Floor 4, find Level 1 projects, Student projects near Lab 6, and Company stalls in the Lunch Area!"
     ],
     "audio_file": null,
     "action": {
@@ -1302,8 +1302,8 @@
       "tell me more about ground floor stalls"
     ],
     "response_text": [
-      "You are on the 4th floor. Go down to the 1st floor for the Photo Booth, Historical Instrument stall, and Level 2 and 4 projects!",
-      "Down on the 1st floor, you can visit the Photo Booth, Historical Instrument hall, and Level 2 and 4 projects near Lab 1!"
+      "You are on the 4th floor. Go down to the 1st floor for the Photo Booth and Historical Instrument stall!",
+      "Down on the 1st floor, visit the Photo Booth, Historical Instrument stall, and Level 2 and 4 projects!"
     ],
     "audio_file": null,
     "action": {
@@ -1633,7 +1633,7 @@
       "tell me more about why are we celebrating fit expo"
     ],
     "response_text": [
-      "Welcome to FIT EXPO 2026, the flagship tech exhibition of the Faculty of IT at the University of Moratuwa, celebrating our 25th anniversary!",
+      "Welcome to FIT EXPO 2026, the flagship tech exhibition of the Faculty of IT, celebrating our 25th Silver Jubilee anniversary!",
       "This is FIT EXPO 2026, held by the Faculty of IT to celebrate our 25th anniversary with student, software, and research projects!",
       "You are at FIT EXPO 2026! It showcases student projects, company stalls, and interactive tech zones across all four floors."
     ],
@@ -2477,8 +2477,8 @@
       "tell me more about about faculty of it"
     ],
     "response_text": [
-      "Established in 2001, the Faculty of IT at the University of Moratuwa offers top Honours degrees in IT, Management, and Artificial Intelligence.",
-      "The Faculty of IT is home to three departments across four floors, celebrating 25 years of shaping Sri Lanka's tech and AI leaders!"
+      "Established in 2001, the Faculty of IT offers top Honours degrees in IT, Management, and Artificial Intelligence.",
+      "The Faculty of IT has three departments across four floors, celebrating 25 years of shaping Sri Lanka's AI leaders!"
     ],
     "audio_file": null,
     "action": {
@@ -3838,7 +3838,7 @@
       "give me information about what labs are in fit",
       "tell me more about what labs are in fit"
     ],
-    "response_text": "Right here on the 4th floor we have the AI, PG Research, Hardware, and Embedded Systems labs, plus Research Project stalls on Floor 2!",
+    "response_text": "Right here on Floor 4 we have the AI, Research, and Hardware labs, plus Research Project stalls on Floor 2!",
     "audio_file": null,
     "action": {
       "action": "speak"

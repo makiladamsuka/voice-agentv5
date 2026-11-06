@@ -92,20 +92,15 @@ class FaceGreetingMonitor:
             cam_faces = int(state.get("face_count", 0) or 0) if cam_visible else 0
             effective_count = max(1, cam_faces)
 
-<<<<<<< HEAD
             screen_touch_ts = float(state.get("screen_touch_ts") or 0.0)
             if screen_touch_ts > self._last_activity_ts:
                 self._last_activity_ts = screen_touch_ts
             if state["agent_speaking"] or state["user_speaking"]:
                 self._last_activity_ts = now
 
-            person_visible = cam_visible or (prox_zones >= 1)
-            required_hold = self.hold_sec if cam_visible else max(self.hold_sec, 2.0)
+            required_hold = self.hold_sec
 
-            if person_visible:
-=======
             if cam_visible:
->>>>>>> 308123152ee8b6b528f7a6922e13496356761df6
                 if self._face_since is None:
                     self._face_since = now
                     self._last_activity_ts = now
@@ -125,7 +120,7 @@ class FaceGreetingMonitor:
                     self._greeted_this_visit = True
                     self._greeted_face_count = effective_count
                     self._crowd_growth_greeted = effective_count >= 3
-                    print(f"[FaceGreeting] Queued (count={effective_count}, cam={cam_faces}, tof={prox_zones}): {text!r}")
+                    print(f"[FaceGreeting] Queued (count={effective_count}, cam={cam_faces}): {text!r}")
                 elif (
                     self._greeted_this_visit
                     and not self._crowd_growth_greeted
@@ -144,7 +139,7 @@ class FaceGreetingMonitor:
                     self._last_greet_ts = now
                     self._last_activity_ts = now
                     self._crowd_growth_greeted = True
-                    print(f"[FaceGreeting] Crowd join-in queued (count={effective_count}, cam={cam_faces}, tof={prox_zones}): {text!r}")
+                    print(f"[FaceGreeting] Crowd join-in queued (count={effective_count}, cam={cam_faces}): {text!r}")
                 elif (
                     self.dwell_prompt_enabled
                     and self._greeted_this_visit

@@ -462,7 +462,7 @@ class FaceGreetingArmService:
             if busy:
                 self._last_activity_ts = now
 
-            person_present = face_visible or (prox_zones >= 1)
+            person_present = face_visible
 
             if not person_present:
                 # Person walked away — reset visit tracking
@@ -572,43 +572,6 @@ class FaceGreetingArmService:
 
                     else:
                         self._face_since = None  # no frame yet, retry
-<<<<<<< HEAD
-            elif prox_zones >= 1:
-                # ToF-only presence fallback (when camera is off or face not yet in frame)
-                if self._face_since is None:
-                    self._face_since = now
-                    self._last_activity_ts = now
-                    self._visit_initial_face_count = face_count
-                    self._visit_crowd_growth_greeted = False
-                    self._dwell_prompts_this_visit = 0
-                elif (
-                    (now - self._face_since) >= max(self.hold_sec, 2.2)
-                    and (self._last_greeting_time is None or (now - self._last_greeting_time) >= self.greeting_cooldown_sec)
-                ):
-                    self._trigger_greeting(face_count=face_count)
-                    self._last_greeting_time = now
-                    self._last_activity_ts = now
-                    self._visit_initial_face_count = face_count
-                    self._visit_crowd_growth_greeted = face_count >= 3
-                elif (
-                    not self._visit_crowd_growth_greeted
-                    and self._visit_initial_face_count <= 2
-                    and face_count >= 3
-                    and (self._last_greeting_time is not None and (now - self._last_greeting_time) >= 12.0)
-                ):
-                    self._trigger_greeting(face_count=face_count, is_crowd_growth=True)
-                    self._last_greeting_time = now
-                    self._last_activity_ts = now
-                    self._visit_crowd_growth_greeted = True
-                elif (
-                    self.dwell_prompt_enabled
-                    and self._last_greeting_time is not None
-                    and self._dwell_prompts_this_visit < self.max_dwell_prompts_per_visit
-                    and (now - self._last_activity_ts) >= self.dwell_prompt_sec
-                    and (now - self._last_dwell_prompt_ts) >= self.dwell_cooldown_sec
-                ):
-                    self._trigger_dwell_prompt(now)
-=======
             else:
                 # Face lost or robot busy
                 if self._face_since is not None:
@@ -617,7 +580,7 @@ class FaceGreetingArmService:
                     self._current_match = None
                     self._visit_initial_face_count = 0
                     self._visit_crowd_growth_greeted = False
->>>>>>> 308123152ee8b6b528f7a6922e13496356761df6
+                    self._dwell_prompts_this_visit = 0
 
             time.sleep(loop_delay)
 

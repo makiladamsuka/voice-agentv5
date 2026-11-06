@@ -820,6 +820,7 @@ class BaseController:
                 and not state.get("tof_too_close_safety", False)
                 and not tracking
                 and self.prox_investigate_enabled
+                and not state.get("prox_investigate_active", False)
                 and zone in ("L", "R", "C")
             ):
                 self._last_prox_ts = now

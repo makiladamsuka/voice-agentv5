@@ -122,6 +122,41 @@ def test_base_controller_suppresses_side_glance_in_crowd_and_blocks_turn_when_su
     assert source == ""
 
 
+def test_base_controller_does_not_restart_active_tof_investigation():
+    bb = Blackboard()
+    ctrl = BaseController(bb, None)
+    ctrl.prox_enabled = True
+    ctrl.prox_investigate_enabled = True
+    ctrl.prox_min_confidence = 3
+
+    bb.write(
+        face_detected=False,
+        face_count=0,
+        body_detected=False,
+        servo_pan=100.0,
+        base_world_yaw_deg=0.0,
+        base_encoder_deg=0.0,
+        prox_approach_active=True,
+        prox_approach_zone="L",
+        prox_approach_confidence=4,
+        prox_approach_ts=300.0,
+        tof_surrounded=True,
+        tof_too_close_safety=False,
+        prox_investigate_active=True,
+    )
+    state = bb.read(
+        "face_detected", "face_count", "body_detected", "servo_pan",
+        "base_world_yaw_deg", "base_encoder_deg", "prox_approach_active",
+        "prox_approach_zone", "prox_approach_confidence", "prox_approach_ts",
+        "prox_post_turn_lockout_ts", "prox_investigate_active",
+        "tof_surrounded", "tof_too_close_safety", "voice_session_active",
+    )
+    step, source, _ = ctrl._plan_proximity_step(300.5, state)
+
+    assert step is None
+    assert source == ""
+
+
 def test_servo_loop_suppresses_velocity_spike_on_multi_face_switch():
     bb = Blackboard()
     loop = ServoLoop(bb)
@@ -408,5 +443,4 @@ def test_optimistic_lost_face_tracking_and_swapped_side_tof():
     lss_step, lss_src, _ = ctrl._plan_last_seen_step(100.50, lss_state)
     assert lss_src == "last_seen"
     assert lss_step is not None and abs(lss_step) >= ctrl.min_step
-
 

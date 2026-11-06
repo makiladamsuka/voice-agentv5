@@ -439,8 +439,6 @@ class FaceGreetingArmService:
                 "face_count",
                 "face_candidates",
                 "stream_frame",
-                "prox_zone_count",
-                "tof_surrounded",
                 "agent_speaking",
                 "user_speaking",
                 "bye_wave_active",
@@ -451,13 +449,8 @@ class FaceGreetingArmService:
                 state["face_detected"]
                 and float(state["face_area_ratio"]) >= self.min_face_area_ratio
             )
-            prox_zones = int(state.get("prox_zone_count", 0) or 0)
-            tof_surrounded = bool(state.get("tof_surrounded", False))
             cam_faces = int(state.get("face_count", 0) or 0) if face_visible else 0
-            # Fuse camera face_count with ToF occupied zone count
-            face_count = max(1, cam_faces, prox_zones)
-            if tof_surrounded and (cam_faces >= 2 or prox_zones >= 3):
-                face_count = max(face_count, 3)
+            face_count = max(1, cam_faces)
             busy = (
                 state["agent_speaking"]
                 or state["user_speaking"]
@@ -579,6 +572,7 @@ class FaceGreetingArmService:
 
                     else:
                         self._face_since = None  # no frame yet, retry
+<<<<<<< HEAD
             elif prox_zones >= 1:
                 # ToF-only presence fallback (when camera is off or face not yet in frame)
                 if self._face_since is None:
@@ -614,6 +608,16 @@ class FaceGreetingArmService:
                     and (now - self._last_dwell_prompt_ts) >= self.dwell_cooldown_sec
                 ):
                     self._trigger_dwell_prompt(now)
+=======
+            else:
+                # Face lost or robot busy
+                if self._face_since is not None:
+                    self._face_since = None
+                    self._current_embedding = None
+                    self._current_match = None
+                    self._visit_initial_face_count = 0
+                    self._visit_crowd_growth_greeted = False
+>>>>>>> 308123152ee8b6b528f7a6922e13496356761df6
 
             time.sleep(loop_delay)
 

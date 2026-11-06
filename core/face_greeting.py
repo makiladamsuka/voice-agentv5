@@ -80,8 +80,6 @@ class FaceGreetingMonitor:
                 "face_area_ratio",
                 "face_count",
                 "body_detected",
-                "prox_zone_count",
-                "tof_surrounded",
                 "agent_speaking",
                 "user_speaking",
                 "voice_session_active",
@@ -91,14 +89,10 @@ class FaceGreetingMonitor:
                 (state["face_detected"] and float(state["face_area_ratio"]) >= self.min_face_area_ratio)
                 or state["body_detected"]
             )
-            prox_zones = int(state.get("prox_zone_count", 0) or 0)
-            tof_surrounded = bool(state.get("tof_surrounded", False))
             cam_faces = int(state.get("face_count", 0) or 0) if cam_visible else 0
-            # Fuse camera face count with ToF occupied zone count
-            effective_count = max(1, cam_faces, prox_zones)
-            if tof_surrounded and (cam_faces >= 2 or prox_zones >= 3):
-                effective_count = max(effective_count, 3)
+            effective_count = max(1, cam_faces)
 
+<<<<<<< HEAD
             screen_touch_ts = float(state.get("screen_touch_ts") or 0.0)
             if screen_touch_ts > self._last_activity_ts:
                 self._last_activity_ts = screen_touch_ts
@@ -109,6 +103,9 @@ class FaceGreetingMonitor:
             required_hold = self.hold_sec if cam_visible else max(self.hold_sec, 2.0)
 
             if person_visible:
+=======
+            if cam_visible:
+>>>>>>> 308123152ee8b6b528f7a6922e13496356761df6
                 if self._face_since is None:
                     self._face_since = now
                     self._last_activity_ts = now

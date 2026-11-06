@@ -70,6 +70,28 @@ export function useFaceGreeting({
 
   // Single-voice deduplication ref: ignores duplicate greeting events within 3.5s
   const lastPlayedRef = useRef<{ text: string; time: number }>({ text: "", time: 0 });
+  const lastTouchSentRef = useRef<number>(0);
+
+  const sendScreenTouch = useCallback((clientX?: number, kind: string = "touch") => {
+    const now = Date.now();
+    if (now - lastTouchSentRef.current < 1200) return;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    lastTouchSentRef.current = now;
+    let xNorm = 0.0;
+    if (typeof clientX === "number" && typeof window !== "undefined" && window.innerWidth > 0) {
+      xNorm = Math.max(-1, Math.min(1, (clientX / window.innerWidth) * 2 - 1));
+    }
+    try {
+      ws.send(
+        JSON.stringify({
+          type: "screen_event",
+          kind,
+          x_norm: Number(xNorm.toFixed(3)),
+        })
+      );
+    } catch (_) {}
+  }, []);
 
   const getAudioCtx = useCallback(() => {
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
@@ -261,16 +283,21 @@ export function useFaceGreeting({
     }
     // Small delay so the NLU server has time to start before we connect
     const t = setTimeout(connect, 1500);
+    const onPointerDown = (e: PointerEvent) => {
+      sendScreenTouch(e.clientX, "touch");
+    };
+    window.addEventListener("pointerdown", onPointerDown, { passive: true });
     return () => {
       mountedRef.current = false;
       intentionalCloseRef.current = true;
       clearTimeout(t);
+      window.removeEventListener("pointerdown", onPointerDown);
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       try {
         wsRef.current?.close();
       } catch (_) {}
     };
-  }, [enabled, connect]);
+  }, [enabled, connect, sendScreenTouch]);
 
-  return { isGreeting };
+  return { isGreeting, sendScreenTouch };
 }

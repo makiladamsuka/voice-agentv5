@@ -31,7 +31,7 @@ class Wayfinder:
     def load_all_floors(self):
         files = sorted(glob.glob(str(self.data_dir / "map_graph_floor_*.json")))
         if not files:
-            print("⚠️  Wayfinder: no map files found in", self.data_dir)
+            print("[WARN] Wayfinder: no map files found in", self.data_dir)
             return
         for fp in files:
             name = Path(fp).stem.replace("map_graph_", "")
@@ -39,7 +39,7 @@ class Wayfinder:
                 self.floors[name] = json.load(f)
             n = len(self.floors[name].get("nodes", []))
             e = len(self.floors[name].get("edges", []))
-            print(f"  ✅ Loaded {name} ({n} nodes, {e} edges)")
+            print(f"  [OK] Loaded {name} ({n} nodes, {e} edges)")
         self._build_graph()
 
     def reload(self):
@@ -96,13 +96,46 @@ class Wayfinder:
                         self.graph.setdefault(n1, []).append((n2, FLOOR_CHANGE_COST))
                         self.graph.setdefault(n2, []).append((n1, FLOOR_CHANGE_COST))
 
-        # Heal: connect isolated rooms to nearest waypoint
-        # Pass 1 connects rooms to nearby waypoints. Pass 2 (component merge) is removed so it respects user-drawn paths strictly.
-        self._heal()
+        # Register FIT EXPO 2026 stalls and 4th-floor robot station directly in memory
+        # (no path calculation is needed; we only describe what is on this floor and other floors)
+        for nid, n in list(self.nodes.items()):
+            if n.get("label", "").strip().lower() == "you are here":
+                n["floor"] = "floor_4"
+
+        event_stalls = [
+            ("floor_4::you_are_here", "You are here", "floor_4"),
+            ("floor_4::level_1_projects", "Level 1 Projects", "floor_4"),
+            ("floor_4::company_stalls", "Company Stalls", "floor_4"),
+            ("floor_4::lunch_area", "Lunch Area", "floor_4"),
+            ("floor_4::student_projects", "Student Projects", "floor_4"),
+            ("floor_4::pg_research_lab", "PG Research Lab", "floor_4"),
+            ("floor_4::hardware_lab", "Hardware Lab", "floor_4"),
+            ("floor_4::ifs_network_lab", "IFS Network and Security Lab", "floor_4"),
+            ("floor_4::behavioral_lab", "Behavioral Systems Lab", "floor_4"),
+            ("floor_3::game_zone", "Game Zone", "floor_3"),
+            ("floor_3::fyp_lab", "FYP Lab", "floor_3"),
+            ("floor_2::software_projects", "Software Projects", "floor_2"),
+            ("floor_2::research_projects", "Research Projects", "floor_2"),
+            ("floor_1::photo_booth", "Photo Booth", "floor_1"),
+            ("floor_1::historical_instrument", "Historical Instrument", "floor_1"),
+            ("floor_1::level_2_4_projects", "Level 2 and 4 Projects", "floor_1"),
+        ]
+        for sid, label, fl in event_stalls:
+            self.nodes[sid] = {
+                "id": sid,
+                "original_id": sid,
+                "label": label,
+                "type": "room",
+                "floor": fl,
+                "building": "building_2",
+                "x": 0,
+                "z": 0,
+                "world": [0, 0, 0],
+            }
 
         rooms = sum(1 for n in self.nodes.values() if n.get("type") != "waypoint")
         wpts  = sum(1 for n in self.nodes.values() if n.get("type") == "waypoint")
-        print(f"✅ Graph ready: {rooms} rooms, {wpts} waypoints, {len(self.edges)} edges")
+        print(f"[OK] Graph ready: {rooms} rooms, {wpts} waypoints, {len(self.edges)} edges")
 
     # ── Auto-heal ──────────────────────────────────────────────────────────
 
@@ -199,13 +232,60 @@ class Wayfinder:
 
     # ── Room lookup ────────────────────────────────────────────────────────
 
+    ROOM_ALIASES: dict[str, str] = {
+        "lab 1": "Laboratory 1",
+        "lab 01": "Laboratory 1",
+        "lab 2": "labratory 2",
+        "lab 02": "labratory 2",
+        "laboratory 2": "labratory 2",
+        "lab 3": "Laboratory 3",
+        "lab 03": "Laboratory 3",
+        "lab 4": "Laboratory 4",
+        "lab 04": "Laboratory 4",
+        "lab 5": "Laboratory 5",
+        "lab 05": "Laboratory 5",
+        "lab 6": "Laboratory 6",
+        "lab 06": "Laboratory 6",
+        "lab 7": "Laboratory 7",
+        "lab 07": "Laboratory 7",
+        "lab 8": "Laboratory 8",
+        "lab 08": "Laboratory 8",
+        "ai lab": "AI research laboratory",
+        "ai laboratory": "AI research laboratory",
+        "games": "Game Zone",
+        "game stall": "Game Zone",
+        "game stalls": "Game Zone",
+        "gaming zone": "Game Zone",
+        "software project": "Software Projects",
+        "software stalls": "Software Projects",
+        "research project": "Research Projects",
+        "research stalls": "Research Projects",
+        "level 2 and 4": "Software Projects",
+        "company stall": "Company Stalls",
+        "level 1 project": "Level 1 Projects",
+        "student project": "Student Projects",
+        "photo": "Photo Booth",
+        "photobooth": "Photo Booth",
+        "historical": "Historical Instrument",
+        "lift": "Evaluator",
+        "elevator": "Evaluator",
+        "canteen": "Lunch Area",
+        "food": "Lunch Area",
+        "network lab": "IFS Network and Security Lab",
+        "ifs lab": "IFS Network and Security Lab",
+    }
+
     def find_room(self, query: str, floor: str = None) -> dict | None:
         q = query.lower().strip()
         if not q:
             return None
+        if q in self.ROOM_ALIASES:
+            q = self.ROOM_ALIASES[q].lower().strip()
         cands = [n for n in self.nodes.values()
                  if n.get("type") != "waypoint"
                  and (floor is None or n.get("floor") == floor)]
+        # Prefer floor_4 when multiple floors have the same room label (e.g. Washrooms, Lift)
+        cands.sort(key=lambda n: 0 if n.get("floor") == "floor_4" else 1)
         for n in cands:
             if n["label"].strip().lower() == q:
                 return n
@@ -236,6 +316,8 @@ class Wayfinder:
         q = query.lower().strip()
         if not q:
             return []
+        if q in self.ROOM_ALIASES:
+            q = self.ROOM_ALIASES[q].lower().strip()
 
         skip_internal = {"you are here", "exit", "staircase 1", "staircase 2"}
         cands = [
@@ -244,6 +326,7 @@ class Wayfinder:
             and (floor is None or n.get("floor") == floor)
             and (n["label"].strip().lower() not in skip_internal or q in n["label"].strip().lower())
         ]
+        cands.sort(key=lambda n: 0 if n.get("floor") == "floor_4" else 1)
 
         # 1. Exact label match -> unambiguous single room
         for n in cands:
@@ -316,108 +399,96 @@ class Wayfinder:
 
     # ── Directions ─────────────────────────────────────────────────────────
 
-    def _directions(self, path_ids: list[str], dest_label: str) -> str:
-        if len(path_ids) < 2: return f"You are already at {dest_label}."
-        
-        import random
-        
-        start_node = self.nodes[path_ids[0]]
-        start_floor = start_node.get("floor", "floor_1")
-        
-        dest_node = self.nodes[path_ids[-1]]
-        dest_floor = dest_node.get("floor", "floor_1")
+    _CUSTOM_TEXT_DIRECTIONS: dict[str, str] = {
+        # 4th Floor (Same floor as robot)
+        "level 1 projects": "You are on the 4th floor! Level 1 Projects are in this hall and in the Auditorium on this floor.",
+        "company stalls": "You are on the 4th floor! Company Stalls are right outside in the Lunch Area on this floor.",
+        "lunch area": "You are on the 4th floor! The Lunch Area is right outside along the corridor on this floor.",
+        "study area": "You are on the 4th floor! The Lunch and Study Area is right outside on this floor.",
+        "student projects": "You are on the 4th floor! Student Projects are in the adjacent hall between Lab 6 and PG Research Lab.",
+        "auditorium 2": "You are on the 4th floor! The Auditorium is in the other hall on this floor, near the lift.",
+        "auditorium 1": "You are right here in this 4th floor exhibition hall! The main Auditorium is also on this floor near the lift.",
+        "ai research laboratory": "You are on the 4th floor! The AI Lab is right next to Lab 6 on this floor.",
+        "laboratory 6": "You are on the 4th floor! Lab 6 is right next to this hall on this floor.",
+        "pg research lab": "You are on the 4th floor! The PG Research Lab is in the hall past Lab 6 on this floor.",
+        "server room": "You are on the 4th floor! The Server Room is next to the PG Research Lab on this floor.",
+        "hardware lab": "You are on the 4th floor! The Hardware Lab is right next to the Lunch Area on this floor.",
+        "de laboratory": "You are on the 4th floor! The Hardware and DE Lab is next to the Lunch Area on this floor.",
+        "ifs network and security lab": "You are on the 4th floor! The IFS Network and Security Lab is right next to the Lunch Area on this floor.",
+        "embedded system laboratory": "You are on the 4th floor! The Electronic and Embedded Systems Lab is on this floor near the lift.",
+        "microcontroller based system": "You are on the 4th floor! The Embedded Systems Lab is along the corridor on this floor.",
+        "audio visual unit extension": "You are on the 4th floor! The Audio Visual Unit is along the corridor on this floor.",
+        "behavioral systems lab": "You are on the 4th floor! The Behavioral Systems Lab is on this floor next to the lift.",
+        "evaluator": "You are on the 4th floor! The lift is on this floor near the Auditorium.",
+        "male washroom": "You are on the 4th floor! The Male Washroom is along the corridor on this floor.",
+        "female washroom": "You are on the 4th floor! The Female Washroom is along the corridor on this floor.",
+        # 3rd Floor (1 floor down from 4th floor)
+        "game zone": "You are on the 4th floor. Go down one floor to the 3rd floor for the Game Zone halls near Lab 3.",
+        "fyp lab": "You are on the 4th floor. Go down one floor to the 3rd floor for the FYP Lab and Lab 3.",
+        "laboratory 4": "You are on the 4th floor. Go down one floor to the 3rd floor for the FYP Lab.",
+        "laboratory 3": "You are on the 4th floor. Go down one floor to the 3rd floor for Lab 3.",
+        "department of interdisciplinary studies": "You are on the 4th floor. Go down one floor to the 3rd floor for the Department of Interdisciplinary Studies.",
+        "laboratory 8": "You are on the 4th floor. Go down one floor to the 3rd floor for Lab 8 near the lift.",
+        # 2nd Floor (2 floors down from 4th floor — Software & Research Projects)
+        "software projects": "You are on the 4th floor. Go down two floors to the 2nd floor for the Software and Research Projects halls.",
+        "research projects": "You are on the 4th floor. Go down two floors to the 2nd floor for the Research and Software Projects halls.",
+        "department of computational mathematics": "You are on the 4th floor. Go down two floors to the 2nd floor for the Department of Computational Mathematics.",
+        "laboratory 5": "You are on the 4th floor. Go down two floors to the 2nd floor for Lab 5 and Lab 2.",
+        "labratory 2": "You are on the 4th floor. Go down two floors to the 2nd floor for Lab 2 and Lab 5.",
+        # 1st Floor (3 floors down from 4th floor)
+        "photo booth": "You are on the 4th floor. Go down to the 1st floor for the Photo Booth hall near Lab 1.",
+        "historical instrument": "You are on the 4th floor. Go down to the 1st floor for the Historical Instrument hall near the lift.",
+        "level 2 and 4 projects": "You are on the 4th floor. Go down to the 1st floor for Level 2 and 4 Projects near Lab 1.",
+        "dean's office": "You are on the 4th floor. Go down to the 1st floor for the Dean's Office next to Lab 1.",
+        "laboratory 1": "You are on the 4th floor. Go down to the 1st floor for Lab 1 next to the Dean's Office.",
+        "department of information technology": "You are on the 4th floor. Go down to the 1st floor for the Department of Information Technology.",
+        "exit": "You are on the 4th floor. Take the lift or stairs down to the 1st floor to exit the building.",
+    }
+
+    def _directions_for_node(self, dest_node: dict) -> str:
+        clean_dest = dest_node["label"].strip()
+        key = clean_dest.lower()
+        if key in self._CUSTOM_TEXT_DIRECTIONS:
+            return self._CUSTOM_TEXT_DIRECTIONS[key]
+
+        dest_floor = dest_node.get("floor", "floor_4")
         floor_num = int(dest_floor.replace("floor_", ""))
-        
-        if floor_num == 1:
-            floor_str = "1st"
-        elif floor_num == 2:
-            floor_str = "2nd"
-        elif floor_num == 3:
-            floor_str = "3rd"
-        elif floor_num == 4:
-            floor_str = "4th"
-        else:
-            floor_str = f"{floor_num}th"
 
-        dest_bld = dest_node.get("building", "")
-        if dest_bld == "building_2":
-            building_str = "the new building"
-        elif dest_bld == "building_1":
-            building_str = "Building 1"
-        elif dest_bld:
-            building_str = self.buildings.get(dest_bld, {}).get("name", dest_bld).replace("_", " ").title()
-        else:
-            building_str = "the building"
+        floor_map = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th"}
+        floor_str = floor_map.get(floor_num, f"{floor_num}th")
 
-        x_val = dest_node.get("x", 0)
-        if x_val < -1:
-            side = "on the left"
-        elif x_val > 1:
-            side = "on the right"
-        else:
-            side = "all the way in"
+        if dest_floor == "floor_4":
+            return f"You are on the 4th floor! {clean_dest} is in one of the halls on this floor."
 
-        if start_floor == dest_floor:
-            responses = [
-                f"It is right here on this floor, {side}.",
-                f"You're on the right floor! Just look {side}.",
-                f"It is on the same floor, {side}."
-            ]
-            return random.choice(responses)
+        diff = 4 - floor_num
+        if diff == 1:
+            step_phrase = "down one floor"
+        elif diff > 1:
+            step_phrase = f"down {diff} floors"
         else:
-            responses = [
-                f"It is on the {floor_str} floor of {building_str}, {side}.",
-                f"You'll need to go to the {floor_str} floor of {building_str}. It will be {side}.",
-                f"Head over to the {floor_str} floor of {building_str}, it's {side}."
-            ]
-            return random.choice(responses)
+            step_phrase = f"to the {floor_str} floor"
+        return f"You are on the 4th floor. Go {step_phrase} to the {floor_str} floor for {clean_dest}."
 
     # ── Public API ─────────────────────────────────────────────────────────
 
     def find_path(self, destination: str, origin: str = None) -> dict | None:
-        dest_node  = self.find_room(destination)
+        """Look up the floor and hall description for *destination* without path calculation."""
+        dest_node = self.find_room(destination)
         if not dest_node:
-            return {"error": f"Could not find '{destination}'. Try: {', '.join(self.list_rooms()[:8])}"}
+            return {"error": f"Could not find '{destination}'."}
 
-        start_node = self.find_room(origin) if origin else self.find_room(self.ROBOT_LOCATION)
-        if not start_node:
-            # fallback: most-connected room
-            start_node = max(
-                (n for n in self.nodes.values() if n.get("type") != "waypoint"),
-                key=lambda n: len(self.graph.get(n["id"], [])), default=None)
-        if not start_node:
-            return {"error": "Could not determine a starting location."}
-
-        if start_node["id"] == dest_node["id"]:
-            return {
-                "destination": dest_node["label"], "floor": dest_node["floor"],
-                "path_ids": [start_node["id"]], "path_coords": [dest_node["world"]],
-                "directions": f"You are already at {dest_node['label']}.",
-                "distance_m": 0, "time_min": 0,
-                "nodes": list(self.nodes.values()), "buildings": self.buildings,
-            }
-
-        path_ids = self._dijkstra(start_node["id"], dest_node["id"])
-        if not path_ids:
-            return {"error": f"No connected path found to {dest_node['label']}. "
-                             "Please check the map editor to ensure waypoints are connected."}
-
-        coords     = [self.nodes[nid]["world"] for nid in path_ids]
-        raw_dist   = sum(self._dist(coords[i-1], coords[i]) for i in range(1, len(coords)))
-        dist_m     = round(raw_dist * 3, 1)
-        time_min   = max(1, round(raw_dist * 3 / 1.4 / 60))
-        directions = self._directions(path_ids, dest_node["label"])
+        directions = self._directions_for_node(dest_node)
 
         return {
             "destination":  dest_node["label"],
-            "floor":        dest_node["floor"],
-            "path_ids":     path_ids,
-            "path_coords":  coords,
+            "floor":        dest_node.get("floor", "floor_4"),
+            "path_ids":     [],
+            "path_coords":  [],
             "directions":   directions,
-            "distance_m":   dist_m,
-            "time_min":     time_min,
-            "nodes":        list(self.nodes.values()),
-            "buildings":    self.buildings,
+            "distance_m":   0,
+            "time_min":     0,
+            "nodes":        [],
+            "buildings":    {},
         }
 
 

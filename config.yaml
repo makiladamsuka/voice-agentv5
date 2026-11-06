@@ -342,6 +342,10 @@ face_greeting:
   cooldown_sec: 60.0
   hold_sec: 0.45
   min_face_area_ratio: 0.008
+  dwell_prompt_enabled: true
+  dwell_prompt_sec: 14.0
+  dwell_cooldown_sec: 35.0
+  max_dwell_prompts_per_visit: 2
 
 face_greeting_arm:
   enabled: true
@@ -351,6 +355,10 @@ face_greeting_arm:
   cosine_threshold: 0.85         # Cosine similarity threshold (0.85 strict; lower = more lenient)
   cleanup_interval_sec: 60.0     # How often to prune expired cache entries
   greeting_cooldown_sec: 30.0    # Global min time between any two greetings
+  dwell_prompt_enabled: true     # Proactive Floor 2 / stall prompt when visitor stands silently
+  dwell_prompt_sec: 14.0         # Seconds of silent presence after greeting before prompting
+  dwell_cooldown_sec: 35.0       # Minimum seconds between dwell prompts
+  max_dwell_prompts_per_visit: 2 # Max proactive dwell prompts per continuous visit
   vertical_speed: 0.9           # Speed multiplier for a0/a1 (shoulder) during greeting poses
   horizontal_speed: 1.2          # Speed multiplier for a2/a3 (elbow/wrist) during greeting poses
 

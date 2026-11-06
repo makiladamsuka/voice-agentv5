@@ -252,6 +252,10 @@ class FaceGreetingArmService:
         self.cleanup_interval_sec = float(fg.get("cleanup_interval_sec", 60.0))
         self.cosine_threshold = float(fg.get("cosine_threshold", COSINE_THRESHOLD))
         self.greeting_cooldown_sec = float(fg.get("greeting_cooldown_sec", 30.0))
+        self.dwell_prompt_enabled = bool(fg.get("dwell_prompt_enabled", True))
+        self.dwell_prompt_sec = float(fg.get("dwell_prompt_sec", 14.0))
+        self.dwell_cooldown_sec = float(fg.get("dwell_cooldown_sec", 35.0))
+        self.max_dwell_prompts_per_visit = int(fg.get("max_dwell_prompts_per_visit", 2))
 
         # ── Hi poses ──────────────────────────────────────────────────────────
         presets = _load_json(presets_path)
@@ -273,6 +277,9 @@ class FaceGreetingArmService:
         self._last_greeting_time: Optional[float] = None
         self._visit_initial_face_count: int = 0
         self._visit_crowd_growth_greeted: bool = False
+        self._last_activity_ts: float = 0.0
+        self._last_dwell_prompt_ts: float = 0.0
+        self._dwell_prompts_this_visit: int = 0
 
         print(
             f"[FaceGreetingArm] Initialized — "
@@ -387,6 +394,23 @@ class FaceGreetingArmService:
 
         return pose_name
 
+    def _trigger_dwell_prompt(self, now: float) -> None:
+        """Queue a proactive Floor 2 / stall suggestion when a visitor lingers silently."""
+        try:
+            from voice.greetings import generate_dwell_stall_prompt
+            text = generate_dwell_stall_prompt()
+            f_seq = self.bb.read("face_greeting_seq").get("face_greeting_seq", 0)
+            self.bb.write(
+                face_greeting_seq=f_seq + 1,
+                face_greeting_text=text,
+            )
+            self._last_activity_ts = now
+            self._last_dwell_prompt_ts = now
+            self._dwell_prompts_this_visit += 1
+            print(f"[FaceGreetingArm] Proactive dwell prompt #{self._dwell_prompts_this_visit}: '{text}'")
+        except Exception as e:
+            print(f"[FaceGreetingArm] Dwell prompt error: {e}")
+
     # ── Main loop ─────────────────────────────────────────────────────────────
 
     def run(self) -> None:
@@ -420,6 +444,7 @@ class FaceGreetingArmService:
                 "agent_speaking",
                 "user_speaking",
                 "bye_wave_active",
+                "screen_touch_ts",
             )
 
             face_visible = (
@@ -438,14 +463,37 @@ class FaceGreetingArmService:
                 or state["user_speaking"]
                 or state["bye_wave_active"]
             )
+            screen_touch_ts = float(state.get("screen_touch_ts") or 0.0)
+            if screen_touch_ts > self._last_activity_ts:
+                self._last_activity_ts = screen_touch_ts
+            if busy:
+                self._last_activity_ts = now
 
-            if face_visible and not busy:
+            person_present = face_visible or (prox_zones >= 1)
+
+            if not person_present:
+                # Person walked away — reset visit tracking
+                if self._face_since is not None:
+                    self._face_since = None
+                    self._current_embedding = None
+                    self._current_match = None
+                    self._visit_initial_face_count = 0
+                    self._visit_crowd_growth_greeted = False
+                    self._dwell_prompts_this_visit = 0
+            elif busy:
+                # Person is still in front while robot/user is actively speaking — keep visit alive
+                if self._face_since is None:
+                    self._face_since = now
+                    self._last_activity_ts = now
+            elif face_visible:
                 # ── Hold timer: require stable face before processing ──────────
                 if self._face_since is None:
                     self._face_since = now
+                    self._last_activity_ts = now
                     self._current_embedding = None
                     self._visit_initial_face_count = face_count
                     self._visit_crowd_growth_greeted = face_count >= 3
+                    self._dwell_prompts_this_visit = 0
 
                 elif (now - self._face_since) >= self.hold_sec:
                     # Face stable long enough — handle initial computation or learning
@@ -469,6 +517,7 @@ class FaceGreetingArmService:
                                     match = _CacheEntry(embedding, now)
                                     self._cache.append(match)
                                     self._last_greeting_time = now
+                                    self._last_activity_ts = now
                                     self._visit_initial_face_count = face_count
                                     self._visit_crowd_growth_greeted = face_count >= 3
 
@@ -481,6 +530,7 @@ class FaceGreetingArmService:
                                     self._trigger_greeting(face_count=face_count)
                                     match.re_encounter(now)
                                     self._last_greeting_time = now
+                                    self._last_activity_ts = now
                                     self._visit_initial_face_count = face_count
                                     self._visit_crowd_growth_greeted = face_count >= 3
 
@@ -493,6 +543,7 @@ class FaceGreetingArmService:
                                         f"forgotten in {remaining:.1f} min"
                                     )
                                     match.refresh(now)
+                                    self._last_activity_ts = now
 
                                 self._current_match = match
                                 self._last_capture_time = now
@@ -506,7 +557,17 @@ class FaceGreetingArmService:
                         ):
                             self._trigger_greeting(face_count=face_count, is_crowd_growth=True)
                             self._last_greeting_time = now
+                            self._last_activity_ts = now
                             self._visit_crowd_growth_greeted = True
+
+                        # Proactive dwell prompt when standing in front silently for too long
+                        elif (
+                            self.dwell_prompt_enabled
+                            and self._dwell_prompts_this_visit < self.max_dwell_prompts_per_visit
+                            and (now - self._last_activity_ts) >= self.dwell_prompt_sec
+                            and (now - self._last_dwell_prompt_ts) >= self.dwell_cooldown_sec
+                        ):
+                            self._trigger_dwell_prompt(now)
 
                         # Continuous learning phase (max 2 FPS)
                         elif self._current_match is not None and self._current_match.is_learning(now):
@@ -518,18 +579,21 @@ class FaceGreetingArmService:
 
                     else:
                         self._face_since = None  # no frame yet, retry
-            elif prox_zones >= 1 and not busy:
+            elif prox_zones >= 1:
                 # ToF-only presence fallback (when camera is off or face not yet in frame)
                 if self._face_since is None:
                     self._face_since = now
+                    self._last_activity_ts = now
                     self._visit_initial_face_count = face_count
                     self._visit_crowd_growth_greeted = False
+                    self._dwell_prompts_this_visit = 0
                 elif (
                     (now - self._face_since) >= max(self.hold_sec, 2.2)
                     and (self._last_greeting_time is None or (now - self._last_greeting_time) >= self.greeting_cooldown_sec)
                 ):
                     self._trigger_greeting(face_count=face_count)
                     self._last_greeting_time = now
+                    self._last_activity_ts = now
                     self._visit_initial_face_count = face_count
                     self._visit_crowd_growth_greeted = face_count >= 3
                 elif (
@@ -540,15 +604,16 @@ class FaceGreetingArmService:
                 ):
                     self._trigger_greeting(face_count=face_count, is_crowd_growth=True)
                     self._last_greeting_time = now
+                    self._last_activity_ts = now
                     self._visit_crowd_growth_greeted = True
-            else:
-                # Face/ToF lost or robot busy
-                if self._face_since is not None:
-                    self._face_since = None
-                    self._current_embedding = None
-                    self._current_match = None
-                    self._visit_initial_face_count = 0
-                    self._visit_crowd_growth_greeted = False
+                elif (
+                    self.dwell_prompt_enabled
+                    and self._last_greeting_time is not None
+                    and self._dwell_prompts_this_visit < self.max_dwell_prompts_per_visit
+                    and (now - self._last_activity_ts) >= self.dwell_prompt_sec
+                    and (now - self._last_dwell_prompt_ts) >= self.dwell_cooldown_sec
+                ):
+                    self._trigger_dwell_prompt(now)
 
             time.sleep(loop_delay)
 

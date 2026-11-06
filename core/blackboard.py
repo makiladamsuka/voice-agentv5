@@ -209,6 +209,12 @@ class Blackboard:
     arm_greeting_pose: str = ""
     arm_greeting_active: bool = False  # True while greeting pose is executing
 
+    # ── Screen touch & display awareness (written by NLU server / kiosk UI) ─────
+    screen_touch_ts: float = 0.0       # epoch when user last touched/tapped the screen
+    screen_touch_seq: int = 0          # incremented on each throttled touch/tap event
+    screen_touch_x: float = 0.0        # normalized horizontal touch coordinate [-1.0 .. +1.0]
+    screen_content_ts: float = 0.0     # epoch when important content (directions/buttons) appeared on screen
+
     # ── Debug manual control (written by viz POST /api/control) ───────────────
     manual_control_enabled: bool = False
     debug_control_cmd: str = ""

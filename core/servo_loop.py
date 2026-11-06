@@ -410,6 +410,49 @@ class ServoLoop:
         self._perk_prev_env: float = 0.0
         self._perk_last_trigger_ts: float = -10.0
 
+        # ── Screen Touch & Display Glance (Organic, Probabilistic Downward Glance) ─
+        self._last_screen_touch_seq: int = 0
+        self._screen_glance_until: float = 0.0
+        self._screen_glance_cooldown_until: float = 0.0
+        self._screen_glance_pan_target: float = self.pan_center
+        self._screen_glance_tilt_target: float = self.tilt_center
+        self._screen_glance_smooth_hz: float = 3.0
+
+    def _maybe_trigger_screen_glance(self, now: float) -> bool:
+        """Check for screen touch events and probabilistically start a natural downward screen glance."""
+        st = self.bb.read("screen_touch_seq", "screen_touch_x")
+        seq = int(st.get("screen_touch_seq", 0) or 0)
+        if seq > self._last_screen_touch_seq:
+            self._last_screen_touch_seq = seq
+            touch_x = float(st.get("screen_touch_x", 0.0) or 0.0)
+            if now >= self._screen_glance_cooldown_until:
+                self._screen_glance_cooldown_until = now + random.uniform(6.0, 11.0)
+                if random.random() < 0.68:
+                    # Tilt down toward the chest/kiosk screen by a randomized organic angle
+                    down_mech_deg = random.uniform(7.5, 13.5)
+                    base_tilt = max(self.tilt_center, self._tilt) if self.tilt_sign < 0 else min(self.tilt_center, self._tilt)
+                    self._screen_glance_tilt_target = clamp(
+                        base_tilt - self.tilt_sign * down_mech_deg,
+                        self.tilt_min,
+                        self.tilt_max,
+                    )
+                    pan_bias = touch_x * random.uniform(2.5, 4.5) + random.uniform(-3.5, 3.5)
+                    self._screen_glance_pan_target = clamp(
+                        self.pan_center + self.pan_sign * pan_bias,
+                        self.pan_min,
+                        self.pan_max,
+                    )
+                    self._screen_glance_smooth_hz = random.uniform(2.6, 3.8)
+                    self._screen_glance_until = now + random.uniform(0.65, 1.35)
+                elif abs(self._pan - self.pan_center) > 12.0:
+                    # Subtle forward attention shift even when skipping full downward dip
+                    self._wander.pan_goal = clamp(
+                        self.pan_center + random.uniform(-5.0, 5.0),
+                        self.pan_min,
+                        self.pan_max,
+                    )
+        return now < self._screen_glance_until
+
     def _trigger_expressive_perk(
         self,
         now: float,
@@ -511,9 +554,11 @@ class ServoLoop:
         sp_state = self.bb.read(
             "face_candidates", "face_count", "face_detected",
             "face_norm_x", "face_norm_y", "amplitude_fast",
+            "screen_content_ts",
         )
         candidates = sp_state.get("face_candidates") or []
         amp_fast = float(sp_state.get("amplitude_fast", 0.0) or 0.0)
+        screen_content_ts = float(sp_state.get("screen_content_ts", 0.0) or 0.0)
 
         # On first entry, anchor both pan AND tilt to wherever the head currently is
         # (so looking up at a user's face stays aimed at their face while talking!).
@@ -529,14 +574,30 @@ class ServoLoop:
                 self.tilt_min + 4.0,
                 self.tilt_max - 4.0,
             )
-            self._speaking_drift_pan_target = self._speaking_drift_pan_start
-            # Start speech with an expressive upward head perk (+2.8° mechanical up)
-            self._speaking_drift_tilt_target = clamp(
-                self._speaking_drift_tilt_start + self.tilt_sign * 2.8,
-                self.tilt_min,
-                self.tilt_max,
-            )
-            self._speaking_drift_hold_until = now + random.uniform(0.65, 1.15)
+            # If important content was just shown on screen, ~62% chance to briefly glance down
+            # at the screen during the opening phrase before lifting gaze back to the visitor.
+            if (now - screen_content_ts) < 2.5 and random.random() < 0.62:
+                down_deg = random.uniform(6.5, 11.5)
+                self._speaking_drift_pan_target = clamp(
+                    self.pan_center + random.uniform(-4.0, 4.0),
+                    self.pan_min,
+                    self.pan_max,
+                )
+                self._speaking_drift_tilt_target = clamp(
+                    max(self.tilt_center, self._speaking_drift_tilt_start) - self.tilt_sign * down_deg,
+                    self.tilt_min,
+                    self.tilt_max,
+                )
+                self._speaking_drift_hold_until = now + random.uniform(0.60, 1.05)
+            else:
+                self._speaking_drift_pan_target = self._speaking_drift_pan_start
+                # Start speech with an expressive upward head perk (+2.8° mechanical up)
+                self._speaking_drift_tilt_target = clamp(
+                    self._speaking_drift_tilt_start + self.tilt_sign * 2.8,
+                    self.tilt_min,
+                    self.tilt_max,
+                )
+                self._speaking_drift_hold_until = now + random.uniform(0.65, 1.15)
             self._speaking_audience_idx = 0
             self._speaking_phrase_step = 0
             self._speaking_cadence_phase = 0.0
@@ -1620,6 +1681,7 @@ class ServoLoop:
             camera_world_yaw = base_only_yaw + self._pan_mech_offset()
 
             # ── Speaking drift: expressive head motion while talking (including greetings) ──
+            screen_glancing = self._maybe_trigger_screen_glance(now)
             sp_st = self.bb.read("conv_state", "agent_speaking")
             agent_speaking = sp_st["conv_state"] == "speaking" or bool(sp_st["agent_speaking"])
             if agent_speaking:
@@ -1639,6 +1701,35 @@ class ServoLoop:
                     self._pan_pid.reset()
                     self._tilt_pid.reset()
                 self._speaking_drift_active = False
+
+            if screen_glancing:
+                self._pan = smooth_toward(
+                    self._pan,
+                    self._screen_glance_pan_target,
+                    dt,
+                    smooth_hz=self._screen_glance_smooth_hz,
+                    lo=self.pan_min,
+                    hi=self.pan_max,
+                )
+                self._tilt = smooth_toward(
+                    self._tilt,
+                    self._screen_glance_tilt_target,
+                    dt,
+                    smooth_hz=self._screen_glance_smooth_hz * 1.15,
+                    lo=self.tilt_min,
+                    hi=self.tilt_max,
+                )
+                self._wander.pan_goal = self._pan
+                self._wander.tilt_goal = self._tilt
+                self._pan_pid.soften(0.35)
+                self._tilt_pid.soften(0.35)
+                self.bb.write(
+                    servo_pan=self._pan,
+                    servo_tilt=self._tilt,
+                    servo_mode=self._mode,
+                )
+                self._loop_sleep()
+                continue
 
             self._update_off_forward_timer(now, camera_world_yaw, tracking_face=tracking_face)
             self._maybe_start_forward_return(now, camera_world_yaw, tracking_face=tracking_face)

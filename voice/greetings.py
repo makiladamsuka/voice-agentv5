@@ -214,3 +214,17 @@ def generate_random_face_greeting(
     else:
         pool.extend(["Hey! You're up late!", "Hi! Working late?"])
     return _choose_non_repeating(pool, "single")
+
+
+DWELL_STALL_PROMPTS: List[str] = [
+    "Have you visited the 2nd floor yet? There are great Software and Research projects down there!",
+    "By the way, don't miss the Software and Research project stalls down on the 2nd floor!",
+    "Wondering what to watch? Check out the Software and Research projects on Floor 2, or ask me what to see!",
+    "Have you explored the 2nd floor Software and Research stalls or the 3rd floor Game Zone yet?",
+    "Right here on the 4th floor we have Level 1 and Company stalls, plus Software and Research projects on Floor 2!",
+]
+
+
+def generate_dwell_stall_prompt() -> str:
+    """Short proactive prompt when a visitor stands in front of the robot silently for a while."""
+    return _choose_non_repeating(DWELL_STALL_PROMPTS, "dwell_stall")

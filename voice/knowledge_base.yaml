@@ -2,17 +2,132 @@
 # Knowledge Base — University of Moratuwa / Faculty of IT / FIT EXPO 2026
 # ============================================================
 # Each entry is one "topic" the robot can answer.
-#
-# FIELDS:
-#   topic        : unique ID (no spaces, use underscores)
-#   button_label : clean label used for UI suggestion / ambiguity buttons
-#   aliases      : phrases a visitor might say to ask about this topic
-#   reply        : primary spoken reply (1-2 natural sentences)
-#   replies      : additional randomized reply variations so the robot sounds natural
+# All replies are kept compact (1-2 short sentences) for fast speech and kiosk display.
 #
 # After editing this file run:
 #   python voice/compiler/knowledge_compiler.py
 # ============================================================
+
+- topic: what_to_watch
+  button_label: What to Watch at FIT EXPO
+  aliases:
+    - what to watch
+    - what can I watch
+    - what should I watch
+    - what should I see
+    - what can I see
+    - what can I see at FIT EXPO
+    - what to see
+    - what to explore
+    - what to explore here
+    - recommend something to watch
+    - recommend something to see
+    - what are the highlights
+    - what stalls are here
+    - what stalls are available
+    - what is on display
+    - exhibition stalls
+    - what projects are here
+  reply: >
+    Visit Level 1 and Company stalls here on Floor 4, the 3rd floor Game Zone, and 2nd floor Software and Research projects!
+  replies:
+    - "Visit Level 1 and Company stalls here on Floor 4, the 3rd floor Game Zone, and 2nd floor Software and Research projects!"
+    - "Check out Level 1 and Student projects here on Floor 4, or head down to Floor 2 for Software and Research projects!"
+    - "Explore Company stalls here on Floor 4, the 3rd floor Game Zone, 2nd floor Software and Research projects, and 1st floor Photo Booth!"
+
+- topic: robot_current_floor
+  button_label: What Floor Are We On?
+  aliases:
+    - what floor is this
+    - which floor is this
+    - what floor are we on
+    - which floor are we on
+    - what floor are you on
+    - where am I
+    - where are you stationed
+    - current floor
+    - which floor am I on
+  reply: >
+    You are on the 4th floor! There are other halls here for Level 1 and Student projects, Company stalls in the Lunch Area, and the Auditorium.
+  replies:
+    - "You are on the 4th floor! There are other halls here for Level 1 and Student projects, Company stalls in the Lunch Area, and the Auditorium."
+    - "You are on the 4th floor with me! Visit the other halls on this floor for Level 1 projects, Student projects, and Company stalls."
+
+- topic: floor_2_projects
+  button_label: "2nd Floor: Software & Research"
+  aliases:
+    - 2nd floor
+    - second floor
+    - what is on the 2nd floor
+    - what is on the second floor
+    - what is on floor 2
+    - second floor stalls
+    - 2nd floor stalls
+    - software projects
+    - research projects
+    - software and research projects
+    - where are software projects
+    - where are research projects
+    - floor 2 projects
+  reply: >
+    You are on the 4th floor. Go down two floors to the 2nd floor for the Software Projects and Research Projects halls!
+  replies:
+    - "You are on the 4th floor. Go down two floors to the 2nd floor for the Software Projects and Research Projects halls!"
+    - "The 2nd floor hosts Software Projects and Research Projects across three halls, two floors down from here!"
+
+- topic: floor_3_game_zone
+  button_label: "3rd Floor: Game Zone"
+  aliases:
+    - 3rd floor
+    - third floor
+    - what is on the 3rd floor
+    - what is on the third floor
+    - what is on floor 3
+    - third floor stalls
+    - 3rd floor stalls
+    - floor 3 stalls
+    - what games are there
+    - where can I play games
+  reply: >
+    You are on the 4th floor. Go down one floor to the 3rd floor for the Game Zone halls near Lab 3 and FYP Lab!
+  replies:
+    - "You are on the 4th floor. Go down one floor to the 3rd floor for the Game Zone halls near Lab 3 and FYP Lab!"
+    - "The 3rd floor hosts the Game Zone with three gaming stalls just one floor down from here!"
+
+- topic: floor_4_stalls
+  button_label: "4th Floor: Stalls Here"
+  aliases:
+    - 4th floor
+    - fourth floor
+    - what is on the 4th floor
+    - what is on the fourth floor
+    - what is on floor 4
+    - what is on this floor
+    - stalls on this floor
+    - 4th floor stalls
+    - fourth floor stalls
+  reply: >
+    You are on the 4th floor! Visit the halls on this floor for Level 1 projects, Student projects, the Auditorium, and Company stalls in the Lunch Area.
+  replies:
+    - "You are on the 4th floor! Visit the halls on this floor for Level 1 projects, Student projects, the Auditorium, and Company stalls in the Lunch Area."
+    - "Right here on the 4th floor, there are halls for Level 1 projects, Student projects near Lab 6, and Company stalls in the Lunch Area!"
+
+- topic: floor_1_stalls
+  button_label: "1st Floor: Photo Booth & More"
+  aliases:
+    - 1st floor
+    - first floor
+    - what is on the 1st floor
+    - what is on the first floor
+    - what is on floor 1
+    - first floor stalls
+    - 1st floor stalls
+    - ground floor stalls
+  reply: >
+    You are on the 4th floor. Go down to the 1st floor for the Photo Booth, Historical Instrument stall, and Level 2 and 4 projects!
+  replies:
+    - "You are on the 4th floor. Go down to the 1st floor for the Photo Booth, Historical Instrument stall, and Level 2 and 4 projects!"
+    - "Down on the 1st floor, you can visit the Photo Booth, Historical Instrument hall, and Level 2 and 4 projects near Lab 1!"
 
 - topic: fit_expo_2026
   button_label: What is FIT EXPO 2026?
@@ -37,15 +152,11 @@
     - FIT EXPO second time
     - why are we celebrating FIT EXPO
   reply: >
-    Welcome to FIT EXPO 2026, the flagship technology exhibition of the Faculty
-    of Information Technology at the University of Moratuwa! We are proudly
-    hosting FIT EXPO for the second time in history, celebrating the 25th
-    anniversary of our faculty.
+    Welcome to FIT EXPO 2026, the flagship tech exhibition of the Faculty of IT at the University of Moratuwa, celebrating our 25th anniversary!
   replies:
-    - "Welcome to FIT EXPO 2026, the flagship technology exhibition of the Faculty of Information Technology at the University of Moratuwa! We are proudly hosting FIT EXPO for the second time in history, celebrating the 25th anniversary of our faculty."
-    - "This is FIT EXPO 2026, organized for the second time by the Faculty of IT at the University of Moratuwa to celebrate our 25th anniversary! It showcases cutting-edge student projects, AI and robotics innovations, and industry stalls."
-    - "FIT EXPO 2026 is the grand exhibition of the Faculty of Information Technology at the University of Moratuwa. Held for the second time ever, this edition marks the milestone 25th anniversary of the faculty!"
-    - "You are at FIT EXPO 2026! This is the second time the Faculty of IT at the University of Moratuwa is hosting this exhibition, right alongside our special 25th anniversary celebrations."
+    - "Welcome to FIT EXPO 2026, the flagship tech exhibition of the Faculty of IT at the University of Moratuwa, celebrating our 25th anniversary!"
+    - "This is FIT EXPO 2026, held by the Faculty of IT to celebrate our 25th anniversary with student, software, and research projects!"
+    - "You are at FIT EXPO 2026! It showcases student projects, company stalls, and interactive tech zones across all four floors."
 
 - topic: fit_25th_anniversary
   button_label: 25th Anniversary of FIT
@@ -63,13 +174,10 @@
     - how old is the faculty of IT
     - 25 year celebration
   reply: >
-    Established in 2001, the Faculty of Information Technology at the University
-    of Moratuwa is proudly celebrating its 25th anniversary in 2026! FIT EXPO
-    2026 is a centerpiece of our Silver Jubilee celebrations.
+    Founded in 2001, the Faculty of Information Technology is proudly celebrating its 25th Silver Jubilee anniversary in 2026!
   replies:
-    - "Established in 2001, the Faculty of Information Technology at the University of Moratuwa is proudly celebrating its 25th anniversary in 2026! FIT EXPO 2026 is a centerpiece of our Silver Jubilee celebrations."
-    - "We are celebrating 25 wonderful years of the Faculty of Information Technology at the University of Moratuwa! From 2001 to 2026, our faculty has led Sri Lanka in IT education and innovation."
-    - "This year marks the 25th anniversary, or Silver Jubilee, of the Faculty of IT at the University of Moratuwa! We are celebrating a quarter-century of excellence with the second edition of FIT EXPO 2026."
+    - "Founded in 2001, the Faculty of Information Technology is proudly celebrating its 25th Silver Jubilee anniversary in 2026!"
+    - "We are celebrating 25 years of the Faculty of IT at the University of Moratuwa, leading IT and AI education since 2001!"
 
 - topic: team_nema
   button_label: Tell me about Team Nema
@@ -88,14 +196,10 @@
     - who is behind Nema
     - why are you called Nema
   reply: >
-    I was designed and built by Team Nema, a dedicated team of Artificial
-    Intelligence undergraduates from the Faculty of Information Technology at
-    the University of Moratuwa, specially for FIT EXPO 2026!
+    I was built by Team Nema, a team of AI undergraduates from the Faculty of IT for FIT EXPO 2026!
   replies:
-    - "I was designed and built by Team Nema, a dedicated team of AI undergraduates from the Faculty of Information Technology at the University of Moratuwa, specially for FIT EXPO 2026!"
-    - "We are Team Nema, a group of Artificial Intelligence undergraduates from the Faculty of IT at the University of Moratuwa! My creators built me to welcome visitors, answer your questions, and guide you through FIT EXPO 2026."
-    - "Team Nema is a group of AI undergraduates from the Faculty of Information Technology at the University of Moratuwa who brought me to life for our 25th anniversary and FIT EXPO 2026!"
-    - "I'm proud to say I was created by Team Nema, a team of AI undergraduates right here at the Faculty of IT, University of Moratuwa, to be your interactive companion at FIT EXPO 2026!"
+    - "I was built by Team Nema, a team of AI undergraduates from the Faculty of IT for FIT EXPO 2026!"
+    - "Team Nema is a group of Artificial Intelligence undergraduates at the Faculty of IT who created me to guide you today!"
 
 - topic: about_nema_robot
   button_label: How does Nema work?
@@ -110,37 +214,10 @@
     - what sensors do you have
     - tell me about yourself
   reply: >
-    I am Nema, an interactive guide robot built by Team Nema! I use computer
-    vision to recognize and track faces, animated eyes to show emotions,
-    robotic arms to wave, and AI voice recognition to answer questions and guide
-    you around the building.
+    I am Nema! I use face tracking, expressive eyes, gesturing arms, and voice AI to guide you from here on Floor 4.
   replies:
-    - "I am Nema, an interactive guide robot built by Team Nema! I use computer vision to recognize and track faces, animated eyes to show emotions, robotic arms to wave, and AI voice recognition to answer questions and guide you around the building."
-    - "Team Nema equipped me with real-time face tracking, expressive digital eyes, gesturing arms, and an AI voice brain so I can chat with you and show directions across all floors of the Faculty of IT!"
-    - "I work by combining a camera for face detection, servo-driven arms and head motion, and fast speech AI. Team Nema built me here at the Faculty of IT to make your FIT EXPO 2026 visit unforgettable!"
-
-- topic: fit_expo_projects
-  button_label: What can I see at FIT EXPO?
-  aliases:
-    - what can I see at FIT EXPO
-    - what is on display
-    - exhibition stalls
-    - student projects
-    - what projects are here
-    - what stalls are available
-    - what is happening at the expo
-    - what to explore here
-    - what competitions are there
-    - are there any competitions or workshops
-    - exhibition events and stalls
-  reply: >
-    At FIT EXPO 2026, you can explore innovative student projects in Artificial
-    Intelligence, Robotics, IoT, and Software Engineering, along with interactive
-    tech zones, competitions, and industry stalls across our faculty floors!
-  replies:
-    - "At FIT EXPO 2026, you can explore innovative student projects in Artificial Intelligence, Robotics, IoT, and Software Engineering, along with interactive tech zones, competitions, and industry stalls across our faculty floors!"
-    - "There is so much to see! Across the floors of the Faculty of IT, you'll find student hardware and software showcases, AI and robotics demos like me, research labs, and industry exhibition stalls."
-    - "You can check out cutting-edge final-year and undergraduate inventions, AI and robotics demonstrations, interactive games, and tech stalls celebrating 25 years of the Faculty of IT!"
+    - "I am Nema! I use face tracking, expressive eyes, gesturing arms, and voice AI to guide you from here on Floor 4."
+    - "Team Nema equipped me with real-time face tracking, animated eyes, robotic arms, and voice AI to guide you around FIT EXPO!"
 
 - topic: faculty_of_it
   button_label: About Faculty of IT
@@ -155,14 +232,10 @@
     - what is this faculty
     - about faculty of it
   reply: >
-    The Faculty of Information Technology, or FIT, at the University of Moratuwa
-    is one of Sri Lanka's premier IT faculties. Established in 2001 and now
-    celebrating its 25th anniversary, it offers top-tier degree programs in IT,
-    Management, and Artificial Intelligence.
+    Established in 2001, the Faculty of IT at the University of Moratuwa offers top Honours degrees in IT, Management, and Artificial Intelligence.
   replies:
-    - "The Faculty of Information Technology, or FIT, at the University of Moratuwa is one of Sri Lanka's premier IT faculties. Established in 2001 and now celebrating its 25th anniversary, it offers top-tier degree programs in IT, Management, and Artificial Intelligence."
-    - "We are the Faculty of Information Technology at the University of Moratuwa! Founded in 2001, we are celebrating 25 years of shaping Sri Lanka's best software engineers, AI specialists, and tech leaders."
-    - "The Faculty of IT at the University of Moratuwa is home to three academic departments and world-class laboratories, proudly celebrating its 25th anniversary during FIT EXPO 2026!"
+    - "Established in 2001, the Faculty of IT at the University of Moratuwa offers top Honours degrees in IT, Management, and Artificial Intelligence."
+    - "The Faculty of IT is home to three departments across four floors, celebrating 25 years of shaping Sri Lanka's tech and AI leaders!"
 
 - topic: fit_departments
   button_label: Departments in FIT
@@ -171,16 +244,11 @@
     - what departments are in FIT
     - how many departments in faculty of IT
     - departments of faculty of IT
-    - department of information technology
-    - department of computational mathematics
-    - department of interdisciplinary studies
   reply: >
-    The Faculty of Information Technology has three academic departments, namely
-    the Department of Information Technology, the Department of Computational
-    Mathematics, and the Department of Interdisciplinary Studies.
+    FIT has three departments: Information Technology on Floor 1, Computational Mathematics on Floor 2, and Interdisciplinary Studies on Floor 3.
   replies:
-    - "The Faculty of Information Technology has three academic departments, namely the Department of Information Technology, the Department of Computational Mathematics, and the Department of Interdisciplinary Studies."
-    - "FIT is organized into three departments—Information Technology, Computational Mathematics, and Interdisciplinary Studies—working together to deliver our IT, ITM, and AI degree programs."
+    - "FIT has three departments: Information Technology on Floor 1, Computational Mathematics on Floor 2, and Interdisciplinary Studies on Floor 3."
+    - "Our three departments are Information Technology (1st floor), Computational Mathematics (2nd floor), and Interdisciplinary Studies (3rd floor)."
 
 - topic: university_overview
   button_label: About University of Moratuwa
@@ -196,14 +264,10 @@
     - where are we
     - what place is this
   reply: >
-    We are at the University of Moratuwa, Sri Lanka's leading technological
-    university, located in Katubedda, Moratuwa. Founded in 1972, it is renowned
-    for excellence in Information Technology, Engineering, Architecture,
-    Business, and Medicine.
+    We are at the University of Moratuwa in Katubedda, Sri Lanka's leading technological university for IT, Engineering, and Architecture.
   replies:
-    - "We are at the University of Moratuwa, Sri Lanka's leading technological university, located in Katubedda, Moratuwa. Founded in 1972, it is renowned for excellence in Information Technology, Engineering, Architecture, Business, and Medicine."
-    - "The University of Moratuwa, or UoM, is Sri Lanka's premier technical university in Katubedda, famous for producing top innovators and engineers across IT, Engineering, and Architecture."
-    - "You are visiting the University of Moratuwa in Katubedda! Established as a university in 1972, it is widely recognized as the top technological university in Sri Lanka."
+    - "We are at the University of Moratuwa in Katubedda, Sri Lanka's leading technological university for IT, Engineering, and Architecture."
+    - "You are at the University of Moratuwa, founded in 1972 in Katubedda and renowned for top innovation in IT and Engineering."
 
 - topic: undergraduate_programs
   button_label: Undergraduate Degree Programs
@@ -221,13 +285,10 @@
     - BSc in AI
     - ITM degree
   reply: >
-    The Faculty of IT offers three four-year BSc Honours degree programs in
-    Information Technology, Information Technology and Management, and
-    Artificial Intelligence.
+    FIT offers three four-year BSc Honours degrees: Information Technology, IT and Management, and Artificial Intelligence.
   replies:
-    - "The Faculty of IT offers three four-year BSc Honours degree programs in Information Technology, Information Technology and Management, and Artificial Intelligence."
-    - "Undergraduates at FIT can pursue a BSc Honours in Information Technology, a BSc Honours in IT and Management, or a specialized BSc Honours in Artificial Intelligence, including a six-month industry internship."
-    - "We offer three specialized four-year honours degrees at FIT, covering Information Technology, IT and Management, and Artificial Intelligence."
+    - "FIT offers three four-year BSc Honours degrees: Information Technology, IT and Management, and Artificial Intelligence."
+    - "Undergraduates can study BSc Honours in IT, IT and Management, or Artificial Intelligence, including a six-month industry internship."
 
 - topic: postgraduate_programs
   button_label: Postgraduate Programs
@@ -240,11 +301,9 @@
     - postgrad
     - higher studies
   reply: >
-    FIT offers postgraduate MSc programs in Information Technology, Artificial
-    Intelligence, and Data Science, along with MPhil and PhD research degrees.
+    FIT offers postgraduate MSc degrees in IT, Artificial Intelligence, and Data Science, plus MPhil and PhD research programs.
   replies:
-    - "FIT offers postgraduate MSc programs in Information Technology, Artificial Intelligence, and Data Science, along with MPhil and PhD research degrees."
-    - "For higher studies, our Postgraduate Division offers Masters, MPhil, and PhD programs in IT, AI, and computing research for industry professionals and researchers."
+    - "FIT offers postgraduate MSc degrees in IT, Artificial Intelligence, and Data Science, plus MPhil and PhD research programs."
 
 - topic: admission
   button_label: How to Apply to FIT
@@ -258,12 +317,9 @@
     - how to get in
     - eligibility
   reply: >
-    Undergraduate admission to the Faculty of IT is based on Sri Lankan G.C.E.
-    Advanced Level results and the Z-score system managed by the University
-    Grants Commission.
+    Undergraduate admission to the Faculty of IT is based on Sri Lankan G.C.E. A/L results and the UGC Z-score system.
   replies:
-    - "Undergraduate admission to the Faculty of IT is based on Sri Lankan G.C.E. Advanced Level results and the Z-score system managed by the University Grants Commission."
-    - "Students enter FIT's BSc Honours programs in IT, ITM, and AI through the UGC university admission process based on their A/L Z-scores."
+    - "Undergraduate admission to the Faculty of IT is based on Sri Lankan G.C.E. A/L results and the UGC Z-score system."
 
 - topic: location
   button_label: University Location
@@ -275,11 +331,9 @@
     - location of UOM
     - where is UOM located
   reply: >
-    The University of Moratuwa is located on Bandaranayake Mawatha in Katubedda,
-    Moratuwa, about 18 kilometres south of Colombo along the Galle Road.
+    The University of Moratuwa is on Bandaranayake Mawatha in Katubedda, Moratuwa, about 18 kilometres south of Colombo.
   replies:
-    - "The University of Moratuwa is located on Bandaranayake Mawatha in Katubedda, Moratuwa, about 18 kilometres south of Colombo along the Galle Road."
-    - "We are right here in Katubedda, Moratuwa, on the scenic shores of the Bolgoda Lake, easily reachable via Galle Road or the Moratuwa railway station."
+    - "The University of Moratuwa is on Bandaranayake Mawatha in Katubedda, Moratuwa, about 18 kilometres south of Colombo."
 
 - topic: contact
   button_label: Contact Details
@@ -292,11 +346,9 @@
     - university email
     - website
   reply: >
-    You can reach the University of Moratuwa main office at 011 265 0301, or
-    visit www.mrt.ac.lk to learn more about the Faculty of IT and our programs.
+    You can reach the University of Moratuwa at 011 265 0301 or visit www.mrt.ac.lk for more information.
   replies:
-    - "You can reach the University of Moratuwa main office at 011 265 0301, or visit www.mrt.ac.lk to learn more about the Faculty of IT and our programs."
-    - "For more information, visit our official website at www.mrt.ac.lk or call the university general line on 011 265 0301."
+    - "You can reach the University of Moratuwa at 011 265 0301 or visit www.mrt.ac.lk for more information."
 
 - topic: history
   button_label: History of UoM & FIT
@@ -309,30 +361,23 @@
     - when was FIT established
     - founding of UOM
   reply: >
-    The University of Moratuwa became a full university in 1972, tracing its
-    roots to 1966. The Faculty of Information Technology was established in June
-    2001, and we are celebrating its 25th anniversary here in 2026!
+    The University of Moratuwa was founded in 1972, and the Faculty of IT started in 2001—celebrating 25 years in 2026!
   replies:
-    - "The University of Moratuwa became a full university in 1972, tracing its roots to 1966. The Faculty of Information Technology was established in June 2001, and we are celebrating its 25th anniversary here in 2026!"
-    - "Founded in 1972, the University of Moratuwa launched the Faculty of Information Technology in 2001 to meet Sri Lanka's growing need for IT professionals—meaning 2026 is our 25th anniversary!"
+    - "The University of Moratuwa was founded in 1972, and the Faculty of IT started in 2001—celebrating 25 years in 2026!"
 
 - topic: research
   button_label: Research & Laboratories
   aliases:
     - research at UOM
     - research & laboratories
-    - research projects
     - research centers
     - what research is done here
     - academic research
     - what labs are in FIT
   reply: >
-    The Faculty of IT conducts cutting-edge research in Artificial Intelligence,
-    Computer Vision, High Performance Computing, Embedded Systems, and
-    Multimedia across dedicated research laboratories in this building.
+    Right here on the 4th floor we have the AI, PG Research, Hardware, and Embedded Systems labs, plus Research Project stalls on Floor 2!
   replies:
-    - "The Faculty of IT conducts cutting-edge research in Artificial Intelligence, Computer Vision, High Performance Computing, Embedded Systems, and Multimedia across dedicated research laboratories in this building."
-    - "Our faculty features specialized labs including the AI Research Lab, High Performance Computer Lab, Multimedia Research Lab, Embedded Systems Lab, and DE Lab, driving innovation across Sri Lanka."
+    - "Right here on the 4th floor we have the AI, PG Research, Hardware, and Embedded Systems labs, plus Research Project stalls on Floor 2!"
 
 - topic: library
   button_label: University Library Info
@@ -344,15 +389,12 @@
     - tell me about the library
     - library
   reply: >
-    The main University of Moratuwa library is open on weekdays from 8:00 AM to
-    8:00 PM, offering a rich collection of technical books, digital journals,
-    and study spaces.
+    The main university library is open on weekdays from 8:00 AM to 8:00 PM with books, digital journals, and study spaces.
   replies:
-    - "The main University of Moratuwa library is open on weekdays from 8:00 AM to 8:00 PM, offering a rich collection of technical books, digital journals, and study spaces."
-    - "Our university library provides quiet study areas and extensive digital and print resources for IT and engineering students from 8:00 AM to 8:00 PM on weekdays."
+    - "The main university library is open on weekdays from 8:00 AM to 8:00 PM with books, digital journals, and study spaces."
 
 - topic: canteen
-  button_label: Campus Canteens & Food
+  button_label: Lunch Area & Canteens
   aliases:
     - where to eat
     - campus canteens & food
@@ -362,11 +404,9 @@
     - where can I get food
     - refreshments
   reply: >
-    There are several campus canteens near the main quadrangle and faculty
-    buildings serving snacks, meals, and beverages throughout FIT EXPO 2026!
+    There is a Lunch Area right here on the 4th floor along the central corridor, plus campus canteens on the ground level!
   replies:
-    - "There are several campus canteens near the main quadrangle and faculty buildings serving snacks, meals, and beverages throughout FIT EXPO 2026!"
-    - "Looking for refreshments? You can visit the campus canteens and food stalls located on the ground level near the quadrangle for meals, snacks, and drinks."
+    - "There is a Lunch Area right here on the 4th floor along the central corridor, plus campus canteens on the ground level!"
 
 - topic: general_ai_robotics
   button_label: What is AI and Robotics?
@@ -379,10 +419,6 @@
     - explain artificial intelligence
     - will AI replace humans
   reply: >
-    Artificial Intelligence allows computers and robots like me to see,
-    understand speech, learn from data, and help people! Here at the Faculty of
-    IT, we even offer a dedicated BSc Honours degree in Artificial Intelligence.
+    AI lets robots like me see, understand speech, and help people! FIT even offers a dedicated BSc Honours degree in Artificial Intelligence.
   replies:
-    - "Artificial Intelligence allows computers and robots like me to see, understand speech, learn from data, and help people! Here at the Faculty of IT, we even offer a dedicated BSc Honours degree in Artificial Intelligence."
-    - "AI and robotics combine smart software with physical machines to assist humans—just like how Team Nema built me to greet and guide you at FIT EXPO 2026!"
-    - "Artificial Intelligence is the science of making machines think and learn, while robotics gives AI a physical body to interact with the real world."
+    - "AI lets robots like me see, understand speech, and help people! FIT even offers a dedicated BSc Honours degree in Artificial Intelligence."

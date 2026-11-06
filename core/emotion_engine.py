@@ -94,6 +94,10 @@ class EmotionEngine:
         self._thinking_glance_until = 0.0
         self._thinking_glance_emotion = "thinking"
         self._waiting_start_ts = 0.0
+        self._last_screen_touch_seq = 0
+        self._screen_touch_emotion_until = 0.0
+        self._screen_touch_cooldown_until = 0.0
+        self._screen_touch_emotion = "curious"
 
     def _set(self, name: str, intensity_scale: float = 1.0) -> None:
         resolved = resolve_emotion_name(name)
@@ -137,6 +141,7 @@ class EmotionEngine:
                 "face_count",
                 "track_kind",
                 "servo_mode",
+                "screen_touch_seq",
             )
             # ── optimize/cpu2: yield to AnimationEngine when active ──────────
             if state.get("animation_override", False):
@@ -146,6 +151,29 @@ class EmotionEngine:
             manual = state["manual_emotion"]
             if manual is not None:
                 self._set(manual)
+                time.sleep(loop_delay)
+                continue
+
+            # ── Screen touch eye reaction (wakes from sleepy/idle with organic expression) ─
+            touch_seq = int(state.get("screen_touch_seq", 0) or 0)
+            if touch_seq > self._last_screen_touch_seq:
+                self._last_screen_touch_seq = touch_seq
+                self._waiting_start_ts = now  # wake up immediately if waiting/drowsy
+                if now >= self._screen_touch_cooldown_until and random.random() < 0.78:
+                    self._screen_touch_cooldown_until = now + random.uniform(4.5, 8.0)
+                    if self._current in ("sleepy", "bored"):
+                        pool = ["surprised", "curious", "attentive", "happy"]
+                    else:
+                        pool = ["curious", "curious", "attentive", "attentive", "engaged", "happy"]
+                    self._screen_touch_emotion = random.choice(pool)
+                    self._screen_touch_emotion_until = now + random.uniform(1.2, 2.3)
+
+            if (
+                now < self._screen_touch_emotion_until
+                and state.get("conv_state") not in ("thinking", "speaking")
+                and not state.get("user_speaking", False)
+            ):
+                self._set(self._screen_touch_emotion)
                 time.sleep(loop_delay)
                 continue
 

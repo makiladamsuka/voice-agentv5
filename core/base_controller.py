@@ -248,6 +248,8 @@ class BaseController:
         self._sustained_sign = 0.0
         self._last_sustained_ts = 0.0
         self._last_tune_seq = 0
+        self._last_screen_touch_seq = 0
+        self._screen_recenter_cooldown_until = 0.0
         self._last_prox_ts = 0.0
         self._prox_turn_timestamps: list[float] = []
         self._last_base_motion_done_ts = 0.0
@@ -583,6 +585,12 @@ class BaseController:
         enc = state["base_encoder_deg"]
         pan = state["servo_pan"]
         wander_moving = state.get("wander_moving", False)
+
+        # Do not wander-spin away while a visitor is actively touching/reading the screen
+        screen_touch_ts = float(state.get("screen_touch_ts", 0.0) or 0.0)
+        if screen_touch_ts > 0.0 and (now - screen_touch_ts) < 8.0:
+            self._was_wander_moving = wander_moving
+            return None, "", 0.0
 
         if (now - self._last_nudge_ts) < self.cooldown_sec:
             self._was_wander_moving = wander_moving
@@ -921,6 +929,48 @@ class BaseController:
         comp_pan = 0.0 if self.prox_investigate_enabled else self._comp_pan_for_step(step, pan, self.prox_comp_gain)
         return step, "prox_revisit", comp_pan
 
+    def _plan_screen_touch_recenter(
+        self, now: float, state: dict,
+    ) -> tuple[Optional[float], str, float]:
+        """When someone touches the front screen and the base is rotated away,
+        probabilistically step back toward forward/center so the body faces the user."""
+        touch_seq = int(state.get("screen_touch_seq", 0) or 0)
+        if touch_seq == self._last_screen_touch_seq:
+            return None, "", 0.0
+        self._last_screen_touch_seq = touch_seq
+
+        if now < self._screen_recenter_cooldown_until:
+            return None, "", 0.0
+        if state.get("tof_too_close_safety", False):
+            return None, "", 0.0
+        # If tracking a strongly off-center face, let normal face tracking govern base yaw
+        if state.get("face_detected", False) and abs(float(state.get("face_norm_x", 0.0) or 0.0)) >= 0.25:
+            return None, "", 0.0
+
+        enc = float(state.get("base_encoder_deg", 0.0) or 0.0)
+        if abs(enc) < 14.0:
+            return None, "", 0.0
+
+        self._screen_recenter_cooldown_until = now + random.uniform(8.0, 13.0)
+        if random.random() > 0.65:
+            return None, "", 0.0
+
+        max_recenter = max(self.max_step * 2.2, 6.0)
+        desired_step = clamp(-enc * random.uniform(0.45, 0.72), -max_recenter, max_recenter)
+        pan = state["servo_pan"]
+        step = self._apply_gate(
+            desired_step,
+            pan,
+            enc,
+            state,
+            require_head_lead=False,
+            max_step_override=max_recenter,
+        )
+        if abs(step) < self.min_step:
+            return None, "", 0.0
+        comp_pan = self._comp_pan_for_step(step, pan, self.track_comp_gain * 0.6)
+        return step, "screen_touch_recenter", comp_pan
+
     def _check_config_reload(self) -> None:
         try:
             if not self.config_path.exists():
@@ -988,6 +1038,7 @@ class BaseController:
                 "prox_verified_priority_yaw",
                 "tof_surrounded", "tof_too_close_safety",
                 "voice_session_active", "user_speaking", "agent_speaking",
+                "screen_touch_ts", "screen_touch_seq", "screen_content_ts",
             )
 
             pan_offset = self._head_pan_offset(state["servo_pan"])
@@ -1054,7 +1105,9 @@ class BaseController:
                 state.get("hand_detected", False) and state.get("track_kind") == "hand"
             )
 
-            if mode == "track" and tracking_active:
+            step, source, comp_pan = self._plan_screen_touch_recenter(now, state)
+
+            if step is None and mode == "track" and tracking_active:
                 step, source, comp_pan = self._plan_track_step(now, state)
             elif mode == "track":
                 step, source, comp_pan = self._plan_body_step(now, state)

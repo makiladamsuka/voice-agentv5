@@ -130,6 +130,13 @@ class ArmController:
         # Wander arm state
         self.pan_center = float(_cfg(cfg, "servo", "pan_center", default=100.0))
 
+        # Screen touch / content presentation micro-gesture state
+        self._last_screen_touch_seq = 0
+        self._last_screen_content_ts = 0.0
+        self._screen_gesture_until = 0.0
+        self._screen_gesture_cooldown_until = 0.0
+        self._screen_gesture_offsets = [0.0, 0.0, 0.0, 0.0]
+
         self._publish_pose(self._home)
 
     def _publish_pose(self, pose: tuple[float, float, float, float]) -> None:
@@ -326,11 +333,15 @@ class ArmController:
                 "base_last_spin_moved_deg",
                 "servo_pan",
                 "servo_mode",
+                "screen_touch_seq",
+                "screen_content_ts",
             )
             busy = bool(state.get("base_motion_busy", False))
             step_deg = float(state.get("base_step_deg", 0.0))
             servo_pan = float(state.get("servo_pan", self.pan_center))
             servo_mode = str(state.get("servo_mode", ""))
+            screen_touch_seq = int(state.get("screen_touch_seq", 0) or 0)
+            screen_content_ts = float(state.get("screen_content_ts", 0.0) or 0.0)
 
             if busy and not self._was_busy:
                 self._pending_step_deg = step_deg
@@ -340,7 +351,38 @@ class ArmController:
                 if moved >= self.min_spin_moved_deg:
                     self._accumulate_spin(self._pending_step_deg)
 
+            # Probabilistic subtle arm micro-shift when user touches screen or robot displays content
+            if screen_touch_seq != self._last_screen_touch_seq:
+                self._last_screen_touch_seq = screen_touch_seq
+                if now >= self._screen_gesture_cooldown_until and random.random() < 0.62:
+                    self._screen_gesture_cooldown_until = now + random.uniform(5.5, 9.5)
+                    self._screen_gesture_until = now + random.uniform(0.85, 1.55)
+                    side = random.choice(["left", "right", "both"])
+                    lift_l = random.uniform(3.5, 8.0) if side in ("left", "both") else random.uniform(0.0, 2.5)
+                    lift_r = -random.uniform(3.5, 8.0) if side in ("right", "both") else -random.uniform(0.0, 2.5)
+                    self._screen_gesture_offsets = [
+                        lift_l,
+                        lift_r,
+                        random.uniform(-6.5, 6.5),
+                        random.uniform(-6.5, 6.5),
+                    ]
+            elif screen_content_ts > 0.0 and screen_content_ts != self._last_screen_content_ts:
+                self._last_screen_content_ts = screen_content_ts
+                if now >= self._screen_gesture_cooldown_until and random.random() < 0.48:
+                    self._screen_gesture_cooldown_until = now + random.uniform(6.0, 10.5)
+                    self._screen_gesture_until = now + random.uniform(0.80, 1.45)
+                    self._screen_gesture_offsets = [
+                        random.uniform(2.5, 6.5),
+                        -random.uniform(2.5, 6.5),
+                        random.uniform(-5.5, 5.5),
+                        random.uniform(-5.5, 5.5),
+                    ]
+
             effective_target = list(self._target)
+
+            if now < self._screen_gesture_until and not greeting_active and not bye_wave_active and not talk_active:
+                for i in range(4):
+                    effective_target[i] += self._screen_gesture_offsets[i]
 
             # Apply wander arm gesture offset
             if servo_mode == "wander" and not greeting_active and not bye_wave_active and not talk_active:

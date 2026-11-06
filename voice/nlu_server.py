@@ -416,7 +416,11 @@ async def _voice_ws_endpoint(websocket) -> None:
 
                 # Immediately set Blackboard conv_state="speaking" so robot face switches to talking emotions
                 if _bb is not None:
-                    _bb.write(conv_state="speaking", agent_speaking=True)
+                    _bb.write(
+                        conv_state="speaking",
+                        agent_speaking=True,
+                        screen_content_ts=time.time(),
+                    )
 
                 _dur_sec = (duration_ms / 1000.0) if duration_ms else 6.0
                 _reply_norm = _normalize_text(result.get("reply_text", ""))
@@ -473,6 +477,16 @@ async def _voice_ws_endpoint(websocket) -> None:
                 if _bb is not None:
                     _bb.write(conv_state="listening", user_speaking=True)
 
+            elif msg_type == "screen_event":
+                if _bb is not None:
+                    x_norm = max(-1.0, min(1.0, float(msg.get("x_norm", 0.0) or 0.0)))
+                    seq = int(_bb.read("screen_touch_seq").get("screen_touch_seq", 0) or 0) + 1
+                    _bb.write(
+                        screen_touch_ts=time.time(),
+                        screen_touch_seq=seq,
+                        screen_touch_x=x_norm,
+                    )
+
     except Exception as exc:
         # WebSocketDisconnect or any other error
         if "disconnect" in type(exc).__name__.lower() or "1000" in str(exc) or "1001" in str(exc):
@@ -526,13 +540,25 @@ _last_processed_greet_seq: int = 0
 
 
 async def _greet_ws_endpoint(websocket):
-    """Dedicated WebSocket for pushing proactive face greetings independently."""
+    """Dedicated WebSocket for pushing proactive face greetings and receiving screen touch events."""
     await websocket.accept()
     _greet_ws_clients.add(websocket)
     log.info("Browser connected to NLU greeting WebSocket.")
     try:
         while True:
-            await websocket.receive_text()
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+                if msg.get("type") == "screen_event" and _bb is not None:
+                    x_norm = max(-1.0, min(1.0, float(msg.get("x_norm", 0.0) or 0.0)))
+                    seq = int(_bb.read("screen_touch_seq").get("screen_touch_seq", 0) or 0) + 1
+                    _bb.write(
+                        screen_touch_ts=time.time(),
+                        screen_touch_seq=seq,
+                        screen_touch_x=x_norm,
+                    )
+            except Exception:
+                pass
     except Exception:
         pass
     finally:
@@ -618,7 +644,12 @@ async def _monitor_face_greetings_loop() -> None:
                             )
 
                         if _bb is not None:
-                            _bb.write(conv_state="speaking", agent_speaking=True, conv_emotion="happy")
+                            _bb.write(
+                                conv_state="speaking",
+                                agent_speaking=True,
+                                conv_emotion="happy",
+                                screen_content_ts=time.time(),
+                            )
                         if sync is not None and greet_uid:
                             sync.begin_playback(greet_uid)
                         # Let EyeRenderer (24 Mbaud SPI) & FaceTracker pause before audio DMA starts
@@ -677,30 +708,55 @@ def _build_app():
 # runtime.matcher.match_exact() so no false/unmatched buttons can ever appear.
 
 _RELATED_KB_TOPICS: dict[str, list[str]] = {
+    "knowledge_what_to_watch": [
+        "knowledge_floor_2_projects",
+        "knowledge_floor_3_game_zone",
+        "knowledge_floor_4_stalls",
+    ],
+    "knowledge_robot_current_floor": [
+        "knowledge_floor_4_stalls",
+        "knowledge_floor_2_projects",
+        "knowledge_what_to_watch",
+    ],
+    "knowledge_floor_2_projects": [
+        "knowledge_floor_3_game_zone",
+        "knowledge_floor_4_stalls",
+        "knowledge_what_to_watch",
+    ],
+    "knowledge_floor_3_game_zone": [
+        "knowledge_floor_2_projects",
+        "knowledge_floor_4_stalls",
+        "knowledge_what_to_watch",
+    ],
+    "knowledge_floor_4_stalls": [
+        "knowledge_floor_2_projects",
+        "knowledge_floor_3_game_zone",
+        "knowledge_floor_1_stalls",
+    ],
+    "knowledge_floor_1_stalls": [
+        "knowledge_floor_2_projects",
+        "knowledge_floor_3_game_zone",
+        "knowledge_what_to_watch",
+    ],
     "knowledge_fit_expo_2026": [
-        "knowledge_fit_25th_anniversary",
+        "knowledge_what_to_watch",
+        "knowledge_floor_2_projects",
         "knowledge_team_nema",
-        "knowledge_fit_expo_projects",
     ],
     "knowledge_fit_25th_anniversary": [
         "knowledge_fit_expo_2026",
+        "knowledge_what_to_watch",
         "knowledge_faculty_of_it",
-        "knowledge_history",
     ],
     "knowledge_team_nema": [
         "knowledge_about_nema_robot",
+        "knowledge_what_to_watch",
         "knowledge_fit_expo_2026",
-        "knowledge_faculty_of_it",
     ],
     "knowledge_about_nema_robot": [
         "knowledge_team_nema",
-        "knowledge_fit_expo_2026",
+        "knowledge_what_to_watch",
         "knowledge_general_ai_robotics",
-    ],
-    "knowledge_fit_expo_projects": [
-        "knowledge_fit_expo_2026",
-        "knowledge_research",
-        "knowledge_team_nema",
     ],
     "knowledge_faculty_of_it": [
         "knowledge_undergraduate_programs",
@@ -725,10 +781,10 @@ _RELATED_KB_TOPICS: dict[str, list[str]] = {
 }
 
 _DEFAULT_SUGGESTION_POOLS: list[list[str]] = [
-    ["What is FIT EXPO 2026?", "Tell me about Team Nema", "25th Anniversary of FIT"],
-    ["25th Anniversary of FIT", "What can I see at FIT EXPO?", "About Faculty of IT"],
-    ["What is FIT EXPO 2026?", "How does Nema work?", "Undergraduate Degree Programs"],
-    ["Tell me about Team Nema", "About University of Moratuwa", "Departments in FIT"],
+    ["What to Watch at FIT EXPO", "2nd Floor: Software & Research", "Tell me about Team Nema"],
+    ["What to Watch at FIT EXPO", "3rd Floor: Game Zone", "4th Floor: Stalls Here"],
+    ["2nd Floor: Software & Research", "What is FIT EXPO 2026?", "How does Nema work?"],
+    ["What Floor Are We On?", "2nd Floor: Software & Research", "1st Floor: Photo Booth & More"],
 ]
 _last_pool_idx = -1
 
@@ -934,15 +990,19 @@ def _get_campus_system_prompt() -> str:
     parts = [
         "You are Nema, a friendly, intelligent humanoid guide robot created by Team Nema from the Faculty of Information Technology (FIT) at the University of Moratuwa, Sri Lanka.",
         "Core Institutional & Event Facts:",
-        "- Event: This is FIT EXPO 2026, the flagship technology exhibition of the Faculty of IT, University of Moratuwa.",
-        "- Edition: FIT EXPO is being held for the second time (2nd edition) in history.",
-        "- Milestone: We are celebrating the 25th Anniversary (Silver Jubilee, 2001 to 2026) of the Faculty of Information Technology.",
+        "- Event: This is FIT EXPO 2026, the flagship technology exhibition of the Faculty of IT, University of Moratuwa (2nd edition, celebrating FIT's 25th Silver Jubilee anniversary from 2001 to 2026).",
         "- Creators: You were designed and built by Team Nema, a group of Artificial Intelligence (AI) undergraduates from the Faculty of IT, University of Moratuwa.",
-        "- General Q&A Role: In addition to campus, exhibition, and navigation questions, you can answer general knowledge, technology, AI, robotics, science, and Sri Lanka questions accurately and conversationally.",
+        "- Your Current Location (CRITICAL): YOU ARE STATIONED IN AN EXHIBITION HALL ON THE 4TH FLOOR (Auditorium & Labs Floor). Always remind visitors they are on the 4th floor, tell them about the other halls/labs on this floor, or tell them which floor to go down to.",
+        "Event Floor Locations & Stalls (4 Floors — No Visual Map Shown):",
+        "- 4th Floor (Your Floor — Auditorium & Labs Floor, 3 zones / 5 stalls): Level 1 Projects (in this hall and in the Auditorium on this floor), Student Projects (in the adjacent hall between Lab 6 and PG Research Lab), and Company Stalls (outside in the Lunch Area). Other halls/labs on this 4th floor: Auditorium, AI Lab, Lab 6, PG Research Lab, Server Room, Hardware Lab, IFS Network and Security Lab, Audio Visual Unit, Embedded Systems Lab, Electronic & Embedded Systems Lab, Behavioral Systems Lab.",
+        "- 3rd Floor (1 floor down — Dept. of Interdisciplinary Studies, 1 zone / 3 stalls): Game Zone (3 stalls in the halls near Lab 3 and FYP Lab), plus Lab 8.",
+        "- 2nd Floor (2 floors down — Dept. of Computational Mathematics, 1 zone / 3 stalls): Software Projects and Research Projects (3 stalls in the halls on the 2nd floor alongside Lab 2 and Lab 5). Always refer to 2nd floor stalls as Software Projects and Research Projects.",
+        "- 1st Floor (3 floors down — Dept. of Information Technology, 3 zones / 4 stalls): Photo Booth, Historical Instrument stall, and Level 2 & 4 Projects (in Lab 1 and the adjacent hall), plus the Dean's Office.",
         "Strict Output Rules:",
-        "1. Reply in 1 to 2 short, natural spoken sentences (maximum 30 words).",
-        "2. Never use markdown, asterisks, bullet points, numbered lists, or emojis.",
-        "3. Never repeat garbled or misheard words from speech recognition.",
+        "1. Keep every reply to 1 to 2 short, compact spoken sentences (maximum 22 words). Never use long sentences.",
+        "2. Since no map is shown in the frontend, do NOT use 2D map coordinates like 'top-right wing' or 'bottom-right'. Just speak naturally: tell them they are on the 4th floor, mention the other halls on this floor to visit, or which floor to go down to.",
+        "3. Never use markdown, asterisks, bullet points, numbered lists, or emojis.",
+        "4. Never repeat garbled or misheard words from speech recognition.",
     ]
 
     kb_path = APP_DIR / "voice" / "knowledge_base.yaml"
@@ -1180,91 +1240,14 @@ def _clean_button_room_label(label: str) -> str:
 
 
 def _navigate_response(destination: str) -> dict:
-    """Run Wayfinder pathfinding and build a map-ready navigate action.
-
-    When the destination string is genuinely ambiguous (multiple rooms share the
-    same generic keyword, e.g. "auditorium"), we return a clarification response
-    with validated ``suggested_buttons`` so the user can tap without false buttons.
-    """
+    """Look up the floor and hall description for *destination* (no map path calculation needed)."""
     wayfinder = _get_wayfinder()
     if wayfinder is None:
         return {
-            "reply_text": "I'm sorry, my navigation system isn't available right now.",
+            "reply_text": "You are on the 4th floor! Ask me about any stall or floor at FIT EXPO.",
             "audio_url": None,
             "action": {},
         }
-
-    # ── Ambiguity check: if multiple distinct rooms match, ask which one ──────
-    try:
-        exact_match = wayfinder.find_room(destination)
-    except Exception:
-        exact_match = None
-
-    dest_lc = destination.lower().strip()
-    if exact_match is not None:
-        label_lc = exact_match["label"].strip().lower()
-        dest_has_number = bool(re.search(r"\d", dest_lc))
-        label_has_number = bool(re.search(r"\d", label_lc))
-        dest_has_gender = bool(re.search(r"\b(male|female)\b", dest_lc))
-        label_has_gender = bool(re.search(r"\b(male|female)\b", label_lc))
-        sim_ratio = SequenceMatcher(None, dest_lc, label_lc).ratio()
-
-        missing_qualifier = (label_has_number and not dest_has_number) or (label_has_gender and not dest_has_gender)
-
-        # Unambiguous if exact match, high similarity (>= 0.84) without missing number/gender qualifier,
-        # or contains a specific room number matching the label.
-        if dest_lc == label_lc or (sim_ratio >= 0.84 and not missing_qualifier):
-            candidates = [exact_match]
-        elif dest_has_number and (dest_lc in label_lc or label_lc in dest_lc):
-            candidates = [exact_match]
-        else:
-            try:
-                candidates = wayfinder.find_rooms(destination)
-            except Exception as exc:
-                log.warning(f"find_rooms('{destination}') failed: {exc}")
-                candidates = [exact_match]
-    else:
-        try:
-            candidates = wayfinder.find_rooms(destination)
-        except Exception as exc:
-            log.warning(f"find_rooms('{destination}') failed: {exc}")
-            candidates = []
-
-    if len(candidates) > 1:
-        # Build clean, deduplicated button labels verified against Wayfinder
-        buttons: list[str] = []
-        seen_btn_lc: set[str] = set()
-        for c in candidates:
-            clean_lbl = _clean_button_room_label(c["label"])
-            if clean_lbl.lower() not in seen_btn_lc:
-                seen_btn_lc.add(clean_lbl.lower())
-                buttons.append(clean_lbl)
-
-        if len(buttons) > 1:
-            category = get_dest_category(destination)
-
-            if len(buttons) == 2:
-                options = f"{buttons[0]} or {buttons[1]}"
-            elif len(buttons) == 3:
-                options = f"{buttons[0]}, {buttons[1]}, or {buttons[2]}"
-            else:
-                options = ", ".join(buttons[:-1]) + f", or {buttons[-1]}"
-
-            reply_text = f"Which {category} did you mean? {options}?"
-            audio_file = _generate_dynamic_tts(reply_text)
-            audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
-            audio_base = APP_DIR / "assets" / "audio_cache"
-            return {
-                "reply_text": reply_text,
-                "audio_url": audio_url,
-                "audio_path": str(audio_base / audio_file) if audio_file else None,
-                "action": {
-                    "action": "speak",
-                    "text": reply_text,
-                    "suggested_buttons": buttons,
-                },
-                "ambiguity_category": category if category != "location" else None,
-            }
 
     try:
         result = wayfinder.find_path(destination)
@@ -1272,51 +1255,33 @@ def _navigate_response(destination: str) -> dict:
         log.error(f"Wayfinder.find_path('{destination}') failed: {exc}")
         result = None
 
-    if not result:
+    if not result or "error" in result:
+        reply_text = (
+            "You are on the 4th floor with Level 1, Student, and Company stalls, "
+            "or head down to Floor 3 for Games and Floor 2 for Software and Research projects!"
+        )
+        audio_file = _generate_dynamic_tts(reply_text)
+        audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
         return {
-            "reply_text": f"I'm sorry, I couldn't find a path to {destination}.",
-            "audio_url": None,
-            "action": {},
+            "reply_text": reply_text,
+            "audio_url": audio_url,
+            "audio_path": str(APP_DIR / "assets" / "audio_cache" / audio_file) if audio_file else None,
+            "action": {"action": "speak", "text": reply_text},
         }
 
-    if "error" in result:
-        return {
-            "reply_text": result["error"],
-            "audio_url": None,
-            "action": {},
-        }
-
-    # Same node shape LiveKit / v2 kiosk expect — include floor for the
-    # multi-floor switcher and scoped ids so path_ids line up.
-    nodes = [
-        {
-            "id": n["id"],
-            "label": n["label"],
-            "type": n.get("type", "room"),
-            "world": n["world"],
-            "building": n.get("building"),
-            "size": n.get("size", [1, 1, 1]),
-            "floor": n.get("floor", result.get("floor", "floor_1")),
-        }
-        for n in result["nodes"]
-    ]
-
-    audio_file = _generate_dynamic_tts(result["directions"])
+    reply_text = result["directions"]
+    audio_file = _generate_dynamic_tts(reply_text)
     audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None
 
     return {
-        "reply_text": result["directions"],
+        "reply_text": reply_text,
         "audio_url": audio_url,
         "audio_path": str(APP_DIR / "assets" / "audio_cache" / audio_file) if audio_file else None,
         "action": {
-            "action": "navigate",
+            "action": "speak",
+            "text": reply_text,
             "destination": result["destination"],
-            "floor": result.get("floor", "floor_1"),
-            "path": result["path_coords"],
-            "path_coords": result["path_coords"],
-            "path_ids": result.get("path_ids", []),
-            "nodes": nodes,
-            "buildings": result["buildings"],
+            "floor": result.get("floor", "floor_4"),
         },
     }
 

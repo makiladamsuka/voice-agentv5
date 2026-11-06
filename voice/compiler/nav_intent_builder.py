@@ -49,6 +49,27 @@ def _spelling_variants(label: str) -> list[str]:
     norm = re.sub(r"\blecturehall\b", "Lecture hall", norm, flags=re.IGNORECASE)
     if norm not in variants:
         variants.append(norm)
+    short_lab = re.sub(r"\blab(?:o)?ratory\s*(\d+)\b", r"Lab \1", norm, flags=re.IGNORECASE)
+    if short_lab not in variants:
+        variants.append(short_lab)
+    short_lab_zero = re.sub(r"\blab(?:o)?ratory\s*(\d)\b", r"Lab 0\1", norm, flags=re.IGNORECASE)
+    if short_lab_zero not in variants:
+        variants.append(short_lab_zero)
+    extra_aliases = {
+        "ai research laboratory": ["AI Lab", "AI Laboratory"],
+        "evaluator": ["Lift", "Elevator"],
+        "game zone": ["Games", "Game Stalls", "Gaming Zone"],
+        "software projects": ["Software Project Stalls", "Software Stalls"],
+        "research projects": ["Research Project Stalls", "Research Stalls"],
+        "company stalls": ["Company Stall", "Industry Stalls"],
+        "level 1 projects": ["Level 1 Project Stalls", "First Year Projects"],
+        "student projects": ["Student Project Stall"],
+        "photo booth": ["Photobooth", "Photo Stall"],
+        "historical instrument": ["Historical Instruments", "Historical Instrument Stall"],
+    }
+    for extra in extra_aliases.get(label.lower().strip(), []):
+        if extra not in variants:
+            variants.append(extra)
     return variants
 
 
@@ -75,7 +96,8 @@ def build_navigate_intents() -> list[dict]:
                     seen_utts.add(u.lower())
                     utterances.append(u)
 
-        display_label = _spelling_variants(clean)[-1]
+        display_label = re.sub(r"\blabratory\b", "Laboratory", clean, flags=re.IGNORECASE)
+        display_label = re.sub(r"\blecturehall\b", "Lecture Hall", display_label, flags=re.IGNORECASE)
         if display_label and display_label[0].islower():
             display_label = display_label[0].upper() + display_label[1:]
 
@@ -88,6 +110,23 @@ def build_navigate_intents() -> list[dict]:
             "action": {"action": "navigate", "destination": clean},
         })
 
+    intents.append({
+        "id": "navigate_generic_restroom",
+        "button_label": "Washrooms",
+        "utterances": [
+            "Where is the restroom?",
+            "Where are the restrooms?",
+            "I need to use the restroom.",
+            "Where is the nearest toilet?",
+            "Where is the washroom?",
+            "Where are the washrooms?",
+            "I need to go to the bathroom.",
+        ],
+        "response_text": "Both Male and Female Washrooms are on this 4th floor along the top-center corridor.",
+        "audio_file": None,
+        "action": {"action": "speak"},
+    })
+
     return intents
 
 
@@ -97,7 +136,7 @@ def main():
     out_path.write_text(json.dumps(intents, indent=2), encoding="utf-8")
     print(f"Wrote {len(intents)} navigate intents to {out_path}")
     for intent in intents:
-        print(f"  {intent['id']} -> {intent['action']['destination']}")
+        print(f"  {intent['id']} -> {intent['action'].get('destination', intent.get('button_label', ''))}")
 
 
 if __name__ == "__main__":

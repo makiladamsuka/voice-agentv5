@@ -38,7 +38,7 @@ except ImportError:
     yaml = None
 
 from core.blackboard import Blackboard
-from lib.hand_detector import HandDetector, detect_thumbs_up, detect_love_gesture
+from lib.hand_detector import HandDetector, detect_thumbs_up, detect_love_gesture, detect_bye_wave
 from lib.head_mech import signed_pan_mech_deg, signed_tilt_mech_deg
 from lib.person_memory import PersonMemory, angular_error_deg, wrap_degrees
 from lib.motion_memory import MotionMemory, MotionMemoryItem
@@ -805,6 +805,9 @@ class FaceTracker:
                 should_run_hands = (not face_detected) or (self._frame_count % 2 == 0)
                 if should_run_hands:
                     hands = hand_detector.process(frame, mirrored=False, is_bgr=False)
+                    self._last_detected_hands = hands
+                else:
+                    hands = getattr(self, "_last_detected_hands", [])
 
                 # ── Gesture recognition (runs even when face IS detected) ──
                 if hands:
@@ -812,6 +815,12 @@ class FaceTracker:
                     px, py = best_hand.palm_center
                     dw, dh = self.detect_res
                     side = best_hand.physical_side
+
+                    # Diagnostic log: report visible hand once per second
+                    last_hand_log = getattr(self, "_last_hand_seen_log", 0.0)
+                    if now - last_hand_log > 1.0:
+                        print(f"[FaceTracker] ✋ Hand visible (conf={best_hand.confidence:.2f}, side={side})")
+                        self._last_hand_seen_log = now
                     
                     # Gesture 1: Thumbs Up
                     if detect_thumbs_up(best_hand) and not hand_gesture:
@@ -821,23 +830,14 @@ class FaceTracker:
                     elif detect_love_gesture(hands) and not hand_gesture:
                         hand_gesture = "love_sign"
                         hand_gesture_side = best_hand.physical_side
-                    # Gesture 3: Bye wave (frontside hand with open palm, NOT curled fingers/fist)
+                    # Gesture 3: Bye wave (open upright hand)
                     elif (
                         self._bye_gesture_from_hand
-                        and best_hand.is_frontside
+                        and detect_bye_wave(best_hand)
                         and not hand_gesture
                     ):
-                        # Ensure fingers are open, not a fist or curled fingers
-                        lms = best_hand.landmarks
-                        is_curled_fist = False
-                        if len(lms) >= 21:
-                            from lib.hand_detector import is_finger_curled
-                            curled_count = sum(1 for t, p in [(8, 6), (12, 10), (16, 14), (20, 18)] if is_finger_curled(lms, t, p))
-                            if curled_count >= 3:
-                                is_curled_fist = True
-                        if not is_curled_fist:
-                            hand_gesture = "bye_wave"
-                            hand_gesture_side = best_hand.physical_side
+                        hand_gesture = "bye_wave"
+                        hand_gesture_side = best_hand.physical_side
 
             #         # Hi gesture: frontside hand away from face (with 30s cooldown)
             #         hi_cooldown_until = float(self.bb.read("hi_wave_cooldown_until").get("hi_wave_cooldown_until", 0.0))

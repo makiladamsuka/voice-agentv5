@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import cv2
 import mediapipe as mp
+import numpy as np
 from typing import Any
 
 @dataclass
@@ -21,8 +22,8 @@ class HandDetector:
         self,
         max_num_hands: int = 2,
         model_complexity: int = 0,
-        min_detection_confidence: float = 0.5,
-        min_tracking_confidence: float = 0.5
+        min_detection_confidence: float = 0.38,
+        min_tracking_confidence: float = 0.38
     ):
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
@@ -37,19 +38,38 @@ class HandDetector:
         Process a frame and return a list of HandDetection objects.
         
         Args:
-            frame: Input image (BGR format if is_bgr=True; RGB format if is_bgr=False).
+            frame: Input image.
             mirrored: True if the camera feed is horizontally mirrored.
                       Corrects handedness accordingly.
             is_bgr: True if frame is BGR (default for OpenCV VideoCapture),
                     False if frame is already RGB (e.g. from Picamera2 RGB888).
         """
+        if frame is None or frame.size == 0:
+            return []
+
+        # Enforce C-contiguous memory array for MediaPipe C++ bindings
+        if not isinstance(frame, np.ndarray) or not frame.flags.c_contiguous:
+            frame = np.ascontiguousarray(frame)
+
         h, w, _ = frame.shape
         if is_bgr:
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         else:
             rgb_frame = frame
+
         results = self.hands.process(rgb_frame)
-        
+
+        # Dual-pass color space fallback:
+        # Camera buffers (Picamera2 RGB888 vs libcamera ISP vs OpenCV) can deliver BGR or RGB.
+        # If the primary pass detects 0 hands, try swapping Red and Blue channels.
+        if (not results.multi_hand_landmarks) and frame.ndim == 3 and frame.shape[2] == 3:
+            swapped = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
+            if not swapped.flags.c_contiguous:
+                swapped = np.ascontiguousarray(swapped)
+            alt_results = self.hands.process(swapped)
+            if alt_results.multi_hand_landmarks:
+                results = alt_results
+
         detections = []
         
         if results.multi_hand_landmarks and results.multi_handedness:
@@ -76,7 +96,6 @@ class HandDetector:
                 palm_center = (palm_x, palm_y)
                 
                 # Check palm orientation (Frontside vs Backside Knuckles)
-                # Compute 2D cross product of vectors from Wrist to Index MCP (5) and Pinky MCP (17)
                 w_lm = hand_landmarks.landmark[0]
                 i_lm = hand_landmarks.landmark[5]
                 p_lm = hand_landmarks.landmark[17]
@@ -87,10 +106,6 @@ class HandDetector:
                 v2_y = p_lm.y - w_lm.y
                 
                 cp = (v1_x * v2_y) - (v1_y * v2_x)
-                
-                # In 2D image coordinates (Y down):
-                # Right hand with palm facing camera: Index is on left, Pinky on right -> cp > 0.
-                # Left hand with palm facing camera: Index is on right, Pinky on left -> cp < 0.
                 if physical_side == "Right":
                     is_frontside = cp > 0.0
                 else:
@@ -115,13 +130,7 @@ class HandDetector:
 def draw_skeleton(frame: cv2.Mat, detection: HandDetection, is_active: bool = False) -> None:
     """
     Draw a premium neon-styled skeleton overlay for the detected hand.
-    
-    Args:
-        frame: Target image canvas.
-        detection: The HandDetection object containing landmarks.
-        is_active: True if the hand is currently performing an action (e.g., waving).
     """
-    # Define color scheme (neon orange for idle, neon cyan for active)
     if is_active:
         joint_col = (255, 255, 0)    # Cyan
         line_col = (255, 200, 0)     # Bright Cyan/Yellow
@@ -173,96 +182,243 @@ def draw_motion_trail(frame: cv2.Mat, x_history: list[int], y_history: list[int]
     cv2.addWeighted(overlay, 0.4, frame, 0.6, 0, frame)
 
 
-# ── Gesture Classifiers (Thumbs Up, Love/Heart) ──────────────────────────────
+# ── Robust Gesture Classifiers (Thumbs Up, Bye Wave, Love/Heart) ──────────────
 
 def _dist_2d(p1: dict[str, float] | tuple[int, int], p2: dict[str, float] | tuple[int, int]) -> float:
     if isinstance(p1, dict) and isinstance(p2, dict):
         return ((p1['x'] - p2['x']) ** 2 + (p1['y'] - p2['y']) ** 2) ** 0.5
     return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
 
-def is_finger_curled(landmarks: list[dict[str, float]], tip_idx: int, pip_idx: int) -> bool:
-    wrist = landmarks[0]
-    # Check 1: tip significantly closer to wrist than pip joint
-    tip_dist = _dist_2d(landmarks[tip_idx], wrist)
-    pip_dist = _dist_2d(landmarks[pip_idx], wrist)
-    if tip_dist < pip_dist * 0.95:
-        return True
-    # Check 2: in upright hand, curled fingertip is below pip joint
-    if landmarks[tip_idx]['y'] > landmarks[pip_idx]['y'] + 0.02:
-        return True
-    # Check 3: tip is folded tightly toward MCP joint
-    mcp_idx = pip_idx - 1 if pip_idx > 1 else 0
-    if _dist_2d(landmarks[tip_idx], landmarks[mcp_idx]) < 0.10:
-        return True
-    return False
+def get_palm_scale(detection: HandDetection) -> float:
+    """Returns stable palm scale (distance between Wrist 0 and Middle MCP 9 in pixels)."""
+    pts = detection.pixel_landmarks
+    if len(pts) >= 21:
+        d = _dist_2d(pts[0], pts[9])
+        return max(d, 12.0)
+    lms = detection.landmarks
+    if len(lms) >= 21:
+        d = _dist_2d(lms[0], lms[9])
+        return max(d, 0.05)
+    return 40.0
 
-def is_finger_extended(landmarks: list[dict[str, float]], tip_idx: int, pip_idx: int) -> bool:
-    wrist = landmarks[0]
-    higher = landmarks[tip_idx]['y'] < landmarks[pip_idx]['y']
-    further = _dist_2d(landmarks[tip_idx], wrist) > _dist_2d(landmarks[pip_idx], wrist) * 1.08
-    return higher and further
+def _get_mcp_idx(pip_idx: int) -> int:
+    """Returns default MCP index for a given PIP joint index."""
+    if pip_idx == 6:
+        return 5
+    elif pip_idx == 10:
+        return 9
+    elif pip_idx == 14:
+        return 13
+    elif pip_idx == 18:
+        return 17
+    return max(0, pip_idx - 1)
+
+def is_finger_extended(
+    target: HandDetection | list[dict[str, float]],
+    tip_idx: int,
+    pip_idx: int,
+    mcp_idx: int | None = None
+) -> bool:
+    """Returns True if the finger is extended outward."""
+    if mcp_idx is None:
+        mcp_idx = _get_mcp_idx(pip_idx)
+
+    if isinstance(target, HandDetection):
+        pts = target.pixel_landmarks
+        if len(pts) < 21:
+            return False
+        wrist = pts[0]
+        tip = pts[tip_idx]
+        pip = pts[pip_idx]
+        mcp = pts[mcp_idx]
+        palm_scale = get_palm_scale(target)
+
+        d_wrist_tip = _dist_2d(wrist, tip)
+        d_wrist_pip = _dist_2d(wrist, pip)
+        d_wrist_mcp = _dist_2d(wrist, mcp)
+        d_mcp_tip = _dist_2d(mcp, tip)
+
+        return (d_wrist_tip > d_wrist_pip * 1.05) and (d_wrist_tip > d_wrist_mcp * 1.18) and (d_mcp_tip > palm_scale * 0.65)
+    else:
+        # Fallback to normalized landmarks list
+        lms = target
+        if len(lms) < 21:
+            return False
+        wrist = lms[0]
+        tip = lms[tip_idx]
+        pip = lms[pip_idx]
+        mcp = lms[mcp_idx]
+        palm_scale = max(_dist_2d(wrist, lms[9]), 0.05)
+
+        d_wrist_tip = _dist_2d(wrist, tip)
+        d_wrist_pip = _dist_2d(wrist, pip)
+        d_wrist_mcp = _dist_2d(wrist, mcp)
+        d_mcp_tip = _dist_2d(mcp, tip)
+
+        return (d_wrist_tip > d_wrist_pip * 1.05) and (d_wrist_tip > d_wrist_mcp * 1.18) and (d_mcp_tip > palm_scale * 0.65)
+
+def is_finger_curled(
+    target: HandDetection | list[dict[str, float]],
+    tip_idx: int,
+    pip_idx: int,
+    mcp_idx: int | None = None
+) -> bool:
+    """Returns True if the finger is curled inward toward the palm."""
+    if mcp_idx is None:
+        mcp_idx = _get_mcp_idx(pip_idx)
+
+    if isinstance(target, HandDetection):
+        pts = target.pixel_landmarks
+        if len(pts) < 21:
+            return False
+        wrist = pts[0]
+        tip = pts[tip_idx]
+        pip = pts[pip_idx]
+        mcp = pts[mcp_idx]
+        palm_scale = get_palm_scale(target)
+
+        d_wrist_tip = _dist_2d(wrist, tip)
+        d_wrist_pip = _dist_2d(wrist, pip)
+        d_mcp_tip = _dist_2d(mcp, tip)
+
+        return (d_wrist_tip < d_wrist_pip * 1.05) or (d_mcp_tip < palm_scale * 0.65)
+    else:
+        # Fallback to normalized landmarks list
+        lms = target
+        if len(lms) < 21:
+            return False
+        wrist = lms[0]
+        tip = lms[tip_idx]
+        pip = lms[pip_idx]
+        mcp = lms[mcp_idx]
+        palm_scale = max(_dist_2d(wrist, lms[9]), 0.05)
+
+        d_wrist_tip = _dist_2d(wrist, tip)
+        d_wrist_pip = _dist_2d(wrist, pip)
+        d_mcp_tip = _dist_2d(mcp, tip)
+
+        return (d_wrist_tip < d_wrist_pip * 1.05) or (d_mcp_tip < palm_scale * 0.65)
+
 
 def detect_thumbs_up(detection: HandDetection) -> bool:
-    """Robust thumbs-up detector: thumb tip higher than joints & wrist; other fingers curled."""
-    lms = detection.landmarks
-    if len(lms) < 21:
-        return False
-    # Thumb tip pointing upwards: tip is higher than IP(3) or MCP(2)
-    thumb_higher_than_ip = lms[4]['y'] < lms[3]['y']
-    thumb_higher_than_mcp = lms[4]['y'] < lms[2]['y']
-    thumb_above_wrist = (lms[0]['y'] - lms[4]['y']) > 0.03
-    if not ((thumb_higher_than_ip or thumb_higher_than_mcp) and thumb_above_wrist):
+    """
+    Robust Thumbs-Up detector:
+    - Thumb points upwards (tip is higher in screen than IP and MCP joints)
+    - Thumb tip is above the wrist and index knuckle
+    - At least 3 non-thumb fingers (Index, Middle, Ring, Pinky) are curled
+    - Index and Middle fingers are NOT extended
+    """
+    pts = detection.pixel_landmarks
+    if len(pts) < 21:
         return False
 
-    # Count curled fingers among Index(8), Middle(12), Ring(16), Pinky(20)
+    palm_scale = get_palm_scale(detection)
+    wrist = pts[0]
+    thumb_mcp = pts[2]
+    thumb_ip = pts[3]
+    thumb_tip = pts[4]
+    index_mcp = pts[5]
+
+    # Thumb tip pointing upwards (smaller Y in screen coords)
+    thumb_pointing_up = (thumb_tip[1] < thumb_ip[1]) and (thumb_tip[1] < thumb_mcp[1])
+    thumb_above_wrist = thumb_tip[1] < wrist[1] - (palm_scale * 0.25)
+    thumb_above_knuckle = thumb_tip[1] < index_mcp[1]
+
+    if not (thumb_pointing_up and thumb_above_wrist and thumb_above_knuckle):
+        return False
+
     curled_count = 0
-    for tip, pip in [(8, 6), (12, 10), (16, 14), (20, 18)]:
-        if is_finger_curled(lms, tip, pip):
+    for tip, pip, mcp in [(8, 6, 5), (12, 10, 9), (16, 14, 13), (20, 18, 17)]:
+        if is_finger_curled(detection, tip, pip, mcp):
             curled_count += 1
 
-    # Neither index nor middle should be pointing straight up
-    index_not_extended = not is_finger_extended(lms, 8, 6)
-    middle_not_extended = not is_finger_extended(lms, 12, 10)
+    index_ext = is_finger_extended(detection, 8, 6, 5)
+    middle_ext = is_finger_extended(detection, 12, 10, 9)
 
-    # Require at least 3 out of 4 curled + index/middle not pointing up
-    return (curled_count >= 3) and index_not_extended and middle_not_extended
+    return (curled_count >= 3) and (not index_ext) and (not middle_ext)
+
+
+def detect_bye_wave(detection: HandDetection) -> bool:
+    """
+    Robust Bye Wave detector:
+    - Hand is raised upright (knuckles/palm center above wrist)
+    - At least 3 of the 4 main fingers (Index, Middle, Ring, Pinky) are extended
+    - Fingertips are higher than knuckles
+    - Index and Middle fingers are both extended (open hand)
+    """
+    pts = detection.pixel_landmarks
+    if len(pts) < 21:
+        return False
+
+    palm_scale = get_palm_scale(detection)
+    wrist = pts[0]
+    middle_mcp = pts[9]
+
+    # Hand upright check: wrist is below the middle knuckle
+    if wrist[1] < middle_mcp[1] + (palm_scale * 0.15):
+        return False
+
+    extended_count = 0
+    for tip, pip, mcp in [(8, 6, 5), (12, 10, 9), (16, 14, 13), (20, 18, 17)]:
+        if is_finger_extended(detection, tip, pip, mcp):
+            if pts[tip][1] < pts[mcp][1]:  # fingertip higher than knuckle
+                extended_count += 1
+
+    if extended_count < 3:
+        return False
+
+    index_ext = is_finger_extended(detection, 8, 6, 5)
+    middle_ext = is_finger_extended(detection, 12, 10, 9)
+
+    return index_ext and middle_ext
+
 
 def detect_love_gesture(detections: list[HandDetection]) -> bool:
-    """Detect love gestures: Two-hand heart, Finger heart, or I-Love-You."""
+    """
+    Robust Love / Heart detector:
+    1. Two-hand heart (🫶): Two hands with index fingertips touching/close and thumbs touching/close.
+    2. 'I Love You' sign (🤟): Thumb, Index, and Pinky extended; Middle and Ring curled.
+    3. Korean Finger Heart (🫰): Thumb tip & Index tip pinched together; other fingers curled.
+    """
     if not detections:
         return False
 
     # 1. Two-hand heart (🫶)
     if len(detections) >= 2:
-        h1 = detections[0].landmarks
-        h2 = detections[1].landmarks
-        if len(h1) >= 21 and len(h2) >= 21:
-            d_index = _dist_2d(h1[8], h2[8])
-            d_thumb = _dist_2d(h1[4], h2[4])
-            if d_index < 0.28 and d_thumb < 0.28:
+        h1 = detections[0]
+        h2 = detections[1]
+        p1 = h1.pixel_landmarks
+        p2 = h2.pixel_landmarks
+        if len(p1) >= 21 and len(p2) >= 21:
+            scale_avg = (get_palm_scale(h1) + get_palm_scale(h2)) * 0.5
+            d_index_tips = _dist_2d(p1[8], p2[8])
+            d_thumb_tips = _dist_2d(p1[4], p2[4])
+            if d_index_tips < scale_avg * 1.6 and d_thumb_tips < scale_avg * 1.6:
                 return True
 
     # 2. Single-hand love gestures
     for d in detections:
-        lms = d.landmarks
-        if len(lms) < 21:
+        pts = d.pixel_landmarks
+        if len(pts) < 21:
             continue
 
-        middle_curled = is_finger_curled(lms, 12, 10)
-        ring_curled = is_finger_curled(lms, 16, 14)
+        palm_scale = get_palm_scale(d)
+        wrist = pts[0]
 
-        # 2a. 'I Love You' sign (🤟): Index and Pinky extended; Middle and Ring curled
-        index_ext = is_finger_extended(lms, 8, 6)
-        pinky_ext = is_finger_extended(lms, 20, 18)
-        thumb_out = (_dist_2d(lms[4], lms[2]) > 0.05) or (lms[4]['y'] < lms[2]['y'])
+        index_ext = is_finger_extended(d, 8, 6, 5)
+        pinky_ext = is_finger_extended(d, 20, 18, 17)
+        middle_curled = is_finger_curled(d, 12, 10, 9)
+        ring_curled = is_finger_curled(d, 16, 14, 13)
+
+        # 2a. 'I Love You' sign (🤟): Index & Pinky extended; Middle & Ring curled; Thumb out
+        thumb_out = (_dist_2d(pts[4], pts[2]) > palm_scale * 0.55) or (pts[4][1] < pts[2][1])
         if index_ext and pinky_ext and middle_curled and ring_curled and thumb_out:
             return True
 
-        # 2b. Finger heart (🫰): Thumb tip & Index tip pinched together; other fingers curled
-        d_thumb_idx = _dist_2d(lms[4], lms[8])
-        if d_thumb_idx < 0.16:
-            # Thumb tip is above wrist
-            if lms[4]['y'] < lms[0]['y']:
+        # 2b. Korean Finger Heart (🫰): Thumb tip & Index tip pinched close together; Middle/Ring curled
+        d_thumb_index = _dist_2d(pts[4], pts[8])
+        if d_thumb_index < palm_scale * 0.50:
+            if pts[4][1] < wrist[1] and pts[8][1] < wrist[1]:
                 if middle_curled or ring_curled:
                     return True
 

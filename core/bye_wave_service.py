@@ -379,25 +379,108 @@ class _ByeSequenceRunner:
         else:
             return 1 - pow(-2 * t + 2, power) / pow(2, power - 1)
 
+    def _sample_bottango_tracks(self, tracks: list[dict], duration_ms: float = 3000.0) -> list[dict]:
+        """Convert Bottango exported tracks to arm frames."""
+        arm_tracks = {}
+        for tr in tracks:
+            servo = tr.get("servo", "")
+            if servo in ("arm_0", "arm_1", "arm_2", "arm_3"):
+                arm_tracks[servo] = sorted(tr.get("keys", []), key=lambda k: k.get("t_ms", 0))
+        if not arm_tracks:
+            return []
+
+        step_ms = 250
+        frames = []
+        for t in range(0, int(duration_ms) + step_ms, step_ms):
+            frame = {"a0": 47.0, "a1": 65.0, "a2": 54.0, "a3": 76.0}
+            for servo, idx in [("arm_0", "a0"), ("arm_1", "a1"), ("arm_2", "a2"), ("arm_3", "a3")]:
+                keys = arm_tracks.get(servo)
+                if not keys:
+                    continue
+                val = keys[0].get("v", frame[idx])
+                for k in keys:
+                    if k.get("t_ms", 0) <= t:
+                        val = k.get("v", val)
+                    else:
+                        break
+                frame[idx] = float(val)
+            frames.append(frame)
+        return frames
+
+    def _load_frames_for_key(self, anim_key: str | None) -> tuple[str, list[dict]]:
+        """
+        Attempts to load frames from:
+        1. Standalone JSON files in animations/, tests/animation/, tests/
+        2. Presets file (tests/arm_pose_presets.json)
+        """
+        app_dir = pathlib.Path(__file__).resolve().parent.parent
+        candidates = []
+        if anim_key:
+            clean_key = anim_key.replace(".json", "")
+            candidates.extend([
+                app_dir / "animations" / f"{clean_key}.json",
+                app_dir / "tests" / "animation" / f"{clean_key}.json",
+                app_dir / "tests" / f"{clean_key}.json",
+            ])
+            if anim_key.endswith(".json"):
+                candidates.append(pathlib.Path(anim_key))
+                candidates.append(app_dir / anim_key)
+
+        for path in candidates:
+            if path and path.is_file():
+                try:
+                    raw = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(raw, dict) and "frames" in raw and isinstance(raw["frames"], list):
+                        print(f"[ByeWaveService] Loaded standalone JSON animation from {path}")
+                        return (path.stem, list(raw["frames"]))
+                    if isinstance(raw, dict) and "tracks" in raw and isinstance(raw["tracks"], dict) and "arms" in raw["tracks"]:
+                        frames = []
+                        for pt in raw["tracks"]["arms"]:
+                            if any(k in pt for k in ("a0", "a1", "a2", "a3")):
+                                frames.append({
+                                    "a0": float(pt.get("a0", 47.0)),
+                                    "a1": float(pt.get("a1", 65.0)),
+                                    "a2": float(pt.get("a2", 54.0)),
+                                    "a3": float(pt.get("a3", 76.0)),
+                                })
+                        if frames:
+                            print(f"[ByeWaveService] Loaded AnimationEngine timeline from {path}")
+                            return (path.stem, frames)
+                    if isinstance(raw, dict) and "tracks" in raw and isinstance(raw["tracks"], list):
+                        frames = self._sample_bottango_tracks(raw["tracks"], duration_ms=float(raw.get("duration_ms", 3000.0)))
+                        if frames:
+                            print(f"[ByeWaveService] Loaded Bottango tracks from {path}")
+                            return (path.stem, frames)
+                except Exception as exc:
+                    print(f"[ByeWaveService] Warning: failed reading {path}: {exc}")
+
+        # Fall back to presets file
+        data = json.loads(self._presets_path.read_text(encoding="utf-8"))
+        animations = data.get("animations", {})
+        if anim_key and anim_key in animations:
+            key = anim_key
+        else:
+            if anim_key in ("love_sign", "heart_love") and "heart_love" in animations:
+                key = "heart_love"
+            elif anim_key == "thumbs_up" and "thumbs_up" in animations:
+                key = "thumbs_up"
+            else:
+                key = random.choice(["bye1", "bye2", "bye3"]) if animations else "bye1"
+
+        frames = list(animations.get(key, {}).get("frames", []))
+        home_pose = data.get("poses", {}).get("home")
+        if home_pose and frames:
+            frames.append(home_pose)
+        return (key, frames)
+
     def trigger(self, side, anim_key=None):
         with self._lock:
             if self._running:
                 return
             try:
-                data = json.loads(self._presets_path.read_text(encoding="utf-8"))
-                animations = data["animations"]
-                if anim_key and anim_key in animations:
-                    key = anim_key
-                else:
-                    key = random.choice(["bye1", "bye2", "bye3"])
-                frames = list(animations[key]["frames"])
+                key, frames = self._load_frames_for_key(anim_key)
                 if not frames:
                     raise ValueError(f"Animation '{key}' has no frames")
-                
-                # Ensure the animation ends by returning to the home position
-                home_pose = data.get("poses", {}).get("home")
-                if home_pose:
-                    frames.append(home_pose)
             except FileNotFoundError as exc:
                 print(f"[ByeWaveService] ERROR: presets not found: {exc}", file=sys.stderr)
                 return
@@ -737,7 +820,7 @@ class ByeWaveService:
                         bye_runner.trigger(announcement_hand, anim_key="heart_love")
                         self._trigger_reaction_speech("love_sign")
                     else:
-                        bye_runner.trigger(announcement_hand)
+                        bye_runner.trigger(announcement_hand, anim_key="bye_wave")
                         self._trigger_reaction_speech("bye_wave")
 
             # Read arm positions and animation state for overlay

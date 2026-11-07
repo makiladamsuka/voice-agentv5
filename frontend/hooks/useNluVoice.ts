@@ -1060,6 +1060,21 @@ export function useNluVoice({
     }
   }, [apiKey]);
 
+  /** Send a screen-touch event to the NLU server so the robot can glance down.
+   *  x_norm: normalized horizontal position of the touch, -1.0 (left) .. +1.0 (right).
+   *  Throttled: at most one event per 800 ms so rapid taps don't spam the servo loop.
+   */
+  const lastScreenEventRef = useRef<number>(0);
+  const sendScreenEvent = useCallback((x_norm: number) => {
+    const now = Date.now();
+    if (now - lastScreenEventRef.current < 800) return;
+    lastScreenEventRef.current = now;
+    if (nluWs.current?.readyState !== WebSocket.OPEN) return;
+    nluWs.current.send(
+      JSON.stringify({ type: "screen_event", x_norm: Math.max(-1, Math.min(1, x_norm)) })
+    );
+  }, []);
+
   return {
     state,
     isActive,
@@ -1067,5 +1082,6 @@ export function useNluVoice({
     start,
     stop,
     sendSimulatedVoice: sendTranscript,
+    sendScreenEvent,
   };
 }

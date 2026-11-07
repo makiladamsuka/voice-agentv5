@@ -77,6 +77,9 @@ export interface NluAdapter {
   // method to simulate user voice input (e.g. from UI buttons)
   sendSimulatedVoice: (text: string) => void;
 
+  // method to send a screen-touch event (triggers robot look-down)
+  sendScreenEvent: (x_norm: number) => void;
+
   // Live robot presence & TFT eye emotion status
   robotStatus: RobotLiveStatus;
 }
@@ -236,6 +239,69 @@ export function useNluAdapter(options?: UseNluAdapterOptions): NluAdapter {
     ]);
   }, [nlu.lastTranscript]);
 
+  // ── Auto-disconnect: no real speech detected ───────────────────────────────
+  // Exhibition-safe approach: we don't count raw silence seconds (background
+  // noise keeps Deepgram's VAD firing). Instead we:
+  //   1. Reset a wall-clock "last activity" timestamp any time the user sends
+  //      a real transcript OR the agent responds (meaningful interaction).
+  //   2. If IDLE_DISCONNECT_MS passes with no meaningful activity while
+  //      connected, we auto-disconnect.
+  //
+  // IDLE_DISCONNECT_MS is long (90s) to tolerate exhibition background noise
+  // that briefly triggers Deepgram VAD but never resolves to a real transcript.
+  const IDLE_DISCONNECT_MS = 90_000; // 90 s — tuned for noisy environments
+  const lastActivityRef = useRef<number>(Date.now());
+  const idleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Bump activity timestamp on any real user transcript
+  useEffect(() => {
+    if (nlu.lastTranscript) {
+      lastActivityRef.current = Date.now();
+    }
+  }, [nlu.lastTranscript]);
+
+  // Bump activity timestamp when the agent replies (agent spoke = interaction)
+  useEffect(() => {
+    if (agentState === "speaking") {
+      lastActivityRef.current = Date.now();
+    }
+  }, [agentState]);
+
+  // Start/stop the idle watchdog whenever connection state changes
+  const endRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    // We'll fill endRef after `end` is defined below — capture via ref to
+    // avoid a dependency cycle.
+    const isConn = nlu.isActive;
+    if (!isConn) {
+      if (idleTimerRef.current) {
+        clearInterval(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+      return;
+    }
+
+    // Reset activity clock when we first connect
+    lastActivityRef.current = Date.now();
+
+    idleTimerRef.current = setInterval(() => {
+      const idleMs = Date.now() - lastActivityRef.current;
+      if (idleMs >= IDLE_DISCONNECT_MS) {
+        console.log(
+          `[NluAdapter] Auto-disconnect: no real speech for ${Math.round(idleMs / 1000)}s`
+        );
+        endRef.current();
+      }
+    }, 5_000); // check every 5 s
+
+    return () => {
+      if (idleTimerRef.current) {
+        clearInterval(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+    };
+  }, [nlu.isActive]);
+
   const start = useCallback(async () => {
     setAgentState("connecting");
     try {
@@ -253,6 +319,9 @@ export function useNluAdapter(options?: UseNluAdapterOptions): NluAdapter {
     setTranscriptions([]);
   }, [nlu]);
 
+  // Keep endRef in sync so the idle watchdog can call it without a dep cycle
+  endRef.current = end;
+
   const isConnected = nlu.isActive;
 
   const session = { isConnected, start, end };
@@ -268,6 +337,7 @@ export function useNluAdapter(options?: UseNluAdapterOptions): NluAdapter {
     maxVolume,
     lastAction,
     sendSimulatedVoice: nlu.sendSimulatedVoice,
+    sendScreenEvent: nlu.sendScreenEvent,
     robotStatus,
   };
 }

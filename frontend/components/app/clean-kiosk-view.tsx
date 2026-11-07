@@ -92,6 +92,120 @@ interface RobotSettingsState {
 
 
 
+// ── Teleprompter Caption ──────────────────────────────────────────────────────
+// Fixed-height viewport; inner text block slides up after the visible line is
+// spoken — timed by estimating words-per-second for the currently visible text.
+const WORDS_PER_SECOND = 2.8; // average TTS speaking rate
+const VIEWPORT_H = 120;       // px — roughly 2 lines at md:text-5xl
+
+function TeleprompterCaption({
+  text,
+  agentState,
+}: {
+  text: string;
+  agentState: string;
+}) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const [offsetY, setOffsetY] = useState(0);
+
+  // Track the last committed offset so we know the "current baseline"
+  const committedOffsetRef = useRef(0);
+  // Track pending scroll timeout so we can cancel it if speech stops early
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Words that were visible in the viewport just before the last overflow
+  const visibleWordsRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    const inner = innerRef.current;
+    if (!inner) return;
+
+    const overflow = inner.scrollHeight - VIEWPORT_H;
+    const targetOffset = overflow > 0 ? -overflow : 0;
+
+    // No new overflow — just track the words visible right now for next time
+    if (targetOffset === committedOffsetRef.current) {
+      // Count words currently visible (approximate: words up to the viewport slice)
+      visibleWordsRef.current = text.split(" ").filter(Boolean);
+      return;
+    }
+
+    // New overflow detected — figure out how long the visible line(s) will take
+    // to speak, then schedule the scroll after that delay.
+    const wordsVisible = visibleWordsRef.current.length;
+    const speakDelayMs = wordsVisible > 0
+      ? (wordsVisible / WORDS_PER_SECOND) * 1000
+      : 0;
+
+    // Cancel any previous pending scroll
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+
+    scrollTimerRef.current = setTimeout(() => {
+      committedOffsetRef.current = targetOffset;
+      setOffsetY(targetOffset);
+    }, speakDelayMs);
+
+    // Update visible-words snapshot to the full current text (next line is now "visible")
+    visibleWordsRef.current = text.split(" ").filter(Boolean);
+
+    return () => {
+      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    };
+  }, [text]);
+
+  // If the agent stops speaking (interrupted / done), fire any pending scroll immediately
+  useEffect(() => {
+    if (agentState !== "speaking" && scrollTimerRef.current) {
+      clearTimeout(scrollTimerRef.current);
+      scrollTimerRef.current = null;
+      // Snap to the real overflow position right now
+      const inner = innerRef.current;
+      if (inner) {
+        const overflow = inner.scrollHeight - VIEWPORT_H;
+        const target = overflow > 0 ? -overflow : 0;
+        committedOffsetRef.current = target;
+        setOffsetY(target);
+      }
+    }
+  }, [agentState]);
+
+  if (!text) {
+    return (
+      <h1 className="text-2xl sm:text-3xl md:text-5xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100 mt-1">
+        Welcome to FIT EXPO
+      </h1>
+    );
+  }
+
+  return (
+    <div
+      ref={viewportRef}
+      className="relative mt-1 w-full overflow-hidden"
+      style={{ height: VIEWPORT_H }}
+    >
+      {/* Gradient fade on the top edge so old lines dissolve softly */}
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 z-10"
+        style={{
+          height: 40,
+          background:
+            "linear-gradient(to bottom, var(--tw-gradient-from, white), transparent)",
+        }}
+      />
+      <motion.div
+        ref={innerRef}
+        animate={{ y: offsetY }}
+        transition={{ duration: 0.35, ease: [0.4, 0, 0.2, 1] }}
+        className="text-center"
+      >
+        <h1 className="text-2xl sm:text-3xl md:text-5xl font-bold tracking-tight leading-tight">
+          {text}
+        </h1>
+      </motion.div>
+    </div>
+  );
+}
+
 export function CleanKioskView() {
 
   // Hardware switches loaded from /api/robot-settings
@@ -430,6 +544,8 @@ export function CleanKioskView() {
 
   const sendSimulatedVoice = nluAdapter.sendSimulatedVoice;
 
+  const sendScreenEvent = nluAdapter.sendScreenEvent;
+
   const lastAction = nluAdapter.lastAction;
 
 
@@ -546,7 +662,14 @@ export function CleanKioskView() {
 
   return (
 
-    <div className="relative w-screen h-screen bg-white dark:bg-neutral-950 text-neutral-900 dark:text-neutral-50 overflow-hidden flex flex-col justify-between px-4 py-2 sm:py-3 md:p-6 select-none">
+    <div
+      className="relative w-screen h-screen bg-white dark:bg-neutral-950 text-neutral-900 dark:text-neutral-50 overflow-hidden flex flex-col justify-between px-4 py-2 sm:py-3 md:p-6 select-none"
+      onPointerDown={(e) => {
+        // Normalize x to [-1, +1] relative to screen width, then tell the robot
+        const x_norm = (e.clientX / window.innerWidth) * 2 - 1;
+        sendScreenEvent(x_norm);
+      }}
+    >
 
       {/* ── Top Navigation Bar ── */}
 
@@ -618,34 +741,9 @@ export function CleanKioskView() {
 
 
 
-        {/* Hero Transcript Display */}
+        {/* Hero Transcript Display — teleprompter scroll */}
 
-        <div className="min-h-[44px] sm:min-h-[60px] md:min-h-[90px] flex flex-col items-center justify-center mt-1">
-
-          {activeCaption.text ? (
-
-            <div className="space-y-3">
-
-
-              <h1 className="text-2xl sm:text-3xl md:text-5xl font-bold tracking-tight leading-tight line-clamp-2">
-
-                {activeCaption.text}
-
-              </h1>
-
-            </div>
-
-          ) : (
-
-            <h1 className="text-2xl sm:text-3xl md:text-5xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
-
-              Welcome to FIT EXPO
-
-            </h1>
-
-          )}
-
-        </div>
+        <TeleprompterCaption text={activeCaption.text} agentState={agentState} />
 
 
 

@@ -214,11 +214,8 @@ export function getEmojiCue(
   }
 
   // ── 4. PERSON IN VIEW (Distantly in the Aisle) ──
-  // Detected in camera, but far enough (faceArea < 0.035): wave or show speech bubble to invite them closer
+  // Detected in camera, but far enough (faceArea < 0.035): show friendly speech bubble
   if (faceDetected && faceArea > 0 && faceArea < 0.035) {
-    if (idleTick % 2 === 0) {
-      return { emoji: "👋", codePoint: "1f44b", animation: "wave", label: "Gentle Wave" };
-    }
     return { emoji: "💬", codePoint: "1f4ac", animation: "pulse", label: "Speech Bubble" };
   }
 

@@ -800,11 +800,11 @@ class FaceTracker:
             self._frame_count = getattr(self, "_frame_count", 0) + 1
             if hand_detector is not None and self._bye_gesture_from_hand:
                 # OPTIMIZATION: When face is actively tracked, prioritize YuNet face tracking.
-                # MediaPipe hand detection takes 50-70ms; running it every 4th frame preserves
+                # MediaPipe hand detection takes 50-70ms; running it every 2nd frame preserves
                 # bye-wave detection responsiveness while keeping face tracking at solid 30 FPS.
                 should_run_hands = (not face_detected) or (self._frame_count % 2 == 0)
                 if should_run_hands:
-                    hands = hand_detector.process(frame, mirrored=False)
+                    hands = hand_detector.process(frame, mirrored=False, is_bgr=False)
 
                 # ── Gesture recognition (runs even when face IS detected) ──
                 if hands:
@@ -832,8 +832,8 @@ class FaceTracker:
                         is_curled_fist = False
                         if len(lms) >= 21:
                             from lib.hand_detector import is_finger_curled
-                            curled_count = sum(1 for t, p in [(8, 6), (12, 10), (16, 14)] if is_finger_curled(lms, t, p))
-                            if curled_count >= 2:
+                            curled_count = sum(1 for t, p in [(8, 6), (12, 10), (16, 14), (20, 18)] if is_finger_curled(lms, t, p))
+                            if curled_count >= 3:
                                 is_curled_fist = True
                         if not is_curled_fist:
                             hand_gesture = "bye_wave"

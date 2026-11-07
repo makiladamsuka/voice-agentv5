@@ -558,27 +558,48 @@ export function CleanKioskView() {
 
 
 
+  // Active gesture feedback caption (immediate visual text for thumbs_up, love_sign, bye_wave)
+  const [gestureCaption, setGestureCaption] = useState<{ text: string; timestamp: number } | null>(null);
+
+  useEffect(() => {
+    const g = nluAdapter.robotStatus?.handGesture;
+    if (!g) return;
+    const map: Record<string, string> = {
+      thumbs_up: "Awesome! Great job! 👍",
+      love_sign: "Sending love right back to you! 💖",
+      bye_wave: "Goodbye! Have a wonderful day! 👋",
+    };
+    if (map[g]) {
+      setGestureCaption({ text: map[g], timestamp: Date.now() });
+    }
+  }, [nluAdapter.robotStatus?.handGesture]);
+
   // Derive active caption from latest message or transcription (filtered by clearedAt)
 
   const activeCaption = useMemo(() => {
 
     const allMsgs = (nluAdapter.messages || []).filter((m) => (m.timestamp || 0) > clearedAt);
+    const lastMsg = allMsgs.length > 0 ? allMsgs[allMsgs.length - 1] : null;
 
-    if (allMsgs.length > 0) {
-
-      const last = allMsgs[allMsgs.length - 1];
-
-      if (last.content) {
-
+    // Check if gesture caption is active and newer than messages
+    if (gestureCaption && gestureCaption.timestamp > clearedAt && Date.now() - gestureCaption.timestamp < 10_000) {
+      if (!lastMsg || lastMsg.timestamp < gestureCaption.timestamp) {
         return {
-
-          text: last.content,
-
-          isUser: last.role === "user",
-
+          text: gestureCaption.text,
+          isUser: false,
         };
-
       }
+    }
+
+    if (lastMsg && lastMsg.content) {
+
+      return {
+
+        text: lastMsg.content,
+
+        isUser: lastMsg.role === "user",
+
+      };
 
     }
 
@@ -610,7 +631,7 @@ export function CleanKioskView() {
 
     };
 
-  }, [nluAdapter.messages, nluAdapter.transcriptions, clearedAt]);
+  }, [nluAdapter.messages, nluAdapter.transcriptions, gestureCaption, clearedAt]);
 
 
 

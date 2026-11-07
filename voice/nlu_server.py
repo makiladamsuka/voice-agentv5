@@ -628,6 +628,14 @@ async def _monitor_face_greetings_loop() -> None:
                     log.info(f"[NLU] Processing proactive face greeting (#{seq}): '{text}'")
                     print(f"[NLU] Processing proactive face greeting (#{seq}): '{text}'")
 
+                    # Instantly show text subtitles on kiosk display with 0ms latency
+                    if _greet_ws_clients:
+                        for ws in list(_greet_ws_clients):
+                            try:
+                                await ws.send_text(json.dumps({"type": "greeting", "text": text, "audio_url": None}))
+                            except Exception:
+                                pass
+
                     loop = asyncio.get_running_loop()
                     audio_file = await loop.run_in_executor(None, _generate_dynamic_tts, text)
                     audio_url = f"/assets/audio_cache/{audio_file}" if audio_file else None

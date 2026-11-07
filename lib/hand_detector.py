@@ -21,8 +21,8 @@ class HandDetector:
         self,
         max_num_hands: int = 2,
         model_complexity: int = 0,
-        min_detection_confidence: float = 0.6,
-        min_tracking_confidence: float = 0.6
+        min_detection_confidence: float = 0.5,
+        min_tracking_confidence: float = 0.5
     ):
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
@@ -32,29 +32,35 @@ class HandDetector:
             min_tracking_confidence=min_tracking_confidence
         )
 
-    def process(self, frame: cv2.Mat, mirrored: bool = True) -> list[HandDetection]:
+    def process(self, frame: cv2.Mat, mirrored: bool = True, is_bgr: bool = True) -> list[HandDetection]:
         """
-        Process a BGR frame and return a list of HandDetection objects.
+        Process a frame and return a list of HandDetection objects.
         
         Args:
-            frame: Input image (BGR format).
+            frame: Input image (BGR format if is_bgr=True; RGB format if is_bgr=False).
             mirrored: True if the camera feed is horizontally mirrored.
                       Corrects handedness accordingly.
+            is_bgr: True if frame is BGR (default for OpenCV VideoCapture),
+                    False if frame is already RGB (e.g. from Picamera2 RGB888).
         """
         h, w, _ = frame.shape
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if is_bgr:
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        else:
+            rgb_frame = frame
         results = self.hands.process(rgb_frame)
         
         detections = []
         
         if results.multi_hand_landmarks and results.multi_handedness:
             for hand_landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
-                # Classify hand label and physical side (swap if camera is mirrored)
+                # MediaPipe classifies handedness assuming a mirrored/selfie camera.
+                # When camera is NOT mirrored (standard robot view of world), classification is inverted.
                 mp_label = handedness.classification[0].label  # "Left" or "Right"
                 if mirrored:
-                    physical_side = "Left" if mp_label == "Right" else "Right"
-                else:
                     physical_side = mp_label
+                else:
+                    physical_side = "Right" if mp_label == "Left" else "Left"
                 
                 confidence = handedness.classification[0].score
                 
@@ -70,7 +76,7 @@ class HandDetector:
                 palm_center = (palm_x, palm_y)
                 
                 # Check palm orientation (Frontside vs Backside Knuckles)
-                # Compute 2D cross product of vectors from Wrist to Index MCP and Pinky MCP
+                # Compute 2D cross product of vectors from Wrist to Index MCP (5) and Pinky MCP (17)
                 w_lm = hand_landmarks.landmark[0]
                 i_lm = hand_landmarks.landmark[5]
                 p_lm = hand_landmarks.landmark[17]
@@ -82,11 +88,13 @@ class HandDetector:
                 
                 cp = (v1_x * v2_y) - (v1_y * v2_x)
                 
-                # In mirrored space, cross-product sign shifts
-                if mp_label == "Left":
-                    is_frontside = cp < 0.0
-                else:
+                # In 2D image coordinates (Y down):
+                # Right hand with palm facing camera: Index is on left, Pinky on right -> cp > 0.
+                # Left hand with palm facing camera: Index is on right, Pinky on left -> cp < 0.
+                if physical_side == "Right":
                     is_frontside = cp > 0.0
+                else:
+                    is_frontside = cp < 0.0
                 
                 detections.append(HandDetection(
                     label=mp_label,
@@ -174,22 +182,24 @@ def _dist_2d(p1: dict[str, float] | tuple[int, int], p2: dict[str, float] | tupl
 
 def is_finger_curled(landmarks: list[dict[str, float]], tip_idx: int, pip_idx: int) -> bool:
     wrist = landmarks[0]
-    # Check 1: tip closer to wrist than pip (with 1.18 tolerance)
-    if _dist_2d(landmarks[tip_idx], wrist) < _dist_2d(landmarks[pip_idx], wrist) * 1.18:
+    # Check 1: tip significantly closer to wrist than pip joint
+    tip_dist = _dist_2d(landmarks[tip_idx], wrist)
+    pip_dist = _dist_2d(landmarks[pip_idx], wrist)
+    if tip_dist < pip_dist * 0.95:
         return True
-    # Check 2: in upright hand, curled fingertip is at or below pip
-    if landmarks[tip_idx]['y'] > landmarks[pip_idx]['y'] - 0.04:
+    # Check 2: in upright hand, curled fingertip is below pip joint
+    if landmarks[tip_idx]['y'] > landmarks[pip_idx]['y'] + 0.02:
         return True
-    # Check 3: tip is close to MCP joint (finger folded into palm)
+    # Check 3: tip is folded tightly toward MCP joint
     mcp_idx = pip_idx - 1 if pip_idx > 1 else 0
-    if _dist_2d(landmarks[tip_idx], landmarks[mcp_idx]) < 0.12:
+    if _dist_2d(landmarks[tip_idx], landmarks[mcp_idx]) < 0.10:
         return True
     return False
 
 def is_finger_extended(landmarks: list[dict[str, float]], tip_idx: int, pip_idx: int) -> bool:
     wrist = landmarks[0]
     higher = landmarks[tip_idx]['y'] < landmarks[pip_idx]['y']
-    further = _dist_2d(landmarks[tip_idx], wrist) > _dist_2d(landmarks[pip_idx], wrist) * 1.05
+    further = _dist_2d(landmarks[tip_idx], wrist) > _dist_2d(landmarks[pip_idx], wrist) * 1.08
     return higher and further
 
 def detect_thumbs_up(detection: HandDetection) -> bool:
@@ -200,7 +210,7 @@ def detect_thumbs_up(detection: HandDetection) -> bool:
     # Thumb tip pointing upwards: tip is higher than IP(3) or MCP(2)
     thumb_higher_than_ip = lms[4]['y'] < lms[3]['y']
     thumb_higher_than_mcp = lms[4]['y'] < lms[2]['y']
-    thumb_above_wrist = (lms[0]['y'] - lms[4]['y']) > 0.04
+    thumb_above_wrist = (lms[0]['y'] - lms[4]['y']) > 0.03
     if not ((thumb_higher_than_ip or thumb_higher_than_mcp) and thumb_above_wrist):
         return False
 
@@ -244,7 +254,7 @@ def detect_love_gesture(detections: list[HandDetection]) -> bool:
         # 2a. 'I Love You' sign (🤟): Index and Pinky extended; Middle and Ring curled
         index_ext = is_finger_extended(lms, 8, 6)
         pinky_ext = is_finger_extended(lms, 20, 18)
-        thumb_out = (_dist_2d(lms[4], lms[2]) > 0.06) or (lms[4]['y'] < lms[2]['y'])
+        thumb_out = (_dist_2d(lms[4], lms[2]) > 0.05) or (lms[4]['y'] < lms[2]['y'])
         if index_ext and pinky_ext and middle_curled and ring_curled and thumb_out:
             return True
 

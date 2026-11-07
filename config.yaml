@@ -17,7 +17,7 @@ camera:
 
 hand_fallback:
   enabled: true
-  max_hands: 1
+  max_hands: 2
   hi_gesture: true
   bye_gesture: true
   wave_threshold: true         # Require waving motion (not just static hand)

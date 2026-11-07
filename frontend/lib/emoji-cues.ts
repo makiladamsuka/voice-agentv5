@@ -45,7 +45,42 @@ export function getEmojiCue(
 
   // ── 1. ACTIVE DIALOGUE & TRANSCRIPTS (Highest Priority) ──
   if (transcript && transcript.length > 0) {
-    // 1a. Crowd / Multi-person greetings
+    // 1a. EXACT HAND GESTURE VOICE REACTIONS (Lock exact matching emoji)
+    // Thumbs Up / Celebration
+    if (
+      lower.includes("thumbs up") ||
+      lower.includes("two thumbs") ||
+      lower.includes("awesome") ||
+      lower.includes("great job") ||
+      lower.includes("you rock") ||
+      lower.includes("looking great")
+    ) {
+      return { emoji: "👍", codePoint: "1f44d", animation: "bounce", label: "Thumbs Up" };
+    }
+
+    // Love / Heart
+    if (
+      lower.includes("love you") ||
+      lower.includes("sending love") ||
+      lower.includes("so sweet") ||
+      lower.includes("sweet heart") ||
+      lower.includes("love")
+    ) {
+      return { emoji: "💖", codePoint: "1f496", animation: "pulse", label: "Sparkling Heart" };
+    }
+
+    // Bye Wave / Departures — ALWAYS exact waving hand 👋 (never flat hand or random rotation)
+    if (
+      lower.includes("bye") ||
+      lower.includes("goodbye") ||
+      lower.includes("see you") ||
+      lower.includes("take care") ||
+      lower.includes("farewell")
+    ) {
+      return { emoji: "👋", codePoint: "1f44b", animation: "wave", label: "Waving Hand" };
+    }
+
+    // 1b. Crowd / Multi-person greetings
     if (
       faceCount >= 2 ||
       lower.includes("everyone") ||
@@ -67,7 +102,7 @@ export function getEmojiCue(
       }
     }
 
-    // 1b. Greetings & Salutations (Auto-greet, Hi, Hello, Hey, Welcome, Morning, etc.)
+    // 1c. Greetings & Salutations (Auto-greet, Hi, Hello, Hey, Welcome, Morning, etc.)
     const GREETING_PATTERNS = [
       /\b(hi|hello|hey|welcome|howdy)\b/i,
       /\b(good\s+(morning|afternoon|evening))\b/i,
@@ -79,36 +114,6 @@ export function getEmojiCue(
       lower.includes("welcome to")
     ) {
       return { emoji: "👋", codePoint: "1f44b", animation: "wave", label: "Waving Hand" };
-    }
-
-    // 1c. Departures
-    if (
-      lower.includes("bye") ||
-      lower.includes("goodbye") ||
-      lower.includes("see you") ||
-      lower.includes("take care")
-    ) {
-      return { emoji: "🤚", codePoint: "1f91a", animation: "wave", label: "Raised Back of Hand" };
-    }
-
-    // 1c-2. Thumbs Up / Celebration
-    if (
-      lower.includes("awesome") ||
-      lower.includes("thumbs up") ||
-      lower.includes("great job") ||
-      lower.includes("you rock") ||
-      lower.includes("looking great")
-    ) {
-      return { emoji: "👍", codePoint: "1f44d", animation: "bounce", label: "Thumbs Up" };
-    }
-
-    // 1c-3. Love / Heart
-    if (
-      lower.includes("love you") ||
-      lower.includes("sending love") ||
-      lower.includes("so sweet")
-    ) {
-      return { emoji: "💖", codePoint: "1f496", animation: "pulse", label: "Sparkling Heart" };
     }
 
     // 1d. Gratitude / Politeness

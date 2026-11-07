@@ -558,8 +558,9 @@ export function CleanKioskView() {
 
 
 
-  // Active gesture feedback caption (immediate visual text for thumbs_up, love_sign, bye_wave)
+  // Active gesture feedback caption & locked emoji (guarantees exact emoji display without rotation)
   const [gestureCaption, setGestureCaption] = useState<{ text: string; timestamp: number } | null>(null);
+  const [lockedGesture, setLockedGesture] = useState<{ gesture: string; until: number } | null>(null);
 
   useEffect(() => {
     const g = nluAdapter.robotStatus?.handGesture;
@@ -571,8 +572,14 @@ export function CleanKioskView() {
     };
     if (map[g]) {
       setGestureCaption({ text: map[g], timestamp: Date.now() });
+      setLockedGesture({ gesture: g, until: Date.now() + 8_000 });
     }
   }, [nluAdapter.robotStatus?.handGesture]);
+
+  const activeEmojiGesture =
+    (lockedGesture && Date.now() < lockedGesture.until)
+      ? lockedGesture.gesture
+      : nluAdapter.robotStatus?.handGesture;
 
   // Derive active caption from latest message or transcription (filtered by clearedAt)
 
@@ -735,7 +742,7 @@ export function CleanKioskView() {
 
           noFaceSec={nluAdapter.robotStatus?.noFaceSec ?? 0}
 
-          handGesture={nluAdapter.robotStatus?.handGesture}
+          handGesture={activeEmojiGesture}
 
         />
 

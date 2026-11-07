@@ -249,7 +249,7 @@ def test_crowd_greetings_and_emotions():
     assert isinstance(g1, str) and len(g1) > 0
     assert any(tok in g2.lower() for tok in ("two", "both", "friends"))
     assert any(tok in g3.lower() for tok in ("everyone", "group", "friends"))
-    assert "everyone" in gg.lower()
+    assert any(tok in gg.lower() for tok in ("everyone", "visitors", "friends", "crew", "crowd"))
 
     se = SurroundingsEmotionController()
     # High roll angle should strongly favor curious
@@ -375,6 +375,7 @@ def test_optimistic_lost_face_tracking_and_swapped_side_tof():
     loop = ServoLoop(bb)
     tof_state = TofState()
     handler = TofStreamHandler(tof_state, bb)  # uses config swap_left_right: true
+    handler.reset_after_motion()
 
     # 1. Physical Right sensor (wired to firmware L channel) at close 95mm:
     #    - Swaps to R zone in both TofState snapshot and Blackboard

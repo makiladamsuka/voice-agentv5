@@ -109,62 +109,55 @@ function TeleprompterCaption({
   const innerRef = useRef<HTMLDivElement>(null);
   const [offsetY, setOffsetY] = useState(0);
 
-  // Track the last committed offset so we know the "current baseline"
-  const committedOffsetRef = useRef(0);
-  // Track pending scroll timeout so we can cancel it if speech stops early
+  // Track pending scroll timeout so we can cancel it if speech stops early or text changes
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Words that were visible in the viewport just before the last overflow
-  const visibleWordsRef = useRef<string[]>([]);
 
   useEffect(() => {
+    // Clear any pending scroll timer when new text arrives
+    if (scrollTimerRef.current) {
+      clearTimeout(scrollTimerRef.current);
+      scrollTimerRef.current = null;
+    }
+
+    // Always reset to top immediately so user sees the beginning of the new utterance
+    setOffsetY(0);
+
     const inner = innerRef.current;
     if (!inner) return;
 
     const overflow = inner.scrollHeight - VIEWPORT_H;
-    const targetOffset = overflow > 0 ? -overflow : 0;
+    if (overflow <= 0) return;
 
-    // No new overflow — just track the words visible right now for next time
-    if (targetOffset === committedOffsetRef.current) {
-      // Count words currently visible (approximate: words up to the viewport slice)
-      visibleWordsRef.current = text.split(" ").filter(Boolean);
-      return;
-    }
-
-    // New overflow detected — figure out how long the visible line(s) will take
-    // to speak, then schedule the scroll after that delay.
-    const wordsVisible = visibleWordsRef.current.length;
-    const speakDelayMs = wordsVisible > 0
-      ? (wordsVisible / WORDS_PER_SECOND) * 1000
-      : 0;
-
-    // Cancel any previous pending scroll
-    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    // Estimate words visible in the top viewport slice and wait for TTS to speak them
+    const words = text.trim().split(/\s+/).filter(Boolean);
+    const visibleRatio = Math.min(1, VIEWPORT_H / inner.scrollHeight);
+    const visibleWords = Math.max(1, Math.round(words.length * visibleRatio));
+    const speakDelayMs = (visibleWords / WORDS_PER_SECOND) * 1000;
 
     scrollTimerRef.current = setTimeout(() => {
-      committedOffsetRef.current = targetOffset;
-      setOffsetY(targetOffset);
+      setOffsetY(-overflow);
+      scrollTimerRef.current = null;
     }, speakDelayMs);
 
-    // Update visible-words snapshot to the full current text (next line is now "visible")
-    visibleWordsRef.current = text.split(" ").filter(Boolean);
-
     return () => {
-      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current);
+        scrollTimerRef.current = null;
+      }
     };
   }, [text]);
 
-  // If the agent stops speaking (interrupted / done), fire any pending scroll immediately
+  // If the agent stops speaking (interrupted / done), reveal remainder immediately
   useEffect(() => {
     if (agentState !== "speaking" && scrollTimerRef.current) {
       clearTimeout(scrollTimerRef.current);
       scrollTimerRef.current = null;
-      // Snap to the real overflow position right now
       const inner = innerRef.current;
       if (inner) {
         const overflow = inner.scrollHeight - VIEWPORT_H;
-        const target = overflow > 0 ? -overflow : 0;
-        committedOffsetRef.current = target;
-        setOffsetY(target);
+        if (overflow > 0) {
+          setOffsetY(-overflow);
+        }
       }
     }
   }, [agentState]);
@@ -183,15 +176,8 @@ function TeleprompterCaption({
       className="relative mt-1 w-full overflow-hidden"
       style={{ height: VIEWPORT_H }}
     >
-      {/* Gradient fade on the top edge so old lines dissolve softly */}
-      <div
-        className="pointer-events-none absolute inset-x-0 top-0 z-10"
-        style={{
-          height: 40,
-          background:
-            "linear-gradient(to bottom, var(--tw-gradient-from, white), transparent)",
-        }}
-      />
+      {/* Gradient fade on the top edge so old lines dissolve softly without dark-mode glitch */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-gradient-to-b from-white dark:from-neutral-950 to-transparent" />
       <motion.div
         ref={innerRef}
         animate={{ y: offsetY }}
@@ -662,14 +648,7 @@ export function CleanKioskView() {
 
   return (
 
-    <div
-      className="relative w-screen h-screen bg-white dark:bg-neutral-950 text-neutral-900 dark:text-neutral-50 overflow-hidden flex flex-col justify-between px-4 py-2 sm:py-3 md:p-6 select-none"
-      onPointerDown={(e) => {
-        // Normalize x to [-1, +1] relative to screen width, then tell the robot
-        const x_norm = (e.clientX / window.innerWidth) * 2 - 1;
-        sendScreenEvent(x_norm);
-      }}
-    >
+    <div className="relative w-screen h-screen bg-white dark:bg-neutral-950 text-neutral-900 dark:text-neutral-50 overflow-hidden flex flex-col justify-between px-4 py-2 sm:py-3 md:p-6 select-none">
 
       {/* ── Top Navigation Bar ── */}
 

@@ -177,7 +177,7 @@ export function useNluAdapter(options?: UseNluAdapterOptions): NluAdapter {
     [agentState]
   );
 
-  useFaceGreeting({
+  const { sendScreenTouch } = useFaceGreeting({
     nluServerUrl: process.env.NEXT_PUBLIC_NLU_SERVER_URL ?? "ws://localhost:8765",
     enabled: options?.autoGreetEnabled ?? true,
     isBusy,
@@ -322,6 +322,19 @@ export function useNluAdapter(options?: UseNluAdapterOptions): NluAdapter {
   // Keep endRef in sync so the idle watchdog can call it without a dep cycle
   endRef.current = end;
 
+  // Send screen event through persistent /ws/greet socket and bump activity clock
+  const sendScreenEvent = useCallback(
+    (x_norm: number) => {
+      lastActivityRef.current = Date.now();
+      const clientX =
+        typeof window !== "undefined" && window.innerWidth > 0
+          ? ((x_norm + 1) / 2) * window.innerWidth
+          : undefined;
+      sendScreenTouch(clientX, "touch");
+    },
+    [sendScreenTouch]
+  );
+
   const isConnected = nlu.isActive;
 
   const session = { isConnected, start, end };
@@ -337,7 +350,7 @@ export function useNluAdapter(options?: UseNluAdapterOptions): NluAdapter {
     maxVolume,
     lastAction,
     sendSimulatedVoice: nlu.sendSimulatedVoice,
-    sendScreenEvent: nlu.sendScreenEvent,
+    sendScreenEvent,
     robotStatus,
   };
 }
